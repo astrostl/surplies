@@ -9,9 +9,11 @@ build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
 
 fmt:
+	go fix ./...
 	gofmt -s -w .
 
 lint:
+	@out=$$(go fix -diff ./... 2>&1); [ -z "$$out" ] || { echo "go fix issues:"; echo "$$out"; exit 1; }
 	@out=$$(gofmt -s -l .); [ -z "$$out" ] || { echo "gofmt -s issues in: $$out"; exit 1; }
 	@test -f LICENSE || { echo "LICENSE file missing"; exit 1; }
 	go vet ./...
