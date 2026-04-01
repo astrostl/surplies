@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -297,9 +298,9 @@ func writePackageJSON(t *testing.T, dir, name, version string) {
 }
 
 func repeatStr(s string, n int) string {
-	result := ""
-	for i := 0; i < n; i++ {
-		result += s
+	var result strings.Builder
+	for range n {
+		result.WriteString(s)
 	}
-	return result
+	return result.String()
 }

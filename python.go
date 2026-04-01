@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 )
 
@@ -76,16 +77,14 @@ func (s *Scanner) checkPthFile(spDir, filename string) {
 	s.stats.FilesChecked++
 
 	// Check against known malicious .pth filenames
-	for _, known := range KnownMaliciousPthFiles {
-		if filename == known {
-			s.addFinding(Finding{
-				Check:    "malicious-pth-file",
-				Severity: SevCritical,
-				Path:     path,
-				Detail:   fmt.Sprintf("Known malicious .pth file '%s' found", filename),
-			})
-			return
-		}
+	if slices.Contains(KnownMaliciousPthFiles, filename) {
+		s.addFinding(Finding{
+			Check:    "malicious-pth-file",
+			Severity: SevCritical,
+			Path:     path,
+			Detail:   fmt.Sprintf("Known malicious .pth file '%s' found", filename),
+		})
+		return
 	}
 
 	// Heuristic: check .pth content for suspicious patterns.
