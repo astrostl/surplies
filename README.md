@@ -19,11 +19,20 @@ A cross-platform CLI tool that scans your home directory (and well-known system 
 
 ## Install
 
+**Homebrew (macOS):**
+
+```sh
+brew tap astrostl/surplies https://github.com/astrostl/surplies
+brew install surplies
+```
+
+**Go:**
+
 ```sh
 go install github.com/astrostl/surplies@latest
 ```
 
-Or build from source:
+**Build from source:**
 
 ```sh
 make build       # local binary
