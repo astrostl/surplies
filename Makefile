@@ -33,10 +33,7 @@ update-formula: checksums
 	sed -i '' 's|version ".*"|version "$(VERSION)"|g' Formula/$(BIN).rb
 	sed -i '' 's|releases/download/v[^/]*/$(BIN)-v[^-]*-darwin-arm64|releases/download/$(VERSION)/$(BIN)-$(VERSION)-darwin-arm64|g' Formula/$(BIN).rb
 	sed -i '' 's|releases/download/v[^/]*/$(BIN)-v[^-]*-darwin-amd64|releases/download/$(VERSION)/$(BIN)-$(VERSION)-darwin-amd64|g' Formula/$(BIN).rb
-	@ARM64_LINE=$$(grep -n "darwin-arm64" Formula/$(BIN).rb | grep sha256 | cut -d: -f1); \
-	AMD64_LINE=$$(grep -n "darwin-amd64" Formula/$(BIN).rb | grep sha256 | cut -d: -f1); \
-	sed -i '' "$${ARM64_LINE}s/sha256 \"[^\"]*\"/sha256 \"$(ARM64_SHA)\"/" Formula/$(BIN).rb; \
-	sed -i '' "$${AMD64_LINE}s/sha256 \"[^\"]*\"/sha256 \"$(AMD64_SHA)\"/" Formula/$(BIN).rb
+	awk '/darwin-arm64/{found_arm64=1} found_arm64 && /sha256/ && !done_arm64{sub(/sha256 "[^"]*"/, "sha256 \"$(ARM64_SHA)\""); done_arm64=1} /darwin-amd64/{found_amd64=1} found_amd64 && /sha256/ && !done_amd64{sub(/sha256 "[^"]*"/, "sha256 \"$(AMD64_SHA)\""); done_amd64=1} {print}' Formula/$(BIN).rb > Formula/$(BIN).rb.tmp && mv Formula/$(BIN).rb.tmp Formula/$(BIN).rb
 
 # Full release flow: make release VERSION=v1.2.3
 # Then: git tag v1.2.3 && git push origin v1.2.3
