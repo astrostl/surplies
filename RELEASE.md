@@ -4,7 +4,7 @@
 
 - `gh` CLI authenticated (`gh auth status`)
 - Go toolchain installed
-- `modernize` installed (`go install golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest`)
+- `modernize` installed (`go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@latest`)
 - Push access to `astrostl/surplies`
 
 ## Steps
