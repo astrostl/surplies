@@ -4,6 +4,7 @@
 
 - `gh` CLI authenticated (`gh auth status`)
 - Go toolchain installed
+- `modernize` installed (`go install golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest`)
 - Push access to `astrostl/surplies`
 
 ## Steps
@@ -68,8 +69,8 @@ surplies -version
 
 | Target | Description |
 |--------|-------------|
-| `make fmt` | Formats all Go files with `gofmt -s -w` |
-| `make lint` | Checks `gofmt -s` compliance, LICENSE presence, and `go vet` |
+| `make fmt` | Formats all Go files with `go fix`, `modernize -fix`, and `gofmt -s -w` |
+| `make lint` | Checks `go fix`, `modernize`, and `gofmt -s` compliance, LICENSE presence, and `go vet` |
 | `make all` | Cross-compiles all platform binaries into `dist/` |
 | `make package-macos` | Tars the macOS binaries into versioned `.tar.gz` files |
 | `make checksums` | Runs `shasum -a 256` and writes `dist/checksums.txt` |
