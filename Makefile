@@ -3,10 +3,18 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 BIN := surplies
 DIST := dist
 
-.PHONY: build clean all test release package-macos checksums update-formula
+.PHONY: build clean all test lint fmt release package-macos checksums update-formula
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
+
+fmt:
+	gofmt -s -w .
+
+lint:
+	@out=$$(gofmt -s -l .); [ -z "$$out" ] || { echo "gofmt -s issues in: $$out"; exit 1; }
+	@test -f LICENSE || { echo "LICENSE file missing"; exit 1; }
+	go vet ./...
 
 test:
 	go test ./...
@@ -38,7 +46,7 @@ update-formula: checksums
 # Full release flow: make release VERSION=v1.2.3
 # Then: git tag v1.2.3 && git push origin v1.2.3
 # Then upload dist/ tarballs to the GitHub release
-release: update-formula
+release: lint update-formula
 	@echo "Formula updated for $(VERSION). Next steps:"
 	@echo "  1. git add Formula/$(BIN).rb && git commit -m 'Release $(VERSION)'"
 	@echo "  2. git tag $(VERSION) && git push origin main $(VERSION)"

@@ -7,7 +7,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-
 )
 
 var version = "dev"

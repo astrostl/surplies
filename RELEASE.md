@@ -19,6 +19,7 @@ make release VERSION=v1.2.3
 ```
 
 This will:
+- Verify `gofmt -s` formatting and `LICENSE` file presence (`lint`)
 - Cross-compile binaries for all platforms
 - Package the macOS binaries into tarballs (`dist/surplies-v1.2.3-darwin-{arm64,amd64}.tar.gz`)
 - Compute SHA256 checksums
@@ -67,11 +68,13 @@ surplies -version
 
 | Target | Description |
 |--------|-------------|
+| `make fmt` | Formats all Go files with `gofmt -s -w` |
+| `make lint` | Checks `gofmt -s` compliance, LICENSE presence, and `go vet` |
 | `make all` | Cross-compiles all platform binaries into `dist/` |
 | `make package-macos` | Tars the macOS binaries into versioned `.tar.gz` files |
 | `make checksums` | Runs `shasum -a 256` and writes `dist/checksums.txt` |
 | `make update-formula` | Patches `Formula/surplies.rb` with new version and SHA256s |
-| `make release` | Runs all of the above and prints next steps |
+| `make release` | Runs lint + all of the above and prints next steps |
 
 ## How the Homebrew tap works
 
