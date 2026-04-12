@@ -98,7 +98,6 @@ func TestCompromisedVersion(t *testing.T) {
 	}
 }
 
-
 func TestCleanScan(t *testing.T) {
 	dir := t.TempDir()
 	nm := filepath.Join(dir, "node_modules")
