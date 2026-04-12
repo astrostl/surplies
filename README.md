@@ -177,17 +177,7 @@ When a lifecycle script references a JavaScript file (e.g., `node setup.js`), re
 
 ---
 
-### 6. `package-name-mismatch` (WARN)
-
-Detects when a npm package's `package.json` `name` field doesn't match the directory it's installed in.
-
-**How it works:** Compares `filepath.Base(pkgDir)` against the `name` field in `package.json`. For scoped packages (`@org/pkg`), compares against the unscoped portion. Known legitimate aliasing patterns (e.g., `strip-ansi-cjs` containing package named `strip-ansi`) are excluded.
-
-**Why this matters:** The axios attack used a self-healing technique: after the malicious `setup.js` executed, it deleted the real `package.json` (which contained the postinstall hook) and renamed a pre-staged `package.md` to `package.json`. This clean stub reported version `4.2.0` instead of the actual `4.2.1`, so `npm list` would show the wrong version and investigators would find no trace of the postinstall script. A directory/name mismatch is evidence of this artifact swap.
-
----
-
-### 7. `compromised-python-version` (CRITICAL)
+### 6. `compromised-python-version` (CRITICAL)
 
 Checks installed Python packages against a database of known-compromised versions by scanning `.dist-info` directories in every `site-packages` found.
 
@@ -207,7 +197,7 @@ For each `site-packages`, parses `.dist-info` directory names to extract package
 
 ---
 
-### 8. `malicious-pth-file` (CRITICAL)
+### 7. `malicious-pth-file` (CRITICAL)
 
 Checks for known malicious `.pth` files in Python `site-packages` directories.
 
@@ -223,7 +213,7 @@ Checks for known malicious `.pth` files in Python `site-packages` directories.
 
 ---
 
-### 9. `suspicious-pth-file` (WARN)
+### 8. `suspicious-pth-file` (WARN)
 
 Heuristic check for unknown `.pth` files in `site-packages` with content patterns associated with malware.
 
@@ -251,7 +241,7 @@ Heuristic check for unknown `.pth` files in `site-packages` with content pattern
 
 ---
 
-### 10. `network-ioc-active-connection` (CRITICAL)
+### 9. `network-ioc-active-connection` (CRITICAL)
 
 Checks active network connections for known command-and-control domains and IP addresses from documented supply chain attacks.
 
@@ -270,7 +260,7 @@ Checks active network connections for known command-and-control domains and IP a
 
 ---
 
-### 11. `suspicious-temp-file` (WARN)
+### 10. `suspicious-temp-file` (WARN)
 
 Checks system temp directories for files matching patterns associated with supply chain attack payloads.
 

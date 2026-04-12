@@ -98,34 +98,6 @@ func TestCompromisedVersion(t *testing.T) {
 	}
 }
 
-func TestVersionMismatch(t *testing.T) {
-	dir := t.TempDir()
-	nm := filepath.Join(dir, "node_modules")
-
-	// Create a package whose name doesn't match its directory
-	pkgDir := filepath.Join(nm, "plain-crypto-js")
-	os.MkdirAll(pkgDir, 0755)
-	// package.json says it's version 4.2.0 and name doesn't match dir... actually
-	// the real attack was the name matched but the version was swapped.
-	// Let's test name mismatch: dir is "lodash" but package.json says "evil-pkg"
-	mismatchDir := filepath.Join(nm, "lodash")
-	os.MkdirAll(mismatchDir, 0755)
-	writePackageJSON(t, mismatchDir, "evil-pkg", "1.0.0")
-
-	s := New(dir, false)
-	s.checkNodeModulesDir(nm)
-
-	found := false
-	for _, f := range s.Findings {
-		if f.Check == "package-name-mismatch" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("package name mismatch not detected")
-	}
-}
 
 func TestCleanScan(t *testing.T) {
 	dir := t.TempDir()

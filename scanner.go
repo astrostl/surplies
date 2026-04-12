@@ -316,27 +316,6 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 			}
 		}
 	}
-
-	// Check for version mismatch (self-healing artifact detection)
-	if pkg.Version != "" && pkg.Name != "" {
-		dirName := filepath.Base(pkgDir)
-		// If this package reports as a different name than its directory, flag it
-		baseName := pkg.Name
-		if strings.Contains(baseName, "/") {
-			parts := strings.SplitN(baseName, "/", 2)
-			baseName = parts[1]
-		}
-		// Allow known aliasing patterns (e.g., strip-ansi-cjs -> strip-ansi)
-		isAlias := strings.HasSuffix(dirName, "-cjs") && baseName == strings.TrimSuffix(dirName, "-cjs")
-		if baseName != dirName && !isAlias {
-			s.addFinding(Finding{
-				Check:    "package-name-mismatch",
-				Severity: SevWarn,
-				Path:     pkgJSONPath,
-				Detail:   fmt.Sprintf("Directory '%s' contains package named '%s' (possible artifact swap)", dirName, pkg.Name),
-			})
-		}
-	}
 }
 
 // analyzeScript checks a lifecycle script string for red flags.
