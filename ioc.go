@@ -5,10 +5,18 @@ import (
 	"path/filepath"
 )
 
+// All IOCs in this file are sourced from StepSecurity's published incident
+// analyses (https://www.stepsecurity.io/blog). Each block below cites the
+// specific writeup it was derived from. surplies is a mechanization layer
+// on top of their research — the original reverse engineering, payload
+// extraction, and attribution work is theirs.
+
 // --- npm ---
 
 // KnownPhantomPackages are npm packages that exist solely as malware carriers
 // and have no legitimate use. Their presence in node_modules is always suspicious.
+// Source: StepSecurity axios writeup
+// https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
 var KnownPhantomPackages = []string{
 	"plain-crypto-js",
 }
@@ -225,11 +233,15 @@ var KnownBadNpmVersions = map[string][]string{
 
 // KnownBadPythonVersions maps legitimate PyPI package names to known-compromised versions.
 // Package names are normalized (lowercase, hyphens) to match dist-info directory conventions.
+// Source: StepSecurity litellm writeup
+// https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel
 var KnownBadPythonVersions = map[string][]string{
 	"litellm": {"1.82.7", "1.82.8"},
 }
 
 // KnownMaliciousPthFiles are .pth filenames that are known malware delivery mechanisms.
+// Source: StepSecurity litellm writeup
+// https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel
 var KnownMaliciousPthFiles = []string{
 	"litellm_init.pth",
 }
@@ -247,6 +259,8 @@ type ProjectArtifact struct {
 // KnownProjectArtifacts maps a project-local config directory name to malicious files
 // a documented supply chain attack is known to drop inside it. The scanner finds these
 // during the home-directory walk and reports any match as a critical finding.
+// Source: StepSecurity Mini Shai-Hulud writeup
+// https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem
 var KnownProjectArtifacts = map[string][]ProjectArtifact{
 	".claude": {
 		{Filename: "router_runtime.js", Desc: "mini-shai-hulud Bun payload dropped via Claude Code SessionStart hook", Attack: "mini-shai-hulud (May 2026)"},

@@ -6,7 +6,7 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from three documented major supply chain attacks:**
+**Currently detects indicators from three documented major supply chain attacks**, all based on [StepSecurity](https://www.stepsecurity.io/)'s incident writeups (see [Acknowledgments](#acknowledgments)):
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
@@ -310,6 +310,18 @@ Checks for malicious files dropped inside project-local config directories (`.cl
 **How it works:** The home-directory walk (the same one used for `node_modules`) returns `SkipDir` when it encounters a `.claude/` or `.vscode/` directory after running `os.Stat()` on each known malicious filename inside. No content inspection is performed — the filenames themselves are not used by legitimate Claude Code or VS Code configurations, so presence alone is the signal.
 
 **Why this matters:** The Mini Shai-Hulud worm modifies project-local config to ensure the payload runs the next time a developer opens that project. Editing `.claude/settings.json` with a `SessionStart` hook makes the next `claude` invocation in that repo execute `.claude/router_runtime.js`; editing `.vscode/tasks.json` with a `folderOpen` task makes the next VS Code window opened in that repo execute `.vscode/setup.mjs`. The malicious files survive `git clean` against most ignore lists, persist across `node_modules` reinstalls, and re-trigger exfiltration on every developer session — finding the payload file is often the only reliable signal that a project was touched, since the lifecycle hook itself is short and easy to miss in a diff.
+
+## Acknowledgments
+
+Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from the incident analyses published by **[StepSecurity](https://www.stepsecurity.io/)** ([blog](https://www.stepsecurity.io/blog)). Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes the IOCs from their writeups so you can sweep a developer machine for them in a few seconds.
+
+Specifically, the following writeups are the basis for every check in this scanner:
+
+- [axios Compromised on npm: Malicious Versions Drop Remote Access Trojan](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)
+- [LiteLLM Credential Stealer Hidden in PyPI Wheel](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)
+- [Mini Shai-Hulud Is Back: A Self-Spreading Supply Chain Attack Hits the npm Ecosystem](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)
+
+If surplies is useful to you, the credit belongs to them. Go read their blog.
 
 ## License
 
