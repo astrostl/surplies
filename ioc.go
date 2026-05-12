@@ -234,6 +234,29 @@ var KnownMaliciousPthFiles = []string{
 	"litellm_init.pth",
 }
 
+// --- Project-local artifacts ---
+
+// ProjectArtifact describes a malicious file expected inside a project-local config directory
+// (e.g., a repository's .claude/ or .vscode/ folder) rather than at a fixed home-relative path.
+type ProjectArtifact struct {
+	Filename string
+	Desc     string
+	Attack   string
+}
+
+// KnownProjectArtifacts maps a project-local config directory name to malicious files
+// a documented supply chain attack is known to drop inside it. The scanner finds these
+// during the home-directory walk and reports any match as a critical finding.
+var KnownProjectArtifacts = map[string][]ProjectArtifact{
+	".claude": {
+		{Filename: "router_runtime.js", Desc: "mini-shai-hulud Bun payload dropped via Claude Code SessionStart hook", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module", Attack: "mini-shai-hulud (May 2026)"},
+	},
+	".vscode": {
+		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module dropped via VS Code folderOpen task", Attack: "mini-shai-hulud (May 2026)"},
+	},
+}
+
 // --- Network IOCs ---
 
 // KnownC2Domains are command-and-control domains from documented supply chain attacks.

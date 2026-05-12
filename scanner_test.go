@@ -257,6 +257,36 @@ func TestAnalyzePthContent(t *testing.T) {
 	}
 }
 
+func TestProjectArtifact(t *testing.T) {
+	dir := t.TempDir()
+
+	// Plant a known malicious file inside a project-local .claude/ directory.
+	projectClaude := filepath.Join(dir, "myproject", ".claude")
+	os.MkdirAll(projectClaude, 0755)
+	os.WriteFile(filepath.Join(projectClaude, "router_runtime.js"), []byte("// payload"), 0644)
+
+	// Also plant a benign file the scanner must not flag.
+	benignClaude := filepath.Join(dir, "cleanproject", ".claude")
+	os.MkdirAll(benignClaude, 0755)
+	os.WriteFile(filepath.Join(benignClaude, "settings.json"), []byte("{}"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "project-artifact" && strings.Contains(f.Path, "router_runtime.js") {
+			found = true
+		}
+		if f.Check == "project-artifact" && strings.Contains(f.Path, "settings.json") {
+			t.Errorf("benign .claude/settings.json was flagged: %v", f)
+		}
+	}
+	if !found {
+		t.Error("malicious .claude/router_runtime.js not detected")
+	}
+}
+
 func writePackageJSON(t *testing.T, dir, name, version string) {
 	t.Helper()
 	pkg := packageJSON{

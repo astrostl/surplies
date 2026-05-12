@@ -104,9 +104,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "[1/5] Checking known malicious artifacts...\n")
 	s.checkArtifacts()
 
-	// Phase 2: Find and scan node_modules directories
-	fmt.Fprintf(os.Stderr, "[2/5] Scanning node_modules for compromised packages...\n")
-	s.scanNodeModules()
+	// Phase 2: Walk home for node_modules and project-local payload artifacts
+	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, .claude, .vscode)...\n")
+	s.scanProjectDirs()
 
 	// Phase 3: Find and scan Python site-packages directories
 	fmt.Fprintf(os.Stderr, "[3/5] Scanning Python site-packages for compromised packages...\n")
@@ -159,8 +159,10 @@ func (s *Scanner) checkArtifacts() {
 	}
 }
 
-// scanNodeModules walks the home directory looking for node_modules.
-func (s *Scanner) scanNodeModules() {
+// scanProjectDirs walks the home directory once, looking for node_modules to inspect
+// for compromised npm packages AND for project-local config directories (.claude, .vscode)
+// that supply chain attacks are known to drop payload files into.
+func (s *Scanner) scanProjectDirs() {
 	filepath.WalkDir(s.HomeDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip inaccessible dirs
@@ -182,8 +184,31 @@ func (s *Scanner) scanNodeModules() {
 			return filepath.SkipDir
 		}
 
+		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
+			s.log("checking project config dir: %s", path)
+			s.checkProjectArtifactDir(path, files)
+			return filepath.SkipDir
+		}
+
 		return nil
 	})
+}
+
+// checkProjectArtifactDir looks for known malicious filenames inside a project-local
+// config directory (.claude, .vscode, etc.). Each match is a critical finding.
+func (s *Scanner) checkProjectArtifactDir(dir string, files []ProjectArtifact) {
+	for _, a := range files {
+		path := filepath.Join(dir, a.Filename)
+		s.stats.FilesChecked++
+		if _, err := os.Stat(path); err == nil {
+			s.addFinding(Finding{
+				Check:    "project-artifact",
+				Severity: SevCritical,
+				Path:     path,
+				Detail:   fmt.Sprintf("%s (attack: %s)", a.Desc, a.Attack),
+			})
+		}
+	}
 }
 
 // checkNodeModulesDir runs all npm-related checks on a single node_modules directory.

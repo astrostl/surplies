@@ -70,7 +70,7 @@ surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 The scanner runs five phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads
-2. **node_modules scanning** — walk home directory, inspect every `node_modules`
+2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages and every `.claude/` / `.vscode/` for project-local payload files
 3. **Python site-packages scanning** — walk home directory + system Python paths, inspect every `site-packages`
 4. **Network IOCs** — check active connections (`netstat -n` for IPs, `netstat` for domains) for C2 indicators
 5. **Temp directory artifacts** — check temp dirs for payload remnants
@@ -293,18 +293,23 @@ Checks system temp directories for files matching patterns associated with suppl
 
 **Why this matters:** Temp directories are common staging grounds for supply chain payloads because they're writable without elevated privileges and often excluded from security monitoring. The axios attack staged a VBScript dropper (`%TEMP%\{campaignID}.vbs`) and a PowerShell payload (`%TEMP%\{campaignID}.ps1`) on Windows; both are self-deleting. The litellm attack used `/tmp/.pg_state` to track which C2 commands had been executed, `/tmp/pglog` for downloaded binaries, and assembled stolen credentials into `/tmp/tpcp.tar.gz` before exfiltration.
 
-## References
+---
 
-The check set is derived from analysis of documented supply chain attacks:
+### 11. `project-artifact` (CRITICAL)
 
-- **[axios npm compromise (March 2026)](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** by StepSecurity — Compromised maintainer account (`jasonsaayman`, email changed to `ifstap@proton.me`), phantom dependency injection (`plain-crypto-js@4.2.1` published by `nrwise@proton.me`), platform-specific RAT deployment via postinstall hook, dual-layer obfuscation (XOR key `"OrDeR_7077"` + base64), self-destructing dropper with version-swapped clean stub, C2 at `sfrclak.com:8000` (IP `142.11.206.73`), process orphaning via `nohup`.
+Checks for malicious files dropped inside project-local config directories (`.claude/`, `.vscode/`) by supply chain attacks. Unlike `known-artifact`, which checks fixed home-relative or system paths, this check runs against every project under the home directory: any `.claude/` or `.vscode/` directory encountered during the walk is inspected for a specific malicious filename.
 
-- **[litellm PyPI compromise (March 2026)](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** by StepSecurity — Two vectors: malicious `litellm_init.pth` (34,628 bytes, v1.82.8) for Python interpreter-level persistence, and base64-encoded payload in `litellm/proxy/proxy_server.py` (v1.82.7). Three-stage payload: credential harvesting (SSH, AWS/GCP/Azure, `.env` files, shell history, crypto wallets), C2 backdoor via `~/.config/sysmon/sysmon.py` with systemd persistence, and lateral movement. AES-256-CBC + RSA-4096 encrypted exfiltration to `models.litellm.cloud`, C2 polling at `checkmarx.zone/raw`.
+**Known project-local artifacts:**
 
-- **[Mini Shai-Hulud npm worm (May 2026)](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** by StepSecurity — Self-spreading supply chain worm staged via `optionalDependencies` pointing at a GitHub commit (`@tanstack/setup` → `tanstack/router#79ac49ee...`). Used "double-tap" publishing (two consecutive versions minutes apart) across 300+ versions of 150+ packages in 14+ namespaces. Payload: scrape GitHub/npm tokens, plant `.claude/router_runtime.js` Bun payload and a SessionStart hook in `.claude/settings.json`, drop `.vscode/setup.mjs` with a folderOpen task in `.vscode/tasks.json`, inject a `.github/workflows/codeql_analysis.yml` workflow, and install `~/.local/bin/gh-token-monitor.sh` registered as `com.user.gh-token-monitor.plist` (macOS LaunchAgent) or `gh-token-monitor.service` (Linux systemd). Exfiltration uses AES-256-GCM with PBKDF2 (200K iterations, master key `0c0e8730...c40aa`) to `api.masscan.cloud` and Session Protocol via `filev2.getsession.org` (TLS-pinned to `seed1.getsession.org`). Marker repos: `git-tanstack.com`, `siridar-ghola-567`, `tleilaxu-ornithopter-43`. Threat actor: GitHub `voicproducoes` (account ID 269549300).
+| Config dir | Filename | Description | Source attack |
+|------------|----------|-------------|---------------|
+| `.claude/` | `router_runtime.js` | Bun payload loaded via a `SessionStart` hook injected into `.claude/settings.json` | mini-shai-hulud |
+| `.claude/` | `setup.mjs` | Shared setup module used by the Claude Code and VS Code droppers | mini-shai-hulud |
+| `.vscode/` | `setup.mjs` | Shared setup module loaded via a `folderOpen` task injected into `.vscode/tasks.json` | mini-shai-hulud |
 
-  **Note:** surplies detects the compromised package versions, the user-global persistence files (`gh-token-monitor` LaunchAgent/systemd unit/script), and active connections to the C2 domains. The project-local artifacts (`<project>/.claude/router_runtime.js`, `<project>/.vscode/setup.mjs`, etc.) are NOT scanned — they live inside individual repositories rather than at fixed home-relative paths, so detecting them would require walking every project and risk false positives against legitimate `.claude/` and `.vscode/` content.
+**How it works:** The home-directory walk (the same one used for `node_modules`) returns `SkipDir` when it encounters a `.claude/` or `.vscode/` directory after running `os.Stat()` on each known malicious filename inside. No content inspection is performed — the filenames themselves are not used by legitimate Claude Code or VS Code configurations, so presence alone is the signal.
 
+**Why this matters:** The Mini Shai-Hulud worm modifies project-local config to ensure the payload runs the next time a developer opens that project. Editing `.claude/settings.json` with a `SessionStart` hook makes the next `claude` invocation in that repo execute `.claude/router_runtime.js`; editing `.vscode/tasks.json` with a `folderOpen` task makes the next VS Code window opened in that repo execute `.vscode/setup.mjs`. The malicious files survive `git clean` against most ignore lists, persist across `node_modules` reinstalls, and re-trigger exfiltration on every developer session — finding the payload file is often the only reliable signal that a project was touched, since the lifecycle hook itself is short and easy to miss in a diff.
 
 ## License
 
