@@ -21,10 +21,15 @@ var KnownPhantomPackages = []string{
 	// https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
 	"plain-crypto-js",
 
-	// TanStack pwn-request (May 2026) — fabricated package pulled from a
-	// GitHub fork via an injected optionalDependencies entry. Not a real
-	// published @tanstack package.
+	// Mini Shai-Hulud — TanStack sub-incident (May 11, 2026). Fabricated
+	// package pulled from a GitHub fork via an injected optionalDependencies
+	// entry. Not a real published @tanstack package. Distinctive initial-
+	// access vector (pwn-request → Actions cache poisoning → OIDC token
+	// theft) but same Mini Shai-Hulud campaign per Socket/StepSecurity/Wiz/
+	// Snyk attribution; payload (router_init.js) and exfil network
+	// (filev2/seed{1,2,3}.getsession.org) match the broader campaign.
 	// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+	// https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack
 	"@tanstack/setup",
 }
 
@@ -108,11 +113,16 @@ var KnownBadNpmVersions = map[string][]string{
 	"@uipath/vss":                                    {"0.1.6"},
 	"@uipath/widget.sdk":                             {"1.2.3"},
 
-	// TanStack pwn-request compromise (May 2026)
+	// Mini Shai-Hulud — TanStack sub-incident (May 11, 2026)
 	// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+	// https://socket.dev/blog/tanstack-npm-packages-compromised-mini-shai-hulud-supply-chain-attack
 	// 84 malicious versions across 42 @tanstack packages, published via
-	// stolen OIDC token after a fork PR poisoned a pnpm cache. Mechanism
-	// is distinct from Mini Shai-Hulud despite overlapping timing.
+	// an OIDC token extracted from runner memory after a fork PR poisoned a
+	// pnpm cache. Distinct initial-access vector from the rest of the
+	// Mini Shai-Hulud campaign (pwn-request → Actions cache poisoning →
+	// OIDC token theft, vs. compromised maintainer tokens and double-tap
+	// publishing) but same actor (TeamPCP), payload family, and exfil
+	// infrastructure per Socket / StepSecurity / Wiz / Snyk.
 	"@tanstack/arktype-adapter":               {"1.166.12", "1.166.15"},
 	"@tanstack/eslint-plugin-router":          {"1.161.9", "1.161.12"},
 	"@tanstack/eslint-plugin-start":           {"0.0.4", "0.0.7"},
@@ -313,11 +323,11 @@ var KnownProjectArtifacts = map[string][]ProjectArtifact{
 // documented supply chain attack is known to drop inside packages of that
 // scope. Each package in node_modules/<scope>/* is checked for these files
 // during the node_modules walk, independent of the version check.
-// Source: TanStack postmortem
+// Source: TanStack postmortem (documenting the Mini Shai-Hulud TanStack sub-incident)
 // https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
 var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
 	"@tanstack": {
-		{Filename: "router_init.js", Desc: "tanstack pwn-request payload (~2.3 MB obfuscated JS)", Attack: "tanstack pwn-request (May 2026)"},
+		{Filename: "router_init.js", Desc: "Mini Shai-Hulud TanStack sub-incident payload (~2.3 MB obfuscated JS)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
 	},
 }
 
@@ -333,9 +343,9 @@ var KnownC2Domains = []string{
 	"git-tanstack.com",      // mini-shai-hulud — marker/staging domain
 	"filev2.getsession.org", // mini-shai-hulud — Session Protocol CDN abused for exfil
 	"seed1.getsession.org",  // mini-shai-hulud — Session seed used for TLS pinning
-	"seed2.getsession.org",  // tanstack pwn-request — Session seed for exfil channel
-	"seed3.getsession.org",  // tanstack pwn-request — Session seed for exfil channel
-	"litter.catbox.moe",     // tanstack pwn-request — secondary payload host (legit service abused)
+	"seed2.getsession.org",  // mini-shai-hulud (TanStack sub-incident) — Session seed for exfil channel
+	"seed3.getsession.org",  // mini-shai-hulud (TanStack sub-incident) — Session seed for exfil channel
+	"litter.catbox.moe",     // mini-shai-hulud (TanStack sub-incident) — secondary payload host (legit service abused)
 }
 
 // KnownC2IPs are command-and-control IP addresses from documented supply chain attacks.
