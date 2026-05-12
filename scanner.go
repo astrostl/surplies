@@ -65,12 +65,14 @@ type Scanner struct {
 
 // ScanStats tracks scan progress.
 type ScanStats struct {
-	NodeModulesFound      int
-	PackagesScanned       int
-	SitePackagesFound     int
-	PythonPackagesScanned int
-	FilesChecked          int
-	Duration              time.Duration
+	NodeModulesFound        int
+	PackagesScanned         int
+	SitePackagesFound       int
+	PythonPackagesScanned   int
+	ComposerVendorsFound    int
+	ComposerPackagesScanned int
+	FilesChecked            int
+	Duration                time.Duration
 }
 
 // New creates a scanner targeting the given home directory.
@@ -105,7 +107,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.checkArtifacts()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
-	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, .claude, .vscode)...\n")
+	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
 	s.scanProjectDirs()
 
 	// Phase 3: Find and scan Python site-packages directories
@@ -121,7 +123,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.checkTempArtifacts()
 
 	s.stats.Duration = time.Since(start)
-	fmt.Fprintf(os.Stderr, "\nScan complete in %s\n", s.stats.Duration.Round(time.Millisecond))
+	fmt.Fprintln(os.Stderr)
 
 	return s.Findings, s.stats
 }
@@ -190,8 +192,46 @@ func (s *Scanner) scanProjectDirs() {
 			return filepath.SkipDir
 		}
 
+		// A composer vendor/ directory is identified by the presence of
+		// vendor/composer/installed.json. We don't blindly SkipDir on every
+		// "vendor" since that name is reused by Go modules and others — only
+		// stop recursing when we've confirmed it's a Composer install.
+		if d.Name() == "vendor" {
+			installedJSON := filepath.Join(path, "composer", "installed.json")
+			if _, err := os.Stat(installedJSON); err == nil {
+				parent := filepath.Dir(path)
+				if strings.Contains(parent, "vendor") {
+					return filepath.SkipDir
+				}
+				s.stats.ComposerVendorsFound++
+				s.log("found composer vendor: %s", path)
+				s.checkComposerVendor(path)
+				return filepath.SkipDir
+			}
+		}
+
 		return nil
 	})
+}
+
+// checkNpmPayloadFiles looks for known malicious filenames inside a single npm
+// package directory in node_modules. Used to catch documented payload files
+// (e.g. router_init.js dropped into @tanstack packages) independently of the
+// package's declared version, so leftover artifacts after partial cleanup or
+// version-string tampering are still detected.
+func (s *Scanner) checkNpmPayloadFiles(pkgDir, pkgName string, files []ProjectArtifact) {
+	for _, p := range files {
+		path := filepath.Join(pkgDir, p.Filename)
+		s.stats.FilesChecked++
+		if _, err := os.Stat(path); err == nil {
+			s.addFinding(Finding{
+				Check:    "npm-payload-file",
+				Severity: SevCritical,
+				Path:     path,
+				Detail:   fmt.Sprintf("%s contains %s (attack: %s)", pkgName, p.Desc, p.Attack),
+			})
+		}
+	}
 }
 
 // checkProjectArtifactDir looks for known malicious filenames inside a project-local
@@ -263,9 +303,13 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 			if err != nil {
 				continue
 			}
+			payloadFiles := KnownNpmPayloadFiles[entry.Name()]
 			for _, se := range scopedEntries {
 				if se.IsDir() {
-					s.checkPackage(filepath.Join(scopeDir, se.Name()), entry.Name()+"/"+se.Name())
+					pkgDir := filepath.Join(scopeDir, se.Name())
+					pkgName := entry.Name() + "/" + se.Name()
+					s.checkPackage(pkgDir, pkgName)
+					s.checkNpmPayloadFiles(pkgDir, pkgName, payloadFiles)
 				}
 			}
 			continue

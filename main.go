@@ -7,6 +7,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 )
 
 var version = "dev"
@@ -59,12 +60,16 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func printFindings(findings []Finding, stats ScanStats) {
-	fmt.Fprintf(os.Stderr, "Stats: %d node_modules (%d pkgs), %d site-packages (%d pkgs), %d files checked\n\n",
+func printScanSummary(stats ScanStats) {
+	fmt.Fprintf(os.Stderr, "Scan complete in %s\n", stats.Duration.Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "Stats: %d node_modules (%d pkgs), %d site-packages (%d pkgs), %d composer vendors (%d pkgs), %d files checked\n",
 		stats.NodeModulesFound, stats.PackagesScanned,
 		stats.SitePackagesFound, stats.PythonPackagesScanned,
+		stats.ComposerVendorsFound, stats.ComposerPackagesScanned,
 		stats.FilesChecked)
+}
 
+func printFindings(findings []Finding, stats ScanStats) {
 	if len(findings) == 0 {
 		pkgs := make(map[string]bool)
 		for pkg := range KnownBadNpmVersions {
@@ -73,14 +78,23 @@ func printFindings(findings []Finding, stats ScanStats) {
 		for pkg := range KnownBadPythonVersions {
 			pkgs[pkg] = true
 		}
+		for pkg := range KnownBadComposerVersions {
+			pkgs[pkg] = true
+		}
 		names := make([]string, 0, len(pkgs))
 		for pkg := range pkgs {
 			names = append(names, pkg)
 		}
 		sort.Strings(names)
-		fmt.Printf("No supply chain attack indicators found. Checked for: %s.\n", strings.Join(names, ", "))
+		fmt.Printf("Checked for: %s.\n\n", strings.Join(names, ", "))
+		printScanSummary(stats)
+		fmt.Println()
+		fmt.Println("No supply chain attack indicators found.")
 		return
 	}
+
+	printScanSummary(stats)
+	fmt.Fprintln(os.Stderr)
 
 	critical, warn, info := 0, 0, 0
 	for _, f := range findings {

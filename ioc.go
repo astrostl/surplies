@@ -5,20 +5,27 @@ import (
 	"path/filepath"
 )
 
-// All IOCs in this file are sourced from StepSecurity's published incident
-// analyses (https://www.stepsecurity.io/blog). Each block below cites the
-// specific writeup it was derived from. surplies is a mechanization layer
-// on top of their research — the original reverse engineering, payload
+// IOCs in this file come from public incident analyses — primarily
+// StepSecurity's writeups (https://www.stepsecurity.io/blog), with
+// additional indicators from victim postmortems. Each block cites the
+// specific source it was derived from. surplies is a mechanization layer
+// on top of others' research — the original reverse engineering, payload
 // extraction, and attribution work is theirs.
 
 // --- npm ---
 
 // KnownPhantomPackages are npm packages that exist solely as malware carriers
 // and have no legitimate use. Their presence in node_modules is always suspicious.
-// Source: StepSecurity axios writeup
-// https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
 var KnownPhantomPackages = []string{
+	// axios (March 2026)
+	// https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
 	"plain-crypto-js",
+
+	// TanStack pwn-request (May 2026) — fabricated package pulled from a
+	// GitHub fork via an injected optionalDependencies entry. Not a real
+	// published @tanstack package.
+	// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+	"@tanstack/setup",
 }
 
 // KnownBadNpmVersions maps legitimate npm package names to known-compromised versions.
@@ -29,7 +36,9 @@ var KnownBadNpmVersions = map[string][]string{
 
 	// Mini Shai-Hulud self-spreading worm (May 2026)
 	// https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem
-	"@opensearch-project/opensearch": {"3.6.2"},
+	// Broader package list tracked at:
+	// https://socket.dev/supply-chain-attacks/mini-shai-hulud
+	"@opensearch-project/opensearch": {"3.5.3", "3.6.2", "3.7.0", "3.8.0"},
 
 	// @uipath
 	"@uipath/access-policy-sdk":                      {"0.3.1"},
@@ -99,7 +108,11 @@ var KnownBadNpmVersions = map[string][]string{
 	"@uipath/vss":                                    {"0.1.6"},
 	"@uipath/widget.sdk":                             {"1.2.3"},
 
-	// @tanstack
+	// TanStack pwn-request compromise (May 2026)
+	// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+	// 84 malicious versions across 42 @tanstack packages, published via
+	// stolen OIDC token after a fork PR poisoned a pnpm cache. Mechanism
+	// is distinct from Mini Shai-Hulud despite overlapping timing.
 	"@tanstack/arktype-adapter":               {"1.166.12", "1.166.15"},
 	"@tanstack/eslint-plugin-router":          {"1.161.9", "1.161.12"},
 	"@tanstack/eslint-plugin-start":           {"0.0.4", "0.0.7"},
@@ -154,14 +167,19 @@ var KnownBadNpmVersions = map[string][]string{
 	"@taskflow-corp/cli": {"0.1.24", "0.1.25", "0.1.26", "0.1.27", "0.1.28", "0.1.29"},
 
 	// @tolka
-	"@tolka/cli": {"1.0.2", "1.0.3", "1.0.4", "1.0.6"},
+	"@tolka/cli": {"1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6"},
 
 	// @supersurkhet
 	"@supersurkhet/cli": {"0.0.2", "0.0.3", "0.0.4", "0.0.5", "0.0.6", "0.0.7"},
 	"@supersurkhet/sdk": {"0.0.2", "0.0.3", "0.0.4", "0.0.5", "0.0.6", "0.0.7"},
 
 	// @beproduct
-	"@beproduct/nestjs-auth": {"0.1.2", "0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.12", "0.1.13", "0.1.14", "0.1.15", "0.1.16", "0.1.17", "0.1.19"},
+	"@beproduct/nestjs-auth": {"0.1.2", "0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8", "0.1.9", "0.1.10", "0.1.11", "0.1.12", "0.1.13", "0.1.14", "0.1.15", "0.1.16", "0.1.17", "0.1.18", "0.1.19"},
+
+	// @cap-js
+	"@cap-js/db-service": {"2.10.1"},
+	"@cap-js/postgres":   {"2.2.2"},
+	"@cap-js/sqlite":     {"2.2.2"},
 
 	// @dirigible-ai
 	"@dirigible-ai/sdk": {"0.6.2", "0.6.3"},
@@ -172,28 +190,28 @@ var KnownBadNpmVersions = map[string][]string{
 	"ml-toolkit-ts":                {"1.0.4", "1.0.5"},
 
 	// @squawk
-	"@squawk/airport-data":       {"0.7.4", "0.7.5", "0.7.7"},
-	"@squawk/airports":           {"0.6.2", "0.6.3", "0.6.5"},
-	"@squawk/airspace":           {"0.8.1", "0.8.2", "0.8.4"},
-	"@squawk/airspace-data":      {"0.5.3", "0.5.4", "0.5.6"},
-	"@squawk/airway-data":        {"0.5.4", "0.5.5", "0.5.7"},
-	"@squawk/airways":            {"0.4.2", "0.4.3", "0.4.5"},
-	"@squawk/fix-data":           {"0.6.4", "0.6.5", "0.6.7"},
-	"@squawk/fixes":              {"0.3.2", "0.3.3", "0.3.5"},
-	"@squawk/flight-math":        {"0.5.4", "0.5.5", "0.5.7"},
-	"@squawk/flightplan":         {"0.5.2", "0.5.3", "0.5.5"},
-	"@squawk/geo":                {"0.4.4", "0.4.5", "0.4.7"},
-	"@squawk/icao-registry":      {"0.5.2", "0.5.3", "0.5.5"},
-	"@squawk/icao-registry-data": {"0.8.4", "0.8.5", "0.8.7"},
-	"@squawk/mcp":                {"0.9.1", "0.9.2", "0.9.4"},
-	"@squawk/navaid-data":        {"0.6.4", "0.6.5", "0.6.7"},
-	"@squawk/navaids":            {"0.4.2", "0.4.3", "0.4.5"},
-	"@squawk/notams":             {"0.3.6", "0.3.7", "0.3.9"},
-	"@squawk/procedure-data":     {"0.7.3", "0.7.4", "0.7.6"},
-	"@squawk/procedures":         {"0.5.2", "0.5.3", "0.5.5"},
-	"@squawk/types":              {"0.8.1", "0.8.2", "0.8.4"},
-	"@squawk/units":              {"0.4.3", "0.4.4", "0.4.6"},
-	"@squawk/weather":            {"0.5.6", "0.5.7", "0.5.9"},
+	"@squawk/airport-data":       {"0.7.4", "0.7.5", "0.7.6", "0.7.7", "0.7.8"},
+	"@squawk/airports":           {"0.6.2", "0.6.3", "0.6.4", "0.6.5", "0.6.6"},
+	"@squawk/airspace":           {"0.8.1", "0.8.2", "0.8.3", "0.8.4", "0.8.5"},
+	"@squawk/airspace-data":      {"0.5.3", "0.5.4", "0.5.5", "0.5.6", "0.5.7"},
+	"@squawk/airway-data":        {"0.5.4", "0.5.5", "0.5.6", "0.5.7", "0.5.8"},
+	"@squawk/airways":            {"0.4.2", "0.4.3", "0.4.4", "0.4.5", "0.4.6"},
+	"@squawk/fix-data":           {"0.6.4", "0.6.5", "0.6.6", "0.6.7", "0.6.8"},
+	"@squawk/fixes":              {"0.3.2", "0.3.3", "0.3.4", "0.3.5", "0.3.6"},
+	"@squawk/flight-math":        {"0.5.4", "0.5.5", "0.5.6", "0.5.7", "0.5.8"},
+	"@squawk/flightplan":         {"0.5.2", "0.5.3", "0.5.4", "0.5.5", "0.5.6"},
+	"@squawk/geo":                {"0.4.4", "0.4.5", "0.4.6", "0.4.7", "0.4.8"},
+	"@squawk/icao-registry":      {"0.5.2", "0.5.3", "0.5.4", "0.5.5", "0.5.6"},
+	"@squawk/icao-registry-data": {"0.8.4", "0.8.5", "0.8.6", "0.8.7", "0.8.8"},
+	"@squawk/mcp":                {"0.9.1", "0.9.2", "0.9.3", "0.9.4", "0.9.5"},
+	"@squawk/navaid-data":        {"0.6.4", "0.6.5", "0.6.6", "0.6.7", "0.6.8"},
+	"@squawk/navaids":            {"0.4.2", "0.4.3", "0.4.4", "0.4.5", "0.4.6"},
+	"@squawk/notams":             {"0.3.6", "0.3.7", "0.3.8", "0.3.9", "0.3.10"},
+	"@squawk/procedure-data":     {"0.7.3", "0.7.4", "0.7.5", "0.7.6", "0.7.7"},
+	"@squawk/procedures":         {"0.5.2", "0.5.3", "0.5.4", "0.5.5", "0.5.6"},
+	"@squawk/types":              {"0.8.1", "0.8.2", "0.8.3", "0.8.4", "0.8.5"},
+	"@squawk/units":              {"0.4.3", "0.4.4", "0.4.5", "0.4.6", "0.4.7"},
+	"@squawk/weather":            {"0.5.6", "0.5.7", "0.5.8", "0.5.9", "0.5.10"},
 
 	// @tallyui
 	"@tallyui/components":            {"1.0.1", "1.0.2", "1.0.3"},
@@ -213,30 +231,50 @@ var KnownBadNpmVersions = map[string][]string{
 	"@mesadev/sdk":     {"0.28.3"},
 
 	// @mistralai
-	"@mistralai/mistralai":       {"2.2.3", "2.2.4"},
-	"@mistralai/mistralai-azure": {"1.7.2", "1.7.3"},
-	"@mistralai/mistralai-gcp":   {"1.7.2", "1.7.3"},
+	"@mistralai/mistralai":       {"2.2.2", "2.2.3", "2.2.4"},
+	"@mistralai/mistralai-azure": {"1.7.1", "1.7.2", "1.7.3"},
+	"@mistralai/mistralai-gcp":   {"1.7.1", "1.7.2", "1.7.3"},
 
 	// unscoped
 	"agentwork-cli":       {"0.1.4", "0.1.5"},
 	"cmux-agent-mcp":      {"0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7", "0.1.8"},
-	"cross-stitch":        {"1.1.3", "1.1.4", "1.1.6"},
-	"git-branch-selector": {"1.3.3", "1.3.4", "1.3.5", "1.3.7"},
-	"git-git-git":         {"1.0.8", "1.0.9", "1.0.10", "1.0.12"},
-	"nextmove-mcp":        {"0.1.3", "0.1.4", "0.1.5", "0.1.7"},
+	"cross-stitch":        {"1.1.3", "1.1.4", "1.1.5", "1.1.6", "1.1.7"},
+	"git-branch-selector": {"1.3.3", "1.3.4", "1.3.5", "1.3.6", "1.3.7"},
+	"git-git-git":         {"1.0.8", "1.0.9", "1.0.10", "1.0.11", "1.0.12"},
+	"intercom-client":     {"7.0.4"},
+	"mbt":                 {"1.2.48"},
+	"nextmove-mcp":        {"0.1.3", "0.1.4", "0.1.5", "0.1.6", "0.1.7"},
 	"safe-action":         {"0.8.3", "0.8.4"},
-	"ts-dna":              {"3.0.1", "3.0.2", "3.0.4"},
-	"wot-api":             {"0.8.1", "0.8.2", "0.8.4"},
+	"ts-dna":              {"3.0.1", "3.0.2", "3.0.3", "3.0.4", "3.0.5"},
+	"wot-api":             {"0.8.1", "0.8.2", "0.8.3", "0.8.4"},
+}
+
+// --- Composer/Packagist ---
+
+// KnownBadComposerVersions maps Composer package names ("vendor/pkg") to
+// known-compromised versions. Matching strips a leading "v" so "v5.0.2" and
+// "5.0.2" both match either form — Composer/Packagist tags carry "v" by
+// convention but installed.json normalization varies.
+var KnownBadComposerVersions = map[string][]string{
+	// Mini Shai-Hulud worm — Composer artifact tracked alongside the npm campaign
+	// https://socket.dev/supply-chain-attacks/mini-shai-hulud
+	"intercom/intercom-php": {"5.0.2"},
 }
 
 // --- Python/PyPI ---
 
 // KnownBadPythonVersions maps legitimate PyPI package names to known-compromised versions.
 // Package names are normalized (lowercase, hyphens) to match dist-info directory conventions.
-// Source: StepSecurity litellm writeup
-// https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel
 var KnownBadPythonVersions = map[string][]string{
+	// litellm credential stealer
+	// https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel
 	"litellm": {"1.82.7", "1.82.8"},
+
+	// Mini Shai-Hulud worm — PyPI artifacts tracked alongside the npm campaign
+	// https://socket.dev/supply-chain-attacks/mini-shai-hulud
+	"guardrails-ai": {"0.10.1"},
+	"lightning":     {"2.6.2", "2.6.3"},
+	"mistralai":     {"2.4.6"},
 }
 
 // KnownMaliciousPthFiles are .pth filenames that are known malware delivery mechanisms.
@@ -271,6 +309,18 @@ var KnownProjectArtifacts = map[string][]ProjectArtifact{
 	},
 }
 
+// KnownNpmPayloadFiles maps an npm scope (e.g., "@tanstack") to filenames a
+// documented supply chain attack is known to drop inside packages of that
+// scope. Each package in node_modules/<scope>/* is checked for these files
+// during the node_modules walk, independent of the version check.
+// Source: TanStack postmortem
+// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
+	"@tanstack": {
+		{Filename: "router_init.js", Desc: "tanstack pwn-request payload (~2.3 MB obfuscated JS)", Attack: "tanstack pwn-request (May 2026)"},
+	},
+}
+
 // --- Network IOCs ---
 
 // KnownC2Domains are command-and-control domains from documented supply chain attacks.
@@ -283,6 +333,9 @@ var KnownC2Domains = []string{
 	"git-tanstack.com",      // mini-shai-hulud — marker/staging domain
 	"filev2.getsession.org", // mini-shai-hulud — Session Protocol CDN abused for exfil
 	"seed1.getsession.org",  // mini-shai-hulud — Session seed used for TLS pinning
+	"seed2.getsession.org",  // tanstack pwn-request — Session seed for exfil channel
+	"seed3.getsession.org",  // tanstack pwn-request — Session seed for exfil channel
+	"litter.catbox.moe",     // tanstack pwn-request — secondary payload host (legit service abused)
 }
 
 // KnownC2IPs are command-and-control IP addresses from documented supply chain attacks.

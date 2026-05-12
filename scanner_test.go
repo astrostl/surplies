@@ -257,6 +257,63 @@ func TestAnalyzePthContent(t *testing.T) {
 	}
 }
 
+func TestNpmPayloadFile(t *testing.T) {
+	dir := t.TempDir()
+	nm := filepath.Join(dir, "node_modules")
+
+	// Plant router_init.js inside a @tanstack package — should be flagged
+	// regardless of whether the version is on the known-bad list.
+	pkgDir := filepath.Join(nm, "@tanstack", "react-router")
+	os.MkdirAll(pkgDir, 0755)
+	writePackageJSON(t, pkgDir, "@tanstack/react-router", "1.999.0") // version NOT in the bad list
+	os.WriteFile(filepath.Join(pkgDir, "router_init.js"), []byte("// payload"), 0644)
+
+	// Plant a benign @tanstack package — must not be flagged.
+	cleanDir := filepath.Join(nm, "@tanstack", "query")
+	os.MkdirAll(cleanDir, 0755)
+	writePackageJSON(t, cleanDir, "@tanstack/query", "5.0.0")
+	os.WriteFile(filepath.Join(cleanDir, "index.js"), []byte("// legit"), 0644)
+
+	s := New(dir, false)
+	s.checkNodeModulesDir(nm)
+
+	foundPayload := false
+	for _, f := range s.Findings {
+		if f.Check == "npm-payload-file" && strings.Contains(f.Path, "router_init.js") {
+			foundPayload = true
+		}
+		if f.Check == "npm-payload-file" && strings.Contains(f.Path, "query") {
+			t.Errorf("benign @tanstack/query was flagged: %v", f)
+		}
+	}
+	if !foundPayload {
+		t.Error("router_init.js payload in @tanstack package not detected")
+	}
+}
+
+func TestPhantomTanstackSetup(t *testing.T) {
+	dir := t.TempDir()
+	nm := filepath.Join(dir, "node_modules")
+
+	// @tanstack/setup is a fabricated package — its presence is always malicious.
+	phantomDir := filepath.Join(nm, "@tanstack", "setup")
+	os.MkdirAll(phantomDir, 0755)
+	writePackageJSON(t, phantomDir, "@tanstack/setup", "0.0.0")
+
+	s := New(dir, false)
+	s.checkNodeModulesDir(nm)
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "phantom-dependency" && strings.Contains(f.Path, "@tanstack/setup") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("@tanstack/setup phantom dependency not detected")
+	}
+}
+
 func TestProjectArtifact(t *testing.T) {
 	dir := t.TempDir()
 
@@ -284,6 +341,124 @@ func TestProjectArtifact(t *testing.T) {
 	}
 	if !found {
 		t.Error("malicious .claude/router_runtime.js not detected")
+	}
+}
+
+func TestCompromisedComposerVersionV2(t *testing.T) {
+	dir := t.TempDir()
+	composerDir := filepath.Join(dir, "myproject", "vendor", "composer")
+	os.MkdirAll(composerDir, 0755)
+
+	// Composer 2.x installed.json envelope shape.
+	installed := `{"packages":[{"name":"intercom/intercom-php","version":"5.0.2"},{"name":"symfony/console","version":"6.4.0"}]}`
+	os.WriteFile(filepath.Join(composerDir, "installed.json"), []byte(installed), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "compromised-composer-version" && strings.Contains(f.Detail, "intercom/intercom-php") {
+			found = true
+		}
+		if f.Check == "compromised-composer-version" && strings.Contains(f.Detail, "symfony/console") {
+			t.Errorf("benign symfony/console was flagged: %v", f)
+		}
+	}
+	if !found {
+		t.Error("compromised composer version not detected (v2 format)")
+	}
+}
+
+func TestCompromisedComposerVersionV1(t *testing.T) {
+	dir := t.TempDir()
+	composerDir := filepath.Join(dir, "myproject", "vendor", "composer")
+	os.MkdirAll(composerDir, 0755)
+
+	// Composer 1.x installed.json — flat top-level array.
+	installed := `[{"name":"intercom/intercom-php","version":"5.0.2"}]`
+	os.WriteFile(filepath.Join(composerDir, "installed.json"), []byte(installed), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "compromised-composer-version" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("compromised composer version not detected (v1 format)")
+	}
+}
+
+func TestComposerVPrefixVersion(t *testing.T) {
+	dir := t.TempDir()
+	composerDir := filepath.Join(dir, "myproject", "vendor", "composer")
+	os.MkdirAll(composerDir, 0755)
+
+	// Composer sometimes records the version with a leading "v" matching the
+	// upstream git tag. Our IOC list stores "5.0.2", but installed.json may
+	// say "v5.0.2" — both must be flagged.
+	installed := `{"packages":[{"name":"intercom/intercom-php","version":"v5.0.2"}]}`
+	os.WriteFile(filepath.Join(composerDir, "installed.json"), []byte(installed), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "compromised-composer-version" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("compromised composer version with v-prefix not detected")
+	}
+}
+
+func TestCleanComposerVendor(t *testing.T) {
+	dir := t.TempDir()
+	composerDir := filepath.Join(dir, "myproject", "vendor", "composer")
+	os.MkdirAll(composerDir, 0755)
+
+	installed := `{"packages":[{"name":"intercom/intercom-php","version":"5.0.3"},{"name":"symfony/console","version":"6.4.0"}]}`
+	os.WriteFile(filepath.Join(composerDir, "installed.json"), []byte(installed), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	for _, f := range s.Findings {
+		if f.Check == "compromised-composer-version" {
+			t.Errorf("clean composer vendor produced finding: %v", f)
+		}
+	}
+}
+
+func TestNonComposerVendorDir(t *testing.T) {
+	dir := t.TempDir()
+	// A "vendor" directory that is NOT a Composer vendor (e.g., a Go vendor
+	// dir). It must not block the walk from finding deeper artifacts.
+	goVendor := filepath.Join(dir, "goproj", "vendor", "github.com", "x", "y")
+	os.MkdirAll(goVendor, 0755)
+
+	// Plant a malicious .claude artifact under a path beneath the vendor dir.
+	deepClaude := filepath.Join(dir, "goproj", "vendor", "github.com", "x", "y", ".claude")
+	os.MkdirAll(deepClaude, 0755)
+	os.WriteFile(filepath.Join(deepClaude, "router_runtime.js"), []byte("// payload"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "project-artifact" && strings.Contains(f.Path, "router_runtime.js") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("walk SkipDir'd a non-Composer vendor and missed deeper artifact")
 	}
 }
 
