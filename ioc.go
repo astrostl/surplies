@@ -19,7 +19,7 @@ var KnownBadNpmVersions = map[string][]string{
 	// https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan
 	"axios": {"1.14.1", "0.30.4"},
 
-	// Mini Shai-Hulud self-spreading worm (March 2026)
+	// Mini Shai-Hulud self-spreading worm (May 2026)
 	// https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem
 	"@opensearch-project/opensearch": {"3.6.2"},
 
@@ -259,7 +259,7 @@ var KnownC2IPs = []string{
 var ArtifactsDarwin = []ArtifactCheck{
 	{Path: "/Library/Caches/com.apple.act.mond", Absolute: true, Desc: "axios RAT payload (macOS)", Attack: "axios 1.14.1/0.30.4"},
 	{Path: "/tmp/6202033", Absolute: true, Desc: "axios AppleScript dropper (macOS)", Attack: "axios 1.14.1/0.30.4"},
-	{Path: "Library/LaunchAgents/com.user.gh-token-monitor.plist", Absolute: false, Desc: "mini-shai-hulud LaunchAgent persistence", Attack: "mini-shai-hulud (March 2026)"},
+	{Path: "Library/LaunchAgents/com.user.gh-token-monitor.plist", Absolute: false, Desc: "mini-shai-hulud LaunchAgent persistence", Attack: "mini-shai-hulud (May 2026)"},
 }
 
 // ArtifactsWindows returns known malicious file paths on Windows.
@@ -281,7 +281,7 @@ func ArtifactsWindows() []ArtifactCheck {
 // ArtifactsLinux are known malicious file paths on Linux.
 var ArtifactsLinux = []ArtifactCheck{
 	{Path: "/tmp/ld.py", Absolute: true, Desc: "axios Python RAT payload (Linux)", Attack: "axios 1.14.1/0.30.4"},
-	{Path: ".config/systemd/user/gh-token-monitor.service", Absolute: false, Desc: "mini-shai-hulud systemd persistence unit", Attack: "mini-shai-hulud (March 2026)"},
+	{Path: ".config/systemd/user/gh-token-monitor.service", Absolute: false, Desc: "mini-shai-hulud systemd persistence unit", Attack: "mini-shai-hulud (May 2026)"},
 }
 
 // ArtifactsCrossPlatform are checked on all platforms (paths relative to home dir).
@@ -290,7 +290,7 @@ var ArtifactsCrossPlatform = []ArtifactCheck{
 	{Path: ".config/sysmon/sysmon.py", Absolute: false, Desc: "litellm C2 backdoor script", Attack: "litellm 1.82.7/1.82.8"},
 	{Path: ".config/systemd/user/sysmon.service", Absolute: false, Desc: "litellm systemd persistence unit", Attack: "litellm 1.82.7/1.82.8"},
 	// mini-shai-hulud token-monitor persistence script
-	{Path: ".local/bin/gh-token-monitor.sh", Absolute: false, Desc: "mini-shai-hulud token-monitor persistence script", Attack: "mini-shai-hulud (March 2026)"},
+	{Path: ".local/bin/gh-token-monitor.sh", Absolute: false, Desc: "mini-shai-hulud token-monitor persistence script", Attack: "mini-shai-hulud (May 2026)"},
 }
 
 // ArtifactsTmp are checked in temp directories on all platforms.
