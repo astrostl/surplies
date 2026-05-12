@@ -13,7 +13,27 @@
 
 Use [semantic versioning](https://semver.org/). For IOC-only additions (new packages/hashes), bump the patch version. For new check types, bump minor.
 
-### 2. Run the release target
+### 2. Sync the README with changes since the last release
+
+Diff `ioc.go`, `scanner.go`, `python.go`, `composer.go`, and `main.go` against the previous release tag to enumerate everything that needs to be reflected in `README.md`:
+
+```sh
+git diff $(git describe --tags --abbrev=0) -- ioc.go scanner.go python.go composer.go main.go
+```
+
+For each change, update the matching section of `README.md`:
+
+- **New IOC source / writeup** — update the intro bullet list and the **Acknowledgments** section so every cited researcher is credited.
+- **New attack covered** — add an intro bullet, and confirm the "N documented major supply chain attacks" count at the top of the README still matches.
+- **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table.
+- **New `KnownPhantomPackages` entries** — update the `phantom-dependency` table.
+- **New `KnownC2Domains` / `KnownC2IPs` entries** — update the `network-ioc-active-connection` table.
+- **New `KnownProjectArtifacts` / `KnownNpmPayloadFiles` / `KnownMaliciousPthFiles` / `ArtifactsTmp` entries** — update the corresponding `project-artifact` / `npm-payload-file` / `malicious-pth-file` / `suspicious-temp-file` table.
+- **New check function or new `Check:` string** — add a new numbered section under **Checks** and, if it changed scanner phasing, update the **Scan phases** list.
+
+Commit the README updates as part of the release commit in step 4.
+
+### 3. Run the release target
 
 ```sh
 make release VERSION=v1.2.3
@@ -26,16 +46,16 @@ This will:
 - Compute SHA256 checksums
 - Patch `Formula/surplies.rb` in place with the new version, URLs, and SHA256s
 
-### 3. Commit and tag
+### 4. Commit and tag
 
 ```sh
-git add Formula/surplies.rb
+git add README.md Formula/surplies.rb
 git commit -m "Release v1.2.3"
 git tag v1.2.3
 git push origin main v1.2.3
 ```
 
-### 4. Create the GitHub release and upload artifacts
+### 5. Create the GitHub release and upload artifacts
 
 ```sh
 gh release create v1.2.3 \
@@ -49,7 +69,7 @@ gh release create v1.2.3 \
   --notes "Brief description of what changed."
 ```
 
-### 5. Verify Homebrew
+### 6. Verify Homebrew
 
 ```sh
 brew update

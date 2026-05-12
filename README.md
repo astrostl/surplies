@@ -6,11 +6,12 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from three documented major supply chain attacks**, all based on [StepSecurity](https://www.stepsecurity.io/)'s incident writeups (see [Acknowledgments](#acknowledgments)):
+**Currently detects indicators from four documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
-- **[Mini Shai-Hulud npm worm](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** — self-spreading attack that compromised 300+ versions across 150+ packages (`@tanstack/*`, `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, and many more) using "double-tap" publishing, exfiltrating to `api.masscan.cloud` and the Session messenger network, and persisting via a `gh-token-monitor` LaunchAgent/systemd unit
+- **[Mini Shai-Hulud npm worm](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** — self-spreading attack that compromised 300+ versions across 150+ packages (`@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, and many more) using "double-tap" publishing, exfiltrating to `api.masscan.cloud` and the Session messenger network, and persisting via a `gh-token-monitor` LaunchAgent/systemd unit. Broader package coverage (including Composer/`intercom-php` and PyPI/`guardrails-ai`, `lightning`, `mistralai`) is tracked at [Socket](https://socket.dev/supply-chain-attacks/mini-shai-hulud).
+- **[TanStack pwn-request compromise](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem)** — fork PR poisoned a pnpm cache, leaking an OIDC token used to publish 84 malicious versions across 42 `@tanstack/*` packages plus an injected `@tanstack/setup` phantom dependency; payload (`router_init.js`) exfiltrated via Session seed nodes and `litter.catbox.moe`. Mechanism is distinct from Mini Shai-Hulud despite overlapping timing.
 
 ## Design principles
 
@@ -70,7 +71,7 @@ surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 The scanner runs five phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads
-2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages and every `.claude/` / `.vscode/` for project-local payload files
+2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, and every `.claude/` / `.vscode/` for project-local payload files
 3. **Python site-packages scanning** — walk home directory + system Python paths, inspect every `site-packages`
 4. **Network IOCs** — check active connections (`netstat -n` for IPs, `netstat` for domains) for C2 indicators
 5. **Temp directory artifacts** — check temp dirs for payload remnants
@@ -110,10 +111,11 @@ Checks for npm packages that exist solely as malware delivery vehicles and have 
 | Package | Source attack |
 |---------|---------------|
 | `plain-crypto-js` | axios 1.14.1/0.30.4 |
+| `@tanstack/setup` | tanstack pwn-request (May 2026) |
 
 **How it works:** For each `node_modules` directory found by walking the home directory, checks whether a subdirectory matching any known phantom package name exists.
 
-**Why this matters:** The axios compromise injected `plain-crypto-js@4.2.1` as a dependency. This package was never imported by axios source code — it existed only to execute a `postinstall` hook that deployed the RAT. The attacker pre-staged a clean `4.2.0` version to establish npm account history before publishing the malicious `4.2.1`.
+**Why this matters:** The axios compromise injected `plain-crypto-js@4.2.1` as a dependency. This package was never imported by axios source code — it existed only to execute a `postinstall` hook that deployed the RAT. The attacker pre-staged a clean `4.2.0` version to establish npm account history before publishing the malicious `4.2.1`. The TanStack pwn-request attack injected `@tanstack/setup` via an `optionalDependencies` entry pointing at a fork of the TanStack repo on GitHub — `@tanstack/setup` is not a real published `@tanstack` package and exists only to deliver the `router_init.js` payload.
 
 ---
 
@@ -126,7 +128,8 @@ Checks installed npm packages against a database of known-compromised versions.
 | Package | Compromised versions | Attack type |
 |---------|---------------------|-------------|
 | `axios` | 1.14.1, 0.30.4 | RAT via phantom dependency (March 2026) |
-| 150+ packages across `@tanstack/*`, `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@beproduct/*`, `@supersurkhet/*`, `@draftauth/*`, `@draftlab/*`, `@taskflow-corp/*`, `@ml-toolkit-ts/*`, `@mesadev/*`, `@mistralai/*`, `@dirigible-ai/*`, `@opensearch-project/opensearch`, `@tolka/*`, and unscoped (`safe-action`, `cross-stitch`, `git-git-git`, `ts-dna`, `wot-api`, `cmux-agent-mcp`, `git-branch-selector`, `nextmove-mcp`, `agentwork-cli`, `ml-toolkit-ts`) | 300+ versions — see `ioc.go` and source blog | Mini Shai-Hulud self-spreading worm (May 2026) |
+| 100+ packages across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@beproduct/*`, `@supersurkhet/*`, `@draftauth/*`, `@draftlab/*`, `@taskflow-corp/*`, `@ml-toolkit-ts/*`, `@mesadev/*`, `@mistralai/*`, `@dirigible-ai/*`, `@opensearch-project/opensearch`, `@cap-js/*`, `@tolka/*`, and unscoped (`safe-action`, `cross-stitch`, `git-git-git`, `ts-dna`, `wot-api`, `cmux-agent-mcp`, `git-branch-selector`, `nextmove-mcp`, `agentwork-cli`, `ml-toolkit-ts`, `intercom-client`, `mbt`) | 200+ versions — see `ioc.go` and source blogs | Mini Shai-Hulud self-spreading worm (May 2026) |
+| 42 `@tanstack/*` packages (`react-router`, `router-core`, `start-plugin-core`, `react-start`, `solid-router`, `vue-router`, `router-cli`, and the rest of the router/start surface) | 84 versions — two per package per the "double-tap" pattern | TanStack pwn-request (May 2026) |
 
 **How it works:** For each `node_modules` directory, reads `package.json` for every package in the known-bad list and compares the installed version string.
 
@@ -182,7 +185,23 @@ When a lifecycle script references a JavaScript file (e.g., `node setup.js`), re
 
 ---
 
-### 6. `compromised-python-version` (CRITICAL)
+### 6. `npm-payload-file` (CRITICAL)
+
+Checks for known malicious filenames inside packages of a specific npm scope, independent of the package's declared version. Catches leftover payload artifacts after partial cleanup or version-string tampering.
+
+**Known npm payload files:**
+
+| Scope | Filename | Description | Source attack |
+|-------|----------|-------------|---------------|
+| `@tanstack/*` | `router_init.js` | ~2.3 MB obfuscated JS payload delivered via the pwn-request | tanstack pwn-request (May 2026) |
+
+**How it works:** While walking each `node_modules` directory, for every package under a tracked scope, `os.Stat()` is called on each known payload filename inside the package directory. Presence alone is the signal — no content inspection is performed.
+
+**Why this matters:** The TanStack pwn-request published 84 malicious versions across 42 `@tanstack/*` packages, all dropping the same `router_init.js` payload. Cleaning up by downgrading to a "clean" version doesn't necessarily remove the payload file from disk if installs are layered, and lock files / caches can resurrect compromised tarballs. Matching on the payload filename rather than the version number catches both scenarios.
+
+---
+
+### 7. `compromised-python-version` (CRITICAL)
 
 Checks installed Python packages against a database of known-compromised versions by scanning `.dist-info` directories in every `site-packages` found.
 
@@ -191,6 +210,9 @@ Checks installed Python packages against a database of known-compromised version
 | Package | Compromised versions | Attack type |
 |---------|---------------------|-------------|
 | `litellm` | 1.82.7, 1.82.8 | Credential stealer + C2 backdoor (2026) |
+| `guardrails-ai` | 0.10.1 | Mini Shai-Hulud PyPI artifact (May 2026) |
+| `lightning` | 2.6.2, 2.6.3 | Mini Shai-Hulud PyPI artifact (May 2026) |
+| `mistralai` | 2.4.6 | Mini Shai-Hulud PyPI artifact (May 2026) |
 
 **How it works:** Walks the home directory for `site-packages` directories (virtualenvs, `.local`, etc.) and also checks well-known system Python paths:
 - Unix: `/usr/lib/python3.*/site-packages`, `/usr/local/lib/python3.*/site-packages`, `/opt/homebrew/lib/python3.*/site-packages`
@@ -202,7 +224,7 @@ For each `site-packages`, parses `.dist-info` directory names to extract package
 
 ---
 
-### 7. `malicious-pth-file` (CRITICAL)
+### 8. `malicious-pth-file` (CRITICAL)
 
 Checks for known malicious `.pth` files in Python `site-packages` directories.
 
@@ -218,7 +240,7 @@ Checks for known malicious `.pth` files in Python `site-packages` directories.
 
 ---
 
-### 8. `suspicious-pth-file` (WARN)
+### 9. `suspicious-pth-file` (WARN)
 
 Heuristic check for unknown `.pth` files in `site-packages` with content patterns associated with malware.
 
@@ -246,7 +268,23 @@ Heuristic check for unknown `.pth` files in `site-packages` with content pattern
 
 ---
 
-### 9. `network-ioc-active-connection` (CRITICAL)
+### 10. `compromised-composer-version` (CRITICAL)
+
+Checks installed Composer (PHP/Packagist) packages against a database of known-compromised versions by reading `vendor/composer/installed.json` in every Composer vendor directory found under the home directory.
+
+**Known compromised versions:**
+
+| Package | Compromised versions | Attack type |
+|---------|---------------------|-------------|
+| `intercom/intercom-php` | 5.0.2 | Mini Shai-Hulud Composer artifact (May 2026) |
+
+**How it works:** During the home-directory walk, any `vendor/` directory that contains a `composer/installed.json` is identified as a Composer install. The scanner parses both Composer 1.x (flat array) and 2.x (`{packages: [...]}`) envelope formats, then compares each installed package against the known-bad list. A leading `v` on either the installed or known-bad version string is stripped so `v5.0.2` and `5.0.2` both match.
+
+**Why this matters:** The Mini Shai-Hulud worm's reach extended beyond npm into PyPI and Composer/Packagist. Detection here mirrors the npm and Python version checks for cross-ecosystem coverage of the same campaign.
+
+---
+
+### 11. `network-ioc-active-connection` (CRITICAL)
 
 Checks active network connections for known command-and-control domains and IP addresses from documented supply chain attacks.
 
@@ -262,6 +300,9 @@ Checks active network connections for known command-and-control domains and IP a
 | `git-tanstack.com` | Domain | mini-shai-hulud — marker/staging domain |
 | `filev2.getsession.org` | Domain | mini-shai-hulud — Session messenger CDN abused for exfil |
 | `seed1.getsession.org` | Domain | mini-shai-hulud — Session seed used for TLS pinning |
+| `seed2.getsession.org` | Domain | tanstack pwn-request — Session seed for exfil channel |
+| `seed3.getsession.org` | Domain | tanstack pwn-request — Session seed for exfil channel |
+| `litter.catbox.moe` | Domain | tanstack pwn-request — secondary payload host (legit pastebin service abused) |
 
 **How it works:** Runs `netstat -n` (numeric, for IP matching) and plain `netstat` (with hostname resolution, for domain matching) in parallel, then performs substring matching against all known IOCs.
 
@@ -269,7 +310,7 @@ Checks active network connections for known command-and-control domains and IP a
 
 ---
 
-### 10. `suspicious-temp-file` (WARN)
+### 12. `suspicious-temp-file` (WARN)
 
 Checks system temp directories for files matching patterns associated with supply chain attack payloads.
 
@@ -295,7 +336,7 @@ Checks system temp directories for files matching patterns associated with suppl
 
 ---
 
-### 11. `project-artifact` (CRITICAL)
+### 13. `project-artifact` (CRITICAL)
 
 Checks for malicious files dropped inside project-local config directories (`.claude/`, `.vscode/`) by supply chain attacks. Unlike `known-artifact`, which checks fixed home-relative or system paths, this check runs against every project under the home directory: any `.claude/` or `.vscode/` directory encountered during the walk is inspected for a specific malicious filename.
 
@@ -313,15 +354,23 @@ Checks for malicious files dropped inside project-local config directories (`.cl
 
 ## Acknowledgments
 
-Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from the incident analyses published by **[StepSecurity](https://www.stepsecurity.io/)** ([blog](https://www.stepsecurity.io/blog)). Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes the IOCs from their writeups so you can sweep a developer machine for them in a few seconds.
+Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from incident analyses published by others. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs so you can sweep a developer machine for them in a few seconds.
+
+Sources, in rough order of how much of the IOC set they contribute:
+
+- **[StepSecurity](https://www.stepsecurity.io/)** ([blog](https://www.stepsecurity.io/blog)) — the bulk of the IOC set, including the full axios, litellm, and Mini Shai-Hulud writeups.
+- **[Socket](https://socket.dev/)** — broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems.
+- **[TanStack](https://tanstack.com/)** — postmortem and IOCs for the pwn-request compromise of 42 `@tanstack/*` packages.
 
 Specifically, the following writeups are the basis for every check in this scanner:
 
-- [axios Compromised on npm: Malicious Versions Drop Remote Access Trojan](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)
-- [LiteLLM Credential Stealer Hidden in PyPI Wheel](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)
-- [Mini Shai-Hulud Is Back: A Self-Spreading Supply Chain Attack Hits the npm Ecosystem](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)
+- [axios Compromised on npm: Malicious Versions Drop Remote Access Trojan](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan) (StepSecurity)
+- [LiteLLM Credential Stealer Hidden in PyPI Wheel](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel) (StepSecurity)
+- [Mini Shai-Hulud Is Back: A Self-Spreading Supply Chain Attack Hits the npm Ecosystem](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem) (StepSecurity)
+- [Mini Shai-Hulud supply chain attack tracker](https://socket.dev/supply-chain-attacks/mini-shai-hulud) (Socket)
+- [npm Supply Chain Compromise Postmortem](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem) (TanStack)
 
-If surplies is useful to you, the credit belongs to them. Go read their blog.
+If surplies is useful to you, the credit belongs to them. Go read their writeups.
 
 ## License
 
