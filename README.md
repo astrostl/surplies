@@ -6,10 +6,11 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from two documented March 2026 supply chain attacks:**
+**Currently detects indicators from three documented March 2026 supply chain attacks:**
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
+- **[Mini Shai-Hulud npm worm](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** — self-spreading attack that compromised 300+ versions across 150+ packages (`@tanstack/*`, `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, and many more) using "double-tap" publishing, exfiltrating to `api.masscan.cloud` and the Session messenger network, and persisting via a `gh-token-monitor` LaunchAgent/systemd unit
 
 ## Design principles
 
@@ -86,10 +87,13 @@ Checks for files dropped by known supply chain attacks at specific filesystem pa
 |----------|------|-------------|---------------|
 | macOS | `/Library/Caches/com.apple.act.mond` | Mach-O RAT binary disguised as an Apple system daemon | axios 1.14.1/0.30.4 |
 | macOS | `/tmp/6202033` | AppleScript dropper that downloads and installs the RAT | axios 1.14.1/0.30.4 |
+| macOS | `~/Library/LaunchAgents/com.user.gh-token-monitor.plist` | LaunchAgent for `gh-token-monitor` persistence | mini-shai-hulud |
 | Windows | `%PROGRAMDATA%\wt.exe` | PowerShell binary copied and renamed to masquerade as Windows Terminal | axios 1.14.1/0.30.4 |
 | Linux | `/tmp/ld.py` | Python RAT payload | axios 1.14.1/0.30.4 |
+| Linux | `~/.config/systemd/user/gh-token-monitor.service` | Systemd user service for `gh-token-monitor` persistence | mini-shai-hulud |
 | All | `~/.config/sysmon/sysmon.py` | Persistent C2 backdoor script polling for arbitrary commands | litellm 1.82.7/1.82.8 |
 | All | `~/.config/systemd/user/sysmon.service` | Systemd user service for C2 persistence (restarts every 10s) | litellm 1.82.7/1.82.8 |
+| All | `~/.local/bin/gh-token-monitor.sh` | Shell script that monitors and exfiltrates GitHub tokens | mini-shai-hulud |
 
 **How it works:** Calls `os.Stat()` on each path. If the file exists, it's a critical finding. These paths are chosen by attackers to blend in with legitimate system files.
 
@@ -121,7 +125,8 @@ Checks installed npm packages against a database of known-compromised versions.
 
 | Package | Compromised versions | Attack type |
 |---------|---------------------|-------------|
-| `axios` | 1.14.1, 0.30.4 | RAT via phantom dependency (2026) |
+| `axios` | 1.14.1, 0.30.4 | RAT via phantom dependency (March 2026) |
+| 150+ packages across `@tanstack/*`, `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@beproduct/*`, `@supersurkhet/*`, `@draftauth/*`, `@draftlab/*`, `@taskflow-corp/*`, `@ml-toolkit-ts/*`, `@mesadev/*`, `@mistralai/*`, `@dirigible-ai/*`, `@opensearch-project/opensearch`, `@tolka/*`, and unscoped (`safe-action`, `cross-stitch`, `git-git-git`, `ts-dna`, `wot-api`, `cmux-agent-mcp`, `git-branch-selector`, `nextmove-mcp`, `agentwork-cli`, `ml-toolkit-ts`) | 300+ versions — see `ioc.go` and source blog | Mini Shai-Hulud self-spreading worm (March 2026) |
 
 **How it works:** For each `node_modules` directory, reads `package.json` for every package in the known-bad list and compares the installed version string.
 
@@ -253,6 +258,10 @@ Checks active network connections for known command-and-control domains and IP a
 | `142.11.206.73` | IP | axios — C2 server IP |
 | `models.litellm.cloud` | Domain | litellm — credential exfiltration (mimics litellm.ai) |
 | `checkmarx.zone` | Domain | litellm — C2 polling (mimics Checkmarx security brand) |
+| `api.masscan.cloud` | Domain | mini-shai-hulud — direct POST exfiltration |
+| `git-tanstack.com` | Domain | mini-shai-hulud — marker/staging domain |
+| `filev2.getsession.org` | Domain | mini-shai-hulud — Session messenger CDN abused for exfil |
+| `seed1.getsession.org` | Domain | mini-shai-hulud — Session seed used for TLS pinning |
 
 **How it works:** Runs `netstat -n` (numeric, for IP matching) and plain `netstat` (with hostname resolution, for domain matching) in parallel, then performs substring matching against all known IOCs.
 
@@ -291,6 +300,10 @@ The check set is derived from analysis of documented supply chain attacks:
 - **[axios npm compromise (March 2026)](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** by StepSecurity — Compromised maintainer account (`jasonsaayman`, email changed to `ifstap@proton.me`), phantom dependency injection (`plain-crypto-js@4.2.1` published by `nrwise@proton.me`), platform-specific RAT deployment via postinstall hook, dual-layer obfuscation (XOR key `"OrDeR_7077"` + base64), self-destructing dropper with version-swapped clean stub, C2 at `sfrclak.com:8000` (IP `142.11.206.73`), process orphaning via `nohup`.
 
 - **[litellm PyPI compromise (March 2026)](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** by StepSecurity — Two vectors: malicious `litellm_init.pth` (34,628 bytes, v1.82.8) for Python interpreter-level persistence, and base64-encoded payload in `litellm/proxy/proxy_server.py` (v1.82.7). Three-stage payload: credential harvesting (SSH, AWS/GCP/Azure, `.env` files, shell history, crypto wallets), C2 backdoor via `~/.config/sysmon/sysmon.py` with systemd persistence, and lateral movement. AES-256-CBC + RSA-4096 encrypted exfiltration to `models.litellm.cloud`, C2 polling at `checkmarx.zone/raw`.
+
+- **[Mini Shai-Hulud npm worm (March 2026)](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** by StepSecurity — Self-spreading supply chain worm staged via `optionalDependencies` pointing at a GitHub commit (`@tanstack/setup` → `tanstack/router#79ac49ee...`). Used "double-tap" publishing (two consecutive versions minutes apart) across 300+ versions of 150+ packages in 14+ namespaces. Payload: scrape GitHub/npm tokens, plant `.claude/router_runtime.js` Bun payload and a SessionStart hook in `.claude/settings.json`, drop `.vscode/setup.mjs` with a folderOpen task in `.vscode/tasks.json`, inject a `.github/workflows/codeql_analysis.yml` workflow, and install `~/.local/bin/gh-token-monitor.sh` registered as `com.user.gh-token-monitor.plist` (macOS LaunchAgent) or `gh-token-monitor.service` (Linux systemd). Exfiltration uses AES-256-GCM with PBKDF2 (200K iterations, master key `0c0e8730...c40aa`) to `api.masscan.cloud` and Session Protocol via `filev2.getsession.org` (TLS-pinned to `seed1.getsession.org`). Marker repos: `git-tanstack.com`, `siridar-ghola-567`, `tleilaxu-ornithopter-43`. Threat actor: GitHub `voicproducoes` (account ID 269549300).
+
+  **Note:** surplies detects the compromised package versions, the user-global persistence files (`gh-token-monitor` LaunchAgent/systemd unit/script), and active connections to the C2 domains. The project-local artifacts (`<project>/.claude/router_runtime.js`, `<project>/.vscode/setup.mjs`, etc.) are NOT scanned — they live inside individual repositories rather than at fixed home-relative paths, so detecting them would require walking every project and risk false positives against legitimate `.claude/` and `.vscode/` content.
 
 
 ## License
