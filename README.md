@@ -138,7 +138,7 @@ Checks installed npm packages against a database of known-compromised versions.
 
 ### 4. `suspicious-install-script` (WARN)
 
-Scans every npm package's `package.json` for `preinstall`, `install`, or `postinstall` lifecycle scripts that contain patterns commonly used by malware.
+Scans every npm package's `package.json` for `preinstall`, `install`, `postinstall`, and `prepare` lifecycle scripts that contain patterns commonly used by malware. (`prepare` is included because the Mini Shai-Hulud TanStack sub-incident used `"prepare": "bun run tanstack_runner.js && exit 1"`; npm runs `prepare` on local installs and on `npm pack`, so it's a viable malware vehicle.)
 
 **Flagged patterns:**
 
@@ -193,10 +193,11 @@ Checks for known malicious filenames inside packages of a specific npm scope, in
 | Scope | Filename | Description | Source attack |
 |-------|----------|-------------|---------------|
 | `@tanstack/*` | `router_init.js` | ~2.3 MB obfuscated JS payload delivered via the pwn-request → Actions cache poisoning vector | Mini Shai-Hulud — TanStack sub-incident (May 2026) |
+| `@tanstack/*` | `tanstack_runner.js` | Bun-loaded runner invoked from the malicious `prepare` lifecycle hook (SHA-256 `2ec78d556d696e208927cc503d48e4b5eb56b31abc2870c2ed2e98d6be27fc96`) | Mini Shai-Hulud — TanStack sub-incident (May 2026) |
 
 **How it works:** While walking each `node_modules` directory, for every package under a tracked scope, `os.Stat()` is called on each known payload filename inside the package directory. Presence alone is the signal — no content inspection is performed.
 
-**Why this matters:** The Mini Shai-Hulud TanStack sub-incident published 84 malicious versions across 42 `@tanstack/*` packages, all dropping the same `router_init.js` payload. Cleaning up by downgrading to a "clean" version doesn't necessarily remove the payload file from disk if installs are layered, and lock files / caches can resurrect compromised tarballs. Matching on the payload filename rather than the version number catches both scenarios.
+**Why this matters:** The Mini Shai-Hulud TanStack sub-incident published 84 malicious versions across 42 `@tanstack/*` packages, dropping both `router_init.js` (the obfuscated payload) and `tanstack_runner.js` (the Bun loader invoked from the `prepare` hook). Cleaning up by downgrading to a "clean" version doesn't necessarily remove the payload file from disk if installs are layered, and lock files / caches can resurrect compromised tarballs. Matching on the payload filename rather than the version number catches both scenarios.
 
 ---
 
@@ -344,7 +345,9 @@ Checks for malicious files dropped inside project-local config directories (`.cl
 | Config dir | Filename | Description | Source attack |
 |------------|----------|-------------|---------------|
 | `.claude/` | `router_runtime.js` | Bun payload loaded via a `SessionStart` hook injected into `.claude/settings.json` | mini-shai-hulud |
+| `.claude/` | `execution.js` | Bun payload — alternate filename for the same campaign payload | mini-shai-hulud |
 | `.claude/` | `setup.mjs` | Shared setup module used by the Claude Code and VS Code droppers | mini-shai-hulud |
+| `.vscode/` | `execution.js` | Bun payload — alternate filename for the same campaign payload | mini-shai-hulud |
 | `.vscode/` | `setup.mjs` | Shared setup module loaded via a `folderOpen` task injected into `.vscode/tasks.json` | mini-shai-hulud |
 
 **How it works:** The home-directory walk (the same one used for `node_modules`) returns `SkipDir` when it encounters a `.claude/` or `.vscode/` directory after running `os.Stat()` on each known malicious filename inside. No content inspection is performed — the filenames themselves are not used by legitimate Claude Code or VS Code configurations, so presence alone is the signal.
@@ -360,6 +363,7 @@ Sources, in rough order of how much of the IOC set they contribute:
 - **[StepSecurity](https://www.stepsecurity.io/)** ([blog](https://www.stepsecurity.io/blog)) — the bulk of the IOC set, including the full axios, litellm, and Mini Shai-Hulud writeups.
 - **[Socket](https://socket.dev/)** — broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems, and the campaign-level attribution to TeamPCP.
 - **[TanStack](https://tanstack.com/)** — postmortem and IOCs for the Mini Shai-Hulud sub-incident that hit 42 `@tanstack/*` packages on May 11, 2026 (`@tanstack/setup` phantom, `router_init.js` payload filename, `seed{2,3}.getsession.org` / `litter.catbox.moe`, the pwn-request → Actions cache poisoning → OIDC token vector).
+- **[Aikido](https://www.aikido.dev/)** — `tanstack_runner.js` payload filename (with SHA-256 hash) and `execution.js` as the alternate Bun-loaded payload name across the Mini Shai-Hulud campaign, plus the `"prepare": "bun run tanstack_runner.js && exit 1"` lifecycle pattern.
 
 Specifically, the following writeups are the basis for every check in this scanner:
 
@@ -368,6 +372,7 @@ Specifically, the following writeups are the basis for every check in this scann
 - [Mini Shai-Hulud Is Back: A Self-Spreading Supply Chain Attack Hits the npm Ecosystem](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem) (StepSecurity)
 - [Mini Shai-Hulud supply chain attack tracker](https://socket.dev/supply-chain-attacks/mini-shai-hulud) (Socket)
 - [Postmortem: TanStack npm supply-chain compromise](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem) (TanStack — Mini Shai-Hulud TanStack sub-incident)
+- [Mini Shai-Hulud Is Back: npm Worm Hits over 160 Packages, including Mistral and Tanstack](https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised) (Aikido — Mini Shai-Hulud TanStack sub-incident)
 
 If surplies is useful to you, the credit belongs to them. Go read their writeups.
 

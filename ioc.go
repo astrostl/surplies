@@ -307,14 +307,21 @@ type ProjectArtifact struct {
 // KnownProjectArtifacts maps a project-local config directory name to malicious files
 // a documented supply chain attack is known to drop inside it. The scanner finds these
 // during the home-directory walk and reports any match as a critical finding.
-// Source: StepSecurity Mini Shai-Hulud writeup
-// https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem
+// Sources:
+//   - StepSecurity Mini Shai-Hulud writeup
+//     https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem
+//   - Aikido Mini Shai-Hulud writeup (execution.js — alternate name for the Bun-loaded payload across the campaign)
+//     https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised
+//   - Socket campaign tracker (confirms execution.js / router_runtime.js are interchangeable payload names)
+//     https://socket.dev/supply-chain-attacks/mini-shai-hulud
 var KnownProjectArtifacts = map[string][]ProjectArtifact{
 	".claude": {
 		{Filename: "router_runtime.js", Desc: "mini-shai-hulud Bun payload dropped via Claude Code SessionStart hook", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
 		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module", Attack: "mini-shai-hulud (May 2026)"},
 	},
 	".vscode": {
+		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
 		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module dropped via VS Code folderOpen task", Attack: "mini-shai-hulud (May 2026)"},
 	},
 }
@@ -323,11 +330,17 @@ var KnownProjectArtifacts = map[string][]ProjectArtifact{
 // documented supply chain attack is known to drop inside packages of that
 // scope. Each package in node_modules/<scope>/* is checked for these files
 // during the node_modules walk, independent of the version check.
-// Source: TanStack postmortem (documenting the Mini Shai-Hulud TanStack sub-incident)
-// https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+// Sources:
+//   - TanStack postmortem (router_init.js)
+//     https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
+//   - Aikido writeup (tanstack_runner.js + SHA-256)
+//     https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised
+//
+// tanstack_runner.js SHA-256: 2ec78d556d696e208927cc503d48e4b5eb56b31abc2870c2ed2e98d6be27fc96
 var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
 	"@tanstack": {
 		{Filename: "router_init.js", Desc: "Mini Shai-Hulud TanStack sub-incident payload (~2.3 MB obfuscated JS)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
+		{Filename: "tanstack_runner.js", Desc: "Mini Shai-Hulud TanStack sub-incident runner (Bun-loaded via prepare hook)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
 	},
 }
 

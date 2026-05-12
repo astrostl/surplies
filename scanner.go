@@ -355,8 +355,11 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 	}
 	s.stats.PackagesScanned++
 
-	// Check for suspicious lifecycle scripts
-	suspiciousHooks := []string{"preinstall", "install", "postinstall"}
+	// Check for suspicious lifecycle scripts. `prepare` is included because the
+	// Mini Shai-Hulud TanStack sub-incident uses it (e.g.
+	// "prepare": "bun run tanstack_runner.js && exit 1") — npm runs `prepare`
+	// on local installs and on `npm pack`, so it's a viable malware vehicle.
+	suspiciousHooks := []string{"preinstall", "install", "postinstall", "prepare"}
 	for _, hook := range suspiciousHooks {
 		script, ok := pkg.Scripts[hook]
 		if !ok {
