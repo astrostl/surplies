@@ -6,7 +6,7 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from three documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
+**Currently detects indicators from three documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [Aikido](https://www.aikido.dev/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
