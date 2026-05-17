@@ -5,12 +5,18 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"time"
 )
 
-var version = "dev"
+var version = func() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}()
 
 func main() {
 	var (
