@@ -6,11 +6,11 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from three documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [Aikido](https://www.aikido.dev/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
+**Currently detects indicators from three documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
-- **[Mini Shai-Hulud campaign](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** (attributed to TeamPCP, April–May 2026) — an ongoing self-spreading credential-theft worm across npm, PyPI, and Composer. The bulk of the campaign uses compromised maintainer accounts with "double-tap" publishing across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, `@cap-js/*`, `intercom-client`, PyPI `lightning`/`guardrails-ai`/`mistralai`, Composer `intercom/intercom-php`, and many more. On May 11 a distinct sub-incident hit 42 `@tanstack/*` packages (84 versions) via a different initial-access vector: a fork PR poisoned a GitHub Actions cache, then an attacker-controlled binary extracted an OIDC token from runner memory and published directly to npm — same campaign payload family (`router_init.js`, Session-network exfil via `filev2.getsession.org` / `seed{1,2,3}.getsession.org`, self-propagation), different door in.
+- **[Mini Shai-Hulud campaign](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** (attributed to TeamPCP, April–May 2026) — an ongoing self-spreading credential-theft worm across npm, PyPI, and Composer. The bulk of the campaign uses compromised maintainer accounts with "double-tap" publishing across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, `@cap-js/*`, `intercom-client`, PyPI `lightning`/`guardrails-ai`/`mistralai`, Composer `intercom/intercom-php`, and many more. On May 11 a distinct sub-incident hit 42 `@tanstack/*` packages (84 versions) via a different initial-access vector: a fork PR poisoned a GitHub Actions cache, then an attacker-controlled binary extracted an OIDC token from runner memory and published directly to npm — same campaign payload family (`router_init.js`, Session-network exfil via `filev2.getsession.org` / `seed{1,2,3}.getsession.org`, self-propagation), different door in. On May 19 the campaign struck again with the AntV maintainer compromise: 317 packages across `@antv/*`, `@lint-md/*`, and AntV-adjacent unscoped (`echarts-for-react`, `timeago.js`, `size-sensor`, and the rest of the visualization-ecosystem surface) published with the same "double-tap" pattern, a new `@antv/setup` phantom pulled from `github:antvis/G2#<imposter-commit-sha>`, a new C2 endpoint (`t.m-kosche.com`, disguised as OpenTelemetry traces), and a new kitty-monitor persistence variant (`~/.local/share/kitty/cat.py` + `kitty-monitor.{service,plist}`) — same Mini Shai-Hulud toolkit (Bun runtime, hex obfuscation, `firedalazer` GitHub dead-drop trigger, Dune-themed exfil repo naming) per SafeDep's writeup.
 
 ## Design principles
 
@@ -88,12 +88,16 @@ Checks for files dropped by known supply chain attacks at specific filesystem pa
 | macOS | `/Library/Caches/com.apple.act.mond` | Mach-O RAT binary disguised as an Apple system daemon | axios 1.14.1/0.30.4 |
 | macOS | `/tmp/6202033` | AppleScript dropper that downloads and installs the RAT | axios 1.14.1/0.30.4 |
 | macOS | `~/Library/LaunchAgents/com.user.gh-token-monitor.plist` | LaunchAgent for `gh-token-monitor` persistence | mini-shai-hulud |
+| macOS | `~/Library/LaunchAgents/com.user.kitty-monitor.plist` | LaunchAgent for `kitty-monitor` persistence | mini-shai-hulud (@antv wave, May 19 2026) |
+| macOS/Linux | `/var/tmp/.gh_update_state` | C2 execution state file | mini-shai-hulud (@antv wave, May 19 2026) |
 | Windows | `%PROGRAMDATA%\wt.exe` | PowerShell binary copied and renamed to masquerade as Windows Terminal | axios 1.14.1/0.30.4 |
 | Linux | `/tmp/ld.py` | Python RAT payload | axios 1.14.1/0.30.4 |
 | Linux | `~/.config/systemd/user/gh-token-monitor.service` | Systemd user service for `gh-token-monitor` persistence | mini-shai-hulud |
+| Linux | `~/.config/systemd/user/kitty-monitor.service` | Systemd user service for `kitty-monitor` persistence | mini-shai-hulud (@antv wave, May 19 2026) |
 | All | `~/.config/sysmon/sysmon.py` | Persistent C2 backdoor script polling for arbitrary commands | litellm 1.82.7/1.82.8 |
 | All | `~/.config/systemd/user/sysmon.service` | Systemd user service for C2 persistence (restarts every 10s) | litellm 1.82.7/1.82.8 |
 | All | `~/.local/bin/gh-token-monitor.sh` | Shell script that monitors and exfiltrates GitHub tokens | mini-shai-hulud |
+| All | `~/.local/share/kitty/cat.py` | Python C2 daemon polling GitHub for `firedalazer` keyword commits | mini-shai-hulud (@antv wave, May 19 2026) |
 
 **How it works:** Calls `os.Stat()` on each path. If the file exists, it's a critical finding. These paths are chosen by attackers to blend in with legitimate system files.
 
@@ -111,10 +115,11 @@ Checks for npm packages that exist solely as malware delivery vehicles and have 
 |---------|---------------|
 | `plain-crypto-js` | axios 1.14.1/0.30.4 |
 | `@tanstack/setup` | Mini Shai-Hulud — TanStack sub-incident (May 2026) |
+| `@antv/setup` | Mini Shai-Hulud — @antv wave (May 19, 2026) |
 
 **How it works:** For each `node_modules` directory found by walking the home directory, checks whether a subdirectory matching any known phantom package name exists.
 
-**Why this matters:** The axios compromise injected `plain-crypto-js@4.2.1` as a dependency. This package was never imported by axios source code — it existed only to execute a `postinstall` hook that deployed the RAT. The attacker pre-staged a clean `4.2.0` version to establish npm account history before publishing the malicious `4.2.1`. The Mini Shai-Hulud TanStack sub-incident injected `@tanstack/setup` via an `optionalDependencies` entry pointing at a fork of the TanStack repo on GitHub — `@tanstack/setup` is not a real published `@tanstack` package and exists only to deliver the `router_init.js` payload.
+**Why this matters:** The axios compromise injected `plain-crypto-js@4.2.1` as a dependency. This package was never imported by axios source code — it existed only to execute a `postinstall` hook that deployed the RAT. The attacker pre-staged a clean `4.2.0` version to establish npm account history before publishing the malicious `4.2.1`. The Mini Shai-Hulud TanStack sub-incident injected `@tanstack/setup` via an `optionalDependencies` entry pointing at a fork of the TanStack repo on GitHub — `@tanstack/setup` is not a real published `@tanstack` package and exists only to deliver the `router_init.js` payload. The May 19 @antv wave repeated the trick with `@antv/setup`, pulled from `github:antvis/G2#<imposter-orphan-commit-sha>` via the same `optionalDependencies` pattern.
 
 ---
 
@@ -129,6 +134,7 @@ Checks installed npm packages against a database of known-compromised versions.
 | `axios` | 1.14.1, 0.30.4 | RAT via phantom dependency (March 2026) |
 | 100+ packages across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@beproduct/*`, `@supersurkhet/*`, `@draftauth/*`, `@draftlab/*`, `@taskflow-corp/*`, `@ml-toolkit-ts/*`, `@mesadev/*`, `@mistralai/*`, `@dirigible-ai/*`, `@opensearch-project/opensearch`, `@cap-js/*`, `@tolka/*`, and unscoped (`safe-action`, `cross-stitch`, `git-git-git`, `ts-dna`, `wot-api`, `cmux-agent-mcp`, `git-branch-selector`, `nextmove-mcp`, `agentwork-cli`, `ml-toolkit-ts`, `intercom-client`, `mbt`) | 200+ versions — see `ioc.go` and source blogs | Mini Shai-Hulud — main wave (Apr–May 2026) |
 | 42 `@tanstack/*` packages (`react-router`, `router-core`, `start-plugin-core`, `react-start`, `solid-router`, `vue-router`, `router-cli`, and the rest of the router/start surface) | 84 versions — two per package per the "double-tap" pattern | Mini Shai-Hulud — TanStack sub-incident, pwn-request → Actions cache poisoning → OIDC token theft (May 11, 2026) |
+| 317 packages across `@antv/*` (the AntV visualization framework — 279 packages including `@antv/g2`, `@antv/g6`, `@antv/l7`, `@antv/x6`, `@antv/s2`, `@antv/f2`, `@antv/graphin`, and the rest of the visualization surface), `@lint-md/*`, and unscoped AntV-adjacent packages (`echarts-for-react`, `timeago.js`, `size-sensor`, `jest-canvas-mock`, `canvas-nest.js`, `ribbon.js`, and 30 more by the same maintainer) | 600+ versions — two-to-three per package per the "double-tap" pattern | Mini Shai-Hulud — @antv wave, AntV maintainer compromise (May 19, 2026) |
 
 **How it works:** For each `node_modules` directory, reads `package.json` for every package in the known-bad list and compares the installed version string.
 
@@ -303,6 +309,7 @@ Checks active network connections for known command-and-control domains and IP a
 | `seed2.getsession.org` | Domain | mini-shai-hulud (TanStack sub-incident) — Session seed for exfil channel |
 | `seed3.getsession.org` | Domain | mini-shai-hulud (TanStack sub-incident) — Session seed for exfil channel |
 | `litter.catbox.moe` | Domain | mini-shai-hulud (TanStack sub-incident) — secondary payload host (legit pastebin service abused) |
+| `t.m-kosche.com` | Domain | mini-shai-hulud (@antv wave) — RSA+AES exfil disguised as OpenTelemetry traces (`/api/public/otel/v1/traces`) |
 
 **How it works:** Runs `netstat -n` (numeric, for IP matching) and plain `netstat` (with hostname resolution, for domain matching) in parallel, then performs substring matching against all known IOCs.
 
@@ -347,6 +354,7 @@ Checks for malicious files dropped inside project-local config directories (`.cl
 | `.claude/` | `router_runtime.js` | Bun payload loaded via a `SessionStart` hook injected into `.claude/settings.json` | mini-shai-hulud |
 | `.claude/` | `execution.js` | Bun payload — alternate filename for the same campaign payload | mini-shai-hulud |
 | `.claude/` | `setup.mjs` | Shared setup module used by the Claude Code and VS Code droppers | mini-shai-hulud |
+| `.claude/` | `index.js` | Bun payload copy committed into repos as the AntV wave's persistence vehicle | mini-shai-hulud (@antv wave, May 19 2026) |
 | `.vscode/` | `execution.js` | Bun payload — alternate filename for the same campaign payload | mini-shai-hulud |
 | `.vscode/` | `setup.mjs` | Shared setup module loaded via a `folderOpen` task injected into `.vscode/tasks.json` | mini-shai-hulud |
 
@@ -364,6 +372,7 @@ Sources, in rough order of how much of the IOC set they contribute:
 - **[Socket](https://socket.dev/)** — broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems, and the campaign-level attribution to TeamPCP.
 - **[TanStack](https://tanstack.com/)** — postmortem and IOCs for the Mini Shai-Hulud sub-incident that hit 42 `@tanstack/*` packages on May 11, 2026 (`@tanstack/setup` phantom, `router_init.js` payload filename, `seed{2,3}.getsession.org` / `litter.catbox.moe`, the pwn-request → Actions cache poisoning → OIDC token vector).
 - **[Aikido](https://www.aikido.dev/)** — `tanstack_runner.js` payload filename (with SHA-256 hash) and `execution.js` as the alternate Bun-loaded payload name across the Mini Shai-Hulud campaign, plus the `"prepare": "bun run tanstack_runner.js && exit 1"` lifecycle pattern.
+- **[SafeDep](https://safedep.io/)** — the May 19, 2026 @antv-wave writeup: full 317-package compromise list, `@antv/setup` phantom + `github:antvis/G2#<imposter-commit-sha>` `optionalDependencies` vector, the `t.m-kosche.com` C2 endpoint (disguised as OpenTelemetry traces), the kitty-monitor persistence variant (`~/.local/share/kitty/cat.py`, `kitty-monitor.{service,plist}`, `/var/tmp/.gh_update_state`), and `.claude/index.js` as the payload-copy committed into repos.
 
 Specifically, the following writeups are the basis for every check in this scanner:
 
@@ -373,6 +382,7 @@ Specifically, the following writeups are the basis for every check in this scann
 - [Mini Shai-Hulud supply chain attack tracker](https://socket.dev/supply-chain-attacks/mini-shai-hulud) (Socket)
 - [Postmortem: TanStack npm supply-chain compromise](https://tanstack.com/blog/npm-supply-chain-compromise-postmortem) (TanStack — Mini Shai-Hulud TanStack sub-incident)
 - [Mini Shai-Hulud Is Back: npm Worm Hits over 160 Packages, including Mistral and Tanstack](https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised) (Aikido — Mini Shai-Hulud TanStack sub-incident)
+- [Mini Shai-Hulud Strikes Again: 314 npm Packages Compromised](https://safedep.io/mini-shai-hulud-strikes-again-314-npm-packages-compromised/) (SafeDep — Mini Shai-Hulud @antv wave)
 
 If surplies is useful to you, the credit belongs to them. Go read their writeups.
 
