@@ -513,8 +513,22 @@ func (s *Scanner) checkNetworkIOCs() {
 			if err != nil {
 				return
 			}
+			// Drop unspecified (::, 0.0.0.0) and loopback addresses. Sinkholed or
+			// blocked domains can resolve to ::, and substring-matching that
+			// against netstat output hits every IPv6 listener line.
+			routable := ips[:0]
+			for _, ip := range ips {
+				parsed := net.ParseIP(ip)
+				if parsed == nil || parsed.IsUnspecified() || parsed.IsLoopback() {
+					continue
+				}
+				routable = append(routable, ip)
+			}
+			if len(routable) == 0 {
+				return
+			}
 			resolvedMu.Lock()
-			resolved[domain] = ips
+			resolved[domain] = routable
 			resolvedMu.Unlock()
 		})
 	}
