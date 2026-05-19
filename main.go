@@ -11,12 +11,16 @@ import (
 	"time"
 )
 
-var version = func() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+var version = "dev"
+
+func init() {
+	if version != "dev" {
+		return // ldflags already set it
 	}
-	return "dev"
-}()
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		version = info.Main.Version
+	}
+}
 
 func main() {
 	var (
