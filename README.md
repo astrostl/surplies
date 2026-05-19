@@ -72,7 +72,7 @@ The scanner runs five phases sequentially:
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads
 2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, and every `.claude/` / `.vscode/` for project-local payload files
 3. **Python site-packages scanning** — walk home directory + system Python paths, inspect every `site-packages`
-4. **Network IOCs** — check active connections (`netstat -n` for IPs, `netstat` for domains) for C2 indicators
+4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
 5. **Temp directory artifacts** — check temp dirs for payload remnants
 
 ## Checks
@@ -311,7 +311,7 @@ Checks active network connections for known command-and-control domains and IP a
 | `litter.catbox.moe` | Domain | mini-shai-hulud (TanStack sub-incident) — secondary payload host (legit pastebin service abused) |
 | `t.m-kosche.com` | Domain | mini-shai-hulud (@antv wave) — RSA+AES exfil disguised as OpenTelemetry traces (`/api/public/otel/v1/traces`) |
 
-**How it works:** Runs `netstat -n` (numeric, for IP matching) and plain `netstat` (with hostname resolution, for domain matching) in parallel, then performs substring matching against all known IOCs.
+**How it works:** Runs `netstat -n` (numeric output, no reverse DNS) in parallel with forward DNS lookups (5s timeout) for each known C2 domain. Each known C2 IP — both the hardcoded entries and the IPs resolved from C2 domains — is then substring-matched against the netstat output. Forward DNS on the small known-bad list takes well under a second, whereas reverse DNS on every active connection (the prior approach) can take minutes on a busy machine. Attackers control forward DNS for their domains but not reverse DNS for the IPs they're hosted on, so forward resolution is also more reliable.
 
 **Why this matters:** The axios RAT and litellm C2 backdoor both beacon out programmatically — these connections won't appear in shell history. Catching an active connection to `sfrclak.com:8000` or `checkmarx.zone` at scan time is a direct indicator of a running implant.
 

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -484,45 +486,78 @@ func checkFileObfuscation(path string) []string {
 }
 
 // checkNetworkIOCs checks active network connections for known C2 indicators.
-// Runs netstat twice in parallel: once with -n (numeric, for IP matching) and
-// once without (with hostname resolution, for domain matching).
+// Runs netstat -n (no reverse DNS) and resolves known C2 domains to IPs in
+// parallel, then matches resolved IPs against the netstat output. Forward DNS
+// on the small known-bad list finishes in well under a second, vs. reverse DNS
+// on every active connection which can take minutes on a busy machine.
 func (s *Scanner) checkNetworkIOCs() {
 	var (
-		outNumeric  []byte
-		outResolved []byte
-		wg          sync.WaitGroup
+		netstatOut []byte
+		resolved   = make(map[string][]string)
+		resolvedMu sync.Mutex
+		wg         sync.WaitGroup
 	)
 
-	s.log("running netstat -n (IPs) and netstat (domains) in parallel")
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		outNumeric, _ = exec.Command("netstat", "-n").Output()
-	}()
-	go func() {
-		defer wg.Done()
-		outResolved, _ = exec.Command("netstat").Output()
-	}()
-	wg.Wait()
-	s.log("netstat complete: %d bytes numeric, %d bytes resolved", len(outNumeric), len(outResolved))
+	s.log("running netstat -n and resolving %d C2 domains in parallel", len(KnownC2Domains))
 
+	wg.Go(func() {
+		netstatOut, _ = exec.Command("netstat", "-n").Output()
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, d := range KnownC2Domains {
+		domain := d
+		wg.Go(func() {
+			ips, err := net.DefaultResolver.LookupHost(ctx, domain)
+			if err != nil {
+				return
+			}
+			resolvedMu.Lock()
+			resolved[domain] = ips
+			resolvedMu.Unlock()
+		})
+	}
+	wg.Wait()
+
+	totalIPs := 0
+	for _, ips := range resolved {
+		totalIPs += len(ips)
+	}
+	s.log("netstat complete: %d bytes; resolved %d/%d C2 domains to %d IPs", len(netstatOut), len(resolved), len(KnownC2Domains), totalIPs)
+
+	content := string(netstatOut)
 	seen := make(map[string]bool)
-	checkContent := func(content string, iocs []string) {
-		for _, ioc := range iocs {
-			if !seen[ioc] && strings.Contains(content, ioc) {
-				seen[ioc] = true
+
+	for _, ip := range KnownC2IPs {
+		if !seen[ip] && strings.Contains(content, ip) {
+			seen[ip] = true
+			s.addFinding(Finding{
+				Check:    "network-ioc-active-connection",
+				Severity: SevCritical,
+				Path:     "netstat",
+				Detail:   fmt.Sprintf("Active connection to known C2 indicator '%s'", ip),
+			})
+		}
+	}
+
+	for domain, ips := range resolved {
+		if seen[domain] {
+			continue
+		}
+		for _, ip := range ips {
+			if strings.Contains(content, ip) {
+				seen[domain] = true
 				s.addFinding(Finding{
 					Check:    "network-ioc-active-connection",
 					Severity: SevCritical,
 					Path:     "netstat",
-					Detail:   fmt.Sprintf("Active connection to known C2 indicator '%s'", ioc),
+					Detail:   fmt.Sprintf("Active connection to known C2 indicator '%s' (resolved to %s)", domain, ip),
 				})
+				break
 			}
 		}
 	}
-
-	checkContent(string(outNumeric), KnownC2IPs)
-	checkContent(string(outResolved), KnownC2Domains)
 }
 
 // checkTempArtifacts looks for suspicious files in temp directories.
