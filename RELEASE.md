@@ -33,7 +33,26 @@ For each change, update the matching section of `README.md`:
 
 Commit the README updates as part of the release commit in step 4.
 
-### 3. Run the release target
+### 3. Smoke-test detection end-to-end
+
+Confirm that the binary you're about to ship actually detects a known bad version, and that it stops detecting it once the fixture is removed. This catches the class of bug where a refactor silently breaks the npm or Python scanner phase.
+
+```sh
+make build
+make fp
+./surplies 2>&1 | grep -E "axios@1\.14\.1|litellm==1\.82\.7"
+# expect TWO matching lines — one compromised-version, one compromised-python-version
+
+make fpclean
+./surplies 2>&1 | grep -E "axios@1\.14\.1|litellm==1\.82\.7"
+# expect NO output — the fixture findings are gone
+```
+
+If the first run misses either fixture, do not proceed — the corresponding scanner phase is broken. If the second run still matches, `make fpclean` didn't clean up; investigate before tagging.
+
+Filtering by `grep` (rather than checking exit code) keeps the test honest if the home dir already has unrelated findings.
+
+### 4. Run the release target
 
 ```sh
 make release VERSION=v1.2.3
@@ -46,7 +65,7 @@ This will:
 - Compute SHA256 checksums
 - Patch `Formula/surplies.rb` in place with the new version, URLs, and SHA256s
 
-### 4. Commit and tag
+### 5. Commit and tag
 
 ```sh
 git add README.md Formula/surplies.rb
@@ -55,7 +74,7 @@ git tag v1.2.3
 git push origin main v1.2.3
 ```
 
-### 5. Create the GitHub release and upload artifacts
+### 6. Create the GitHub release and upload artifacts
 
 ```sh
 gh release create v1.2.3 \
@@ -69,7 +88,7 @@ gh release create v1.2.3 \
   --notes "Brief description of what changed."
 ```
 
-### 6. Verify Homebrew
+### 7. Verify Homebrew
 
 ```sh
 brew update
@@ -89,13 +108,19 @@ surplies -version
 
 | Target | Description |
 |--------|-------------|
+| `make help` | Print available targets (default goal — runs when you type just `make`) |
+| `make build` | Build `./surplies` for the current platform with version stamping |
 | `make fmt` | Formats all Go files with `go fix`, `modernize -fix`, and `gofmt -s -w` |
 | `make lint` | Checks `go fix`, `modernize`, and `gofmt -s` compliance, LICENSE presence, and `go vet` |
+| `make test` | Runs `go test ./...` |
 | `make all` | Cross-compiles all platform binaries into `dist/` |
 | `make package-macos` | Tars the macOS binaries into versioned `.tar.gz` files |
 | `make checksums` | Runs `shasum -a 256` and writes `dist/checksums.txt` |
 | `make update-formula` | Patches `Formula/surplies.rb` with new version and SHA256s |
 | `make release` | Runs lint + all of the above and prints next steps |
+| `make fp` | Drops `node_modules/axios/package.json` (axios@1.14.1) and `site-packages/litellm-1.82.7.dist-info/` to exercise the npm + Python compromised-version checks |
+| `make fpclean` | Removes the fixtures created by `make fp` |
+| `make clean` | Removes `./surplies` and `./dist` |
 
 ## How the Homebrew tap works
 

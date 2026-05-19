@@ -3,7 +3,32 @@ LDFLAGS := -s -w -X main.version=$(VERSION)
 BIN := surplies
 DIST := dist
 
-.PHONY: build clean all test lint fmt release package-macos checksums update-formula
+.PHONY: help build clean all test lint fmt release package-macos checksums update-formula fp fpclean
+
+.DEFAULT_GOAL := help
+
+help:
+	@echo "Usage: make <target>"
+	@echo ""
+	@echo "Build:"
+	@echo "  build                    Build ./surplies for the current platform with version stamping"
+	@echo "  all                      Cross-compile binaries for all platforms into dist/"
+	@echo "  clean                    Remove ./surplies and ./dist"
+	@echo ""
+	@echo "Quality:"
+	@echo "  fmt                      Auto-format Go files (go fix, modernize, gofmt -s)"
+	@echo "  lint                     Verify go fix, modernize, gofmt -s, LICENSE, and go vet"
+	@echo "  test                     Run go test ./..."
+	@echo ""
+	@echo "Release (see RELEASE.md):"
+	@echo "  release VERSION=v1.2.3   Lint, cross-build, package macOS tarballs, checksum, patch formula"
+	@echo "  package-macos            Tar dist/ macOS binaries into versioned .tar.gz files"
+	@echo "  checksums                shasum -a 256 the macOS tarballs into dist/checksums.txt"
+	@echo "  update-formula           Patch Formula/surplies.rb with new version + SHA256s"
+	@echo ""
+	@echo "Smoke-test fixtures:"
+	@echo "  fp                       Drop benign stubs that trip the npm + Python compromised-version checks"
+	@echo "  fpclean                  Remove the fp fixtures"
 
 build:
 	go build -ldflags "$(LDFLAGS)" -o $(BIN) .
@@ -58,3 +83,19 @@ release: lint update-formula
 
 clean:
 	rm -rf $(BIN) $(DIST)
+
+# Drop synthetic fixtures that trip surplies checks, for manual smoke-testing.
+# Each fixture is a benign stub matching the shape the scanner inspects:
+#   - node_modules/axios/package.json pinned to compromised axios@1.14.1
+#   - site-packages/litellm-1.82.7.dist-info/ matching the litellm dist-info regex
+fp:
+	@mkdir -p node_modules/axios
+	@printf '{\n  "name": "axios",\n  "version": "1.14.1"\n}\n' > node_modules/axios/package.json
+	@mkdir -p site-packages/litellm-1.82.7.dist-info
+	@echo "Created false-positive fixtures:"
+	@echo "  node_modules/axios/package.json (axios@1.14.1 — compromised-version)"
+	@echo "  site-packages/litellm-1.82.7.dist-info/ (compromised-python-version)"
+
+fpclean:
+	rm -rf node_modules site-packages
+	@echo "Removed false-positive fixtures."

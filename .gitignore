@@ -1,3 +1,7 @@
 dist/
 surplies
 *.csv
+
+# `make fp` smoke-test fixtures
+node_modules/
+site-packages/
