@@ -17,7 +17,7 @@ help:
 	@echo ""
 	@echo "Quality:"
 	@echo "  fmt                      Auto-format Go files (go fix, modernize, gofmt -s)"
-	@echo "  lint                     Verify go fix, modernize, gofmt -s, LICENSE, and go vet"
+	@echo "  lint                     Verify go fix, modernize, gofmt -s, gocyclo (>15), LICENSE, and go vet"
 	@echo "  test                     Run go test ./..."
 	@echo ""
 	@echo "Release (see RELEASE.md):"
@@ -42,6 +42,7 @@ lint:
 	@out=$$(go fix -diff ./... 2>&1); [ -z "$$out" ] || { echo "go fix issues:"; echo "$$out"; exit 1; }
 	@out=$$(modernize ./... 2>&1); [ -z "$$out" ] || { echo "modernize issues:"; echo "$$out"; exit 1; }
 	@out=$$(gofmt -s -l .); [ -z "$$out" ] || { echo "gofmt -s issues in: $$out"; exit 1; }
+	@out=$$(gocyclo -over 15 . 2>&1); [ -z "$$out" ] || { echo "gocyclo issues (>15):"; echo "$$out"; exit 1; }
 	@test -f LICENSE || { echo "LICENSE file missing"; exit 1; }
 	go vet ./...
 

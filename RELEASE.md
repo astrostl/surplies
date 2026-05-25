@@ -5,6 +5,7 @@
 - `gh` CLI authenticated (`gh auth status`)
 - Go toolchain installed
 - `modernize` installed (`go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@latest`)
+- `gocyclo` installed (`go install github.com/fzipp/gocyclo/cmd/gocyclo@latest`) — `make lint` enforces `gocyclo -over 15` to match the threshold Go Report Card uses; a release must not introduce any function over 15
 - Push access to `astrostl/surplies`
 
 ## Steps
@@ -59,7 +60,7 @@ make release VERSION=v1.2.3
 ```
 
 This will:
-- Verify `gofmt -s` formatting and `LICENSE` file presence (`lint`)
+- Verify `gofmt -s` formatting, `gocyclo -over 15` (Go Report Card's threshold), and `LICENSE` file presence (`lint`)
 - Cross-compile binaries for all platforms
 - Package the macOS binaries into tarballs (`dist/surplies-v1.2.3-darwin-{arm64,amd64}.tar.gz`)
 - Compute SHA256 checksums

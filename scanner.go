@@ -485,6 +485,26 @@ func checkFileObfuscation(path string) []string {
 	return flags
 }
 
+// resolveRoutableIPs resolves domain via the default resolver and returns only
+// routable addresses. Unspecified (::, 0.0.0.0) and loopback results are
+// dropped: sinkholed or blocked domains can resolve to ::, and substring-
+// matching that against netstat output hits every IPv6 listener line.
+func resolveRoutableIPs(ctx context.Context, domain string) []string {
+	ips, err := net.DefaultResolver.LookupHost(ctx, domain)
+	if err != nil {
+		return nil
+	}
+	routable := ips[:0]
+	for _, ip := range ips {
+		parsed := net.ParseIP(ip)
+		if parsed == nil || parsed.IsUnspecified() || parsed.IsLoopback() {
+			continue
+		}
+		routable = append(routable, ip)
+	}
+	return routable
+}
+
 // checkNetworkIOCs checks active network connections for known C2 indicators.
 // Runs netstat -n (no reverse DNS) and resolves known C2 domains to IPs in
 // parallel, then matches resolved IPs against the netstat output. Forward DNS
@@ -509,21 +529,7 @@ func (s *Scanner) checkNetworkIOCs() {
 	for _, d := range KnownC2Domains {
 		domain := d
 		wg.Go(func() {
-			ips, err := net.DefaultResolver.LookupHost(ctx, domain)
-			if err != nil {
-				return
-			}
-			// Drop unspecified (::, 0.0.0.0) and loopback addresses. Sinkholed or
-			// blocked domains can resolve to ::, and substring-matching that
-			// against netstat output hits every IPv6 listener line.
-			routable := ips[:0]
-			for _, ip := range ips {
-				parsed := net.ParseIP(ip)
-				if parsed == nil || parsed.IsUnspecified() || parsed.IsLoopback() {
-					continue
-				}
-				routable = append(routable, ip)
-			}
+			routable := resolveRoutableIPs(ctx, domain)
 			if len(routable) == 0 {
 				return
 			}
