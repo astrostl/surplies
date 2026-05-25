@@ -215,6 +215,27 @@ func TestCleanPythonVersion(t *testing.T) {
 	}
 }
 
+func TestPhantomPythonPackage(t *testing.T) {
+	dir := t.TempDir()
+	sp := filepath.Join(dir, "lib", "python3.11", "site-packages")
+	// TrapDoor phantom — any version is malicious, not just one pinned version.
+	os.MkdirAll(filepath.Join(sp, "eth_security_auditor-0.9.42.dist-info"), 0755)
+
+	entries, _ := os.ReadDir(sp)
+	s := New(dir, false)
+	s.checkSitePackagesDir(sp, entries)
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "phantom-python-package" && strings.Contains(f.Detail, "eth-security-auditor") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("phantom Python package (TrapDoor) not detected")
+	}
+}
+
 func TestPythonUnderscoreNormalization(t *testing.T) {
 	dir := t.TempDir()
 	sp := filepath.Join(dir, "lib", "python3.11", "site-packages")

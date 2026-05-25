@@ -43,6 +43,40 @@ var KnownPhantomPackages = []string{
 	// (1916faa3…, 7cb42f57…, dc3d62a2…) backed the dependency reference.
 	// https://safedep.io/mini-shai-hulud-strikes-again-314-npm-packages-compromised/
 	"@antv/setup",
+
+	// TrapDoor crypto stealer (May 2026). Distinct from Shai-Hulud /
+	// Mini Shai-Hulud — different actor (GitHub account `ddjidd564`),
+	// different campaign marker (`P-2024-001`), different toolkit. All 21
+	// npm packages below are purpose-built phantoms impersonating crypto /
+	// DeFi / AI tooling, with no legitimate version. Each drops
+	// trap-core.js (48,485 bytes, XOR key `cargo-build-helper-2026`) via
+	// postinstall; the payload writes `.cursorrules` and `CLAUDE.md` into
+	// the project directory for AI-assistant-driven persistence and pulls
+	// runtime config from `ddjidd564.github.io/defi-security-best-practices/`.
+	// Same campaign also published 7 PyPI and 6 Crates.io phantoms;
+	// surplies tracks the npm and PyPI ones (Crates.io has no scanner).
+	// https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates
+	"async-pipeline-builder",
+	"build-scripts-utils",
+	"chain-key-validator",
+	"crypto-credential-scanner",
+	"defi-env-auditor",
+	"defi-threat-scanner",
+	"deployment-key-auditor",
+	"dev-env-bootstrapper",
+	"eth-wallet-sentinel",
+	"llm-context-compressor",
+	"mnemonic-safety-check",
+	"model-switch-router",
+	"node-setup-helpers",
+	"project-init-tools",
+	"prompt-engineering-toolkit",
+	"solidity-deploy-guard",
+	"token-usage-tracker",
+	"wallet-backup-verifier",
+	"wallet-security-checker",
+	"web3-secrets-detector",
+	"workspace-config-loader",
 }
 
 // KnownBadNpmVersions maps legitimate npm package names to known-compromised versions.
@@ -636,6 +670,27 @@ var KnownBadPythonVersions = map[string][]string{
 	"guardrails-ai": {"0.10.1"},
 	"lightning":     {"2.6.2", "2.6.3"},
 	"mistralai":     {"2.4.6"},
+}
+
+// KnownPhantomPythonPackages are PyPI distribution names that exist solely
+// as malware carriers and have no legitimate use. Their presence in any
+// site-packages — in any version — is always suspicious. Names are
+// normalized (lowercase, hyphens) to match dist-info directory conventions.
+var KnownPhantomPythonPackages = []string{
+	// TrapDoor crypto stealer (May 2026). Seven purpose-built PyPI phantoms
+	// impersonating crypto / DeFi / data-pipeline tooling, published by
+	// GitHub actor `ddjidd564` as part of the cross-ecosystem TrapDoor
+	// campaign. Earliest observed upload: eth-security-auditor@0.1.0 on
+	// May 22, 2026. Same campaign also published 21 npm phantoms (see
+	// KnownPhantomPackages above) and 6 Crates.io phantoms (out of scope).
+	// https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates
+	"cryptowallet-safety",
+	"data-pipeline-check",
+	"defi-risk-scanner",
+	"env-loader-cli",
+	"eth-security-auditor",
+	"git-config-sync",
+	"solidity-build-guard",
 }
 
 // KnownMaliciousPthFiles are .pth filenames that are known malware delivery mechanisms.

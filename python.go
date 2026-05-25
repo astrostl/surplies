@@ -145,7 +145,9 @@ func analyzePthContent(content string) []string {
 	return flags
 }
 
-// checkDistInfo checks a .dist-info directory for known compromised versions.
+// checkDistInfo checks a .dist-info directory for known phantom packages
+// (entirely malicious — any version is bad) and known compromised versions
+// (legitimate package, specific bad versions).
 func (s *Scanner) checkDistInfo(spDir, dirName string) {
 	m := distInfoVersionRe.FindStringSubmatch(dirName)
 	if m == nil {
@@ -155,6 +157,16 @@ func (s *Scanner) checkDistInfo(spDir, dirName string) {
 	pkgName := strings.ReplaceAll(strings.ToLower(m[1]), "_", "-")
 	version := m[2]
 	s.stats.PythonPackagesScanned++
+
+	if slices.Contains(KnownPhantomPythonPackages, pkgName) {
+		s.addFinding(Finding{
+			Check:    "phantom-python-package",
+			Severity: SevCritical,
+			Path:     filepath.Join(spDir, dirName),
+			Detail:   fmt.Sprintf("Known malicious phantom Python package '%s' (installed version %s)", pkgName, version),
+		})
+		return
+	}
 
 	badVersions, ok := KnownBadPythonVersions[pkgName]
 	if !ok {
