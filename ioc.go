@@ -642,6 +642,54 @@ var KnownBadNpmVersions = map[string][]string{
 	"uri-parse":              {"1.1.0", "1.2.0"},
 	"word-width":             {"1.1.1", "1.2.1"},
 	"xmorse":                 {"1.1.0", "1.2.0"},
+
+	// Mini Shai-Hulud — Red Hat Cloud Services wave (June 1, 2026). 31
+	// packages across the @redhat-cloud-services scope, published after an
+	// attacker minted an npm token from a GitHub Actions OIDC credential
+	// stolen from the RedHatInsights/javascript-clients repo. Same campaign
+	// payload family: a preinstall hook (`node index.js`) stages an encrypted
+	// Bun loader that harvests GitHub Actions secrets, npm tokens, cloud
+	// (AWS/GCP/Azure) and Kubernetes/Vault credentials, SSH and Git
+	// credentials, then exfiltrates over an encrypted channel with a GitHub
+	// API fallback. The exfil abuses a legitimate endpoint (api.anthropic.com,
+	// /v1/api) rather than actor-owned infrastructure, so no new C2 domain is
+	// added. Compromised package/index.js SHA-256:
+	// 21b6409a7b84446310daca5409ad6112ac60a1e4bef97736e53fff5f63bfdef4.
+	// Full 31-package version list from StepSecurity; Mini Shai-Hulud
+	// attribution, chrome@2.3.1 confirmation, and payload hashes from Socket.
+	// https://www.stepsecurity.io/blog/multiple-redhat-cloud-services-npm-packages-compromised
+	// https://socket.dev/blog/mini-shai-hulud-campaign-hits-red-hat-cloud-services-npm-packages
+	"@redhat-cloud-services/chrome":                                 {"2.3.1"},
+	"@redhat-cloud-services/compliance-client":                      {"4.0.3"},
+	"@redhat-cloud-services/config-manager-client":                  {"5.0.4"},
+	"@redhat-cloud-services/entitlements-client":                    {"4.0.11"},
+	"@redhat-cloud-services/eslint-config-redhat-cloud-services":    {"3.2.1"},
+	"@redhat-cloud-services/frontend-components":                    {"7.7.2"},
+	"@redhat-cloud-services/frontend-components-advisor-components": {"3.8.2"},
+	"@redhat-cloud-services/frontend-components-config":             {"6.11.3"},
+	"@redhat-cloud-services/frontend-components-config-utilities":   {"4.11.2"},
+	"@redhat-cloud-services/frontend-components-notifications":      {"6.9.2"},
+	"@redhat-cloud-services/frontend-components-remediations":       {"4.9.2"},
+	"@redhat-cloud-services/frontend-components-testing":            {"1.2.1"},
+	"@redhat-cloud-services/frontend-components-translations":       {"4.4.1"},
+	"@redhat-cloud-services/frontend-components-utilities":          {"7.4.1"},
+	"@redhat-cloud-services/hcc-feo-mcp":                            {"0.3.1"},
+	"@redhat-cloud-services/hcc-kessel-mcp":                         {"0.3.1"},
+	"@redhat-cloud-services/hcc-pf-mcp":                             {"0.6.1"},
+	"@redhat-cloud-services/host-inventory-client":                  {"5.0.3"},
+	"@redhat-cloud-services/insights-client":                        {"4.0.4"},
+	"@redhat-cloud-services/integrations-client":                    {"6.0.4"},
+	"@redhat-cloud-services/javascript-clients-shared":              {"2.0.8"},
+	"@redhat-cloud-services/notifications-client":                   {"6.1.4"},
+	"@redhat-cloud-services/patch-client":                           {"4.0.4"},
+	"@redhat-cloud-services/quickstarts-client":                     {"4.0.11"},
+	"@redhat-cloud-services/rbac-client":                            {"9.0.3"},
+	"@redhat-cloud-services/remediations-client":                    {"4.0.4"},
+	"@redhat-cloud-services/rule-components":                        {"4.7.2"},
+	"@redhat-cloud-services/sources-client":                         {"3.0.10"},
+	"@redhat-cloud-services/topological-inventory-client":           {"3.0.10"},
+	"@redhat-cloud-services/tsc-transform-imports":                  {"1.2.2"},
+	"@redhat-cloud-services/types":                                  {"3.6.1"},
 }
 
 // --- Composer/Packagist ---
@@ -834,4 +882,7 @@ var ArtifactsTmp = []struct {
 	{".pg_state", "litellm C2 state tracking file"},
 	{"pglog", "litellm downloaded payload staging"},
 	{"tpcp.tar.gz", "litellm credential exfiltration archive"},
+	// mini-shai-hulud (Red Hat Cloud Services wave, June 1 2026)
+	{"tmp.0987654321.lock", "mini-shai-hulud Bun loader execution lock file (Red Hat Cloud Services wave)"},
+	{"b-*/b.zip", "mini-shai-hulud Bun loader staged payload archive, extracted under /tmp/b-* (Red Hat Cloud Services wave)"},
 }
