@@ -312,6 +312,121 @@ func TestNpmPayloadFile(t *testing.T) {
 	}
 }
 
+func TestKeyvCompromisedVersion(t *testing.T) {
+	dir := t.TempDir()
+	nm := filepath.Join(dir, "node_modules")
+
+	// keyv@6.0.0 is the primary malicious release.
+	pkgDir := filepath.Join(nm, "keyv")
+	os.MkdirAll(pkgDir, 0755)
+	writePackageJSON(t, pkgDir, "keyv", "6.0.0")
+
+	// Clean prior @cacheable/utils version must not be flagged.
+	cacheDir := filepath.Join(nm, "@cacheable", "utils")
+	os.MkdirAll(cacheDir, 0755)
+	writePackageJSON(t, cacheDir, "@cacheable/utils", "2.5.0") // clean per Snyk remediation list
+
+	s := New(dir, false)
+	s.checkNodeModulesDir(nm)
+
+	foundKeyv := false
+	for _, f := range s.Findings {
+		if f.Check == "compromised-version" && strings.Contains(f.Detail, "keyv@6.0.0") {
+			foundKeyv = true
+		}
+		if f.Check == "compromised-version" && strings.Contains(f.Detail, "@cacheable/utils@2.5.0") {
+			t.Errorf("clean @cacheable/utils@2.5.0 was flagged: %v", f)
+		}
+	}
+	if !foundKeyv {
+		t.Error("keyv@6.0.0 compromised version not detected")
+	}
+}
+
+func TestKeyvNpmPayloadFile(t *testing.T) {
+	dir := t.TempDir()
+	nm := filepath.Join(dir, "node_modules")
+
+	// Unscoped: Math_Symbol.js inside keyv at a non-listed version must still
+	// be flagged (leftover after partial cleanup / version-string tampering).
+	keyvDir := filepath.Join(nm, "keyv")
+	os.MkdirAll(keyvDir, 0755)
+	writePackageJSON(t, keyvDir, "keyv", "9.9.9") // not on the bad-version list
+	os.WriteFile(filepath.Join(keyvDir, "Math_Symbol.js"), []byte("// payload"), 0644)
+	os.WriteFile(filepath.Join(keyvDir, "setup.mjs"), []byte("// loader"), 0644)
+
+	// Scoped: same payloads inside @cacheable/net.
+	cacheDir := filepath.Join(nm, "@cacheable", "net")
+	os.MkdirAll(cacheDir, 0755)
+	writePackageJSON(t, cacheDir, "@cacheable/net", "9.9.9")
+	os.WriteFile(filepath.Join(cacheDir, "Math_Symbol.js"), []byte("// payload"), 0644)
+
+	// Unrelated unscoped package with a coincidental setup.mjs must not be
+	// flagged — KnownNpmPayloadFiles is keyed by package name, not global.
+	otherDir := filepath.Join(nm, "left-pad")
+	os.MkdirAll(otherDir, 0755)
+	writePackageJSON(t, otherDir, "left-pad", "1.0.0")
+	os.WriteFile(filepath.Join(otherDir, "setup.mjs"), []byte("// legit?"), 0644)
+
+	s := New(dir, false)
+	s.checkNodeModulesDir(nm)
+
+	foundKeyvMath := false
+	foundKeyvSetup := false
+	foundCacheableMath := false
+	for _, f := range s.Findings {
+		if f.Check != "npm-payload-file" {
+			continue
+		}
+		if strings.Contains(f.Path, filepath.Join("keyv", "Math_Symbol.js")) {
+			foundKeyvMath = true
+		}
+		if strings.Contains(f.Path, filepath.Join("keyv", "setup.mjs")) {
+			foundKeyvSetup = true
+		}
+		if strings.Contains(f.Path, filepath.Join("@cacheable", "net", "Math_Symbol.js")) {
+			foundCacheableMath = true
+		}
+		if strings.Contains(f.Path, "left-pad") {
+			t.Errorf("unrelated left-pad was flagged for npm-payload-file: %v", f)
+		}
+	}
+	if !foundKeyvMath {
+		t.Error("Math_Symbol.js in unscoped keyv package not detected")
+	}
+	if !foundKeyvSetup {
+		t.Error("setup.mjs in unscoped keyv package not detected")
+	}
+	if !foundCacheableMath {
+		t.Error("Math_Symbol.js in @cacheable/net package not detected")
+	}
+}
+
+func TestKeyvProjectArtifact(t *testing.T) {
+	dir := t.TempDir()
+
+	// Plant math_init.js inside a project-local .claude/ directory.
+	projectClaude := filepath.Join(dir, "keyv-clone", ".claude")
+	os.MkdirAll(projectClaude, 0755)
+	os.WriteFile(filepath.Join(projectClaude, "math_init.js"), []byte("// payload"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	found := false
+	for _, f := range s.Findings {
+		if f.Check == "project-artifact" && strings.Contains(f.Path, "math_init.js") {
+			found = true
+			if !strings.Contains(f.Detail, "keyv npm compromise") {
+				t.Errorf("math_init.js finding missing keyv attack attribution: %v", f)
+			}
+		}
+	}
+	if !found {
+		t.Error("malicious .claude/math_init.js not detected")
+	}
+}
+
 func TestPhantomTanstackSetup(t *testing.T) {
 	dir := t.TempDir()
 	nm := filepath.Join(dir, "node_modules")

@@ -287,7 +287,16 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 		}
 	}
 
-	// Check 3: Scan all packages for suspicious postinstall scripts
+	// Check 3: Lifecycle scripts + npm payload files for every package
+	s.scanNodeModulesPackages(nmDir)
+}
+
+// scanNodeModulesPackages walks each package directory under nmDir and runs
+// lifecycle-script and npm-payload-file checks. Scoped packages (@org/*) and
+// unscoped packages are both supported; KnownNpmPayloadFiles keys may be a
+// scope name (checked against every package under that scope) or an exact
+// unscoped package name.
+func (s *Scanner) scanNodeModulesPackages(nmDir string) {
 	entries, err := os.ReadDir(nmDir)
 	if err != nil {
 		return
@@ -298,7 +307,7 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 			continue
 		}
 
-		// Handle scoped packages (@org/pkg)
+		// Scoped packages (@org/pkg)
 		if strings.HasPrefix(entry.Name(), "@") {
 			scopeDir := filepath.Join(nmDir, entry.Name())
 			scopedEntries, err := os.ReadDir(scopeDir)
@@ -307,17 +316,24 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 			}
 			payloadFiles := KnownNpmPayloadFiles[entry.Name()]
 			for _, se := range scopedEntries {
-				if se.IsDir() {
-					pkgDir := filepath.Join(scopeDir, se.Name())
-					pkgName := entry.Name() + "/" + se.Name()
-					s.checkPackage(pkgDir, pkgName)
-					s.checkNpmPayloadFiles(pkgDir, pkgName, payloadFiles)
+				if !se.IsDir() {
+					continue
 				}
+				pkgDir := filepath.Join(scopeDir, se.Name())
+				pkgName := entry.Name() + "/" + se.Name()
+				s.checkPackage(pkgDir, pkgName)
+				s.checkNpmPayloadFiles(pkgDir, pkgName, payloadFiles)
 			}
 			continue
 		}
 
-		s.checkPackage(filepath.Join(nmDir, entry.Name()), entry.Name())
+		// Unscoped packages: lifecycle-script checks, then any package-name
+		// payload-file entries (e.g. keyv → setup.mjs / Math_Symbol.js).
+		pkgDir := filepath.Join(nmDir, entry.Name())
+		s.checkPackage(pkgDir, entry.Name())
+		if payloadFiles := KnownNpmPayloadFiles[entry.Name()]; len(payloadFiles) > 0 {
+			s.checkNpmPayloadFiles(pkgDir, entry.Name(), payloadFiles)
+		}
 	}
 }
 

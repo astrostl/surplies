@@ -690,6 +690,36 @@ var KnownBadNpmVersions = map[string][]string{
 	"@redhat-cloud-services/topological-inventory-client":           {"3.0.10"},
 	"@redhat-cloud-services/tsc-transform-imports":                  {"1.2.2"},
 	"@redhat-cloud-services/types":                                  {"3.6.1"},
+
+	// keyv npm compromise (August 4, 2026). Compromised release path for
+	// maintainer jaredwray published 11 malicious releases across keyv,
+	// cacheable-family packages, and ecto. Each tarball adds a preinstall
+	// hook (`node setup.mjs`) plus two payload files (setup.mjs at 29,918
+	// bytes; Math_Symbol.js at 727,680 bytes) that are byte-identical across
+	// all affected releases. Snyk independently confirmed every package under
+	// maintainer jaredwray; other packages under the @keyv scope were not
+	// compromised. Three of the eleven releases (flat-cache@6.1.24,
+	// cacheable-request@13.0.20, cache-manager@7.2.10) were later removed
+	// from the registry, but lockfiles and private mirrors can retain them.
+	// A second execution path injected .claude/ and .vscode/ hooks
+	// (SessionStart / folderOpen) into the keyv repository. Second-stage
+	// analysis (not independently re-executed by Snyk) reports credential
+	// theft and gh-token-monitor persistence.
+	// Payload hashes (identical across all nine tarballs available at analysis):
+	//   setup.mjs     SHA-256 54dc7ea54a1317cca0e890a2770630cf7fa6c97813e0cb9d2caa93012b350668
+	//   Math_Symbol.js SHA-256 9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc
+	// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+	"keyv":                  {"6.0.0"},
+	"@cacheable/net":        {"2.1.1"},
+	"@cacheable/node-cache": {"3.1.2"},
+	"cacheable":             {"2.5.1"},
+	"flat-cache":            {"6.1.24"},
+	"@cacheable/memory":     {"2.2.1"},
+	"cacheable-request":     {"13.0.20"},
+	"file-entry-cache":      {"11.1.6"},
+	"@cacheable/utils":      {"2.5.1"},
+	"cache-manager":         {"7.2.10"},
+	"ecto":                  {"5.0.1"},
 }
 
 // --- Composer/Packagist ---
@@ -770,34 +800,84 @@ type ProjectArtifact struct {
 //     https://socket.dev/supply-chain-attacks/mini-shai-hulud
 //   - SafeDep @antv-wave writeup (.claude/index.js as the May 19, 2026 payload-copy name committed into repos)
 //     https://safedep.io/mini-shai-hulud-strikes-again-314-npm-packages-compromised/
+//   - Snyk keyv writeup (.claude/math_init.js + .claude/.vscode setup.mjs IDE hooks)
+//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
 var KnownProjectArtifacts = map[string][]ProjectArtifact{
 	".claude": {
 		{Filename: "router_runtime.js", Desc: "mini-shai-hulud Bun payload dropped via Claude Code SessionStart hook", Attack: "mini-shai-hulud (May 2026)"},
 		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
-		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "setup.mjs", Desc: "shared setup module (mini-shai-hulud; also keyv npm compromise SessionStart / folderOpen hooks)", Attack: "mini-shai-hulud (May 2026); keyv npm compromise (Aug 2026)"},
 		{Filename: "index.js", Desc: "mini-shai-hulud Bun payload copy committed to repos (@antv wave)", Attack: "mini-shai-hulud (@antv wave, May 19 2026)"},
+		// keyv npm compromise (Aug 4, 2026) — less-obfuscated second-stage name
+		// committed into the keyv repo alongside .claude/setup.mjs. The npm
+		// tarballs ship the same stage as Math_Symbol.js (727,680 bytes).
+		// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+		{Filename: "math_init.js", Desc: "keyv npm compromise second-stage payload dropped via Claude Code SessionStart hook", Attack: "keyv npm compromise (Aug 2026)"},
 	},
 	".vscode": {
 		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
-		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module dropped via VS Code folderOpen task", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "setup.mjs", Desc: "shared setup module dropped via VS Code folderOpen task (mini-shai-hulud; also keyv npm compromise)", Attack: "mini-shai-hulud (May 2026); keyv npm compromise (Aug 2026)"},
 	},
 }
 
-// KnownNpmPayloadFiles maps an npm scope (e.g., "@tanstack") to filenames a
-// documented supply chain attack is known to drop inside packages of that
-// scope. Each package in node_modules/<scope>/* is checked for these files
-// during the node_modules walk, independent of the version check.
+// KnownNpmPayloadFiles maps an npm scope (e.g., "@tanstack") or an unscoped
+// package name (e.g., "keyv") to filenames a documented supply chain attack
+// is known to drop inside packages of that key. During the node_modules walk,
+// scoped packages are checked under node_modules/<scope>/*, and unscoped
+// packages under node_modules/<name>, independent of the version check.
 // Sources:
 //   - TanStack postmortem (router_init.js)
 //     https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
 //   - Aikido writeup (tanstack_runner.js + SHA-256)
 //     https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised
+//   - Snyk keyv writeup (setup.mjs + Math_Symbol.js; identical across all
+//     11 malicious releases under maintainer jaredwray)
+//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
 //
 // tanstack_runner.js SHA-256: 2ec78d556d696e208927cc503d48e4b5eb56b31abc2870c2ed2e98d6be27fc96
+// keyv setup.mjs SHA-256:     54dc7ea54a1317cca0e890a2770630cf7fa6c97813e0cb9d2caa93012b350668
+// keyv Math_Symbol.js SHA-256: 9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc
 var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
 	"@tanstack": {
 		{Filename: "router_init.js", Desc: "Mini Shai-Hulud TanStack sub-incident payload (~2.3 MB obfuscated JS)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
 		{Filename: "tanstack_runner.js", Desc: "Mini Shai-Hulud TanStack sub-incident runner (Bun-loaded via prepare hook)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
+	},
+	// keyv npm compromise (Aug 4, 2026) — scoped @cacheable/* packages. The
+	// same two payload files appear in every affected tarball; matching on
+	// filename catches leftovers after a version downgrade or partial cleanup.
+	"@cacheable": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	// keyv npm compromise — unscoped packages that received the same payloads.
+	// Keys are exact package directory names under node_modules/.
+	"keyv": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cacheable": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"flat-cache": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cacheable-request": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"file-entry-cache": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cache-manager": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"ecto": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
 	},
 }
 
