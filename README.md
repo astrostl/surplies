@@ -73,7 +73,7 @@ Measured on a developer home directory with 99 `node_modules` (9,497 packages) a
 | default | 4,623 | 21s |
 | `-deep` | 24,789 | 28s |
 
-Expect `padded-source-file` warnings in deep mode that you do not see otherwise. Vendored and generated files in `node_modules` legitimately contain long runs of spaces — a deeply-indented license header will do it. That check is a WARN, not a finding of fact, precisely because it describes the *shape* of an injection rather than any known payload.
+Expect `padded-source-file` warnings in deep mode that you do not see otherwise. Vendored and generated files in `node_modules` legitimately contain long runs of spaces — widely spaced text on the same line can do it. Leading indentation and trailing spaces are excluded. That check is a WARN, not a finding of fact, precisely because it describes the *shape* of an injection rather than any known payload.
 
 A scan without `-deep` says so in its summary, so a fast clean scan is never mistaken for a thorough one.
 
@@ -477,13 +477,13 @@ The wallet and initial fetch-path signatures identify the resolver rather than a
 
 ### 17. `padded-source-file` (WARN)
 
-Flags a JS-family file, dictionary file, or font-extension file whose contents are text and which contains a run of 200 or more consecutive spaces.
+Flags a JS-family file, dictionary file, or font-extension file whose contents are text and which contains 200 or more consecutive spaces between non-whitespace text on the same line.
 
-**How it works:** A single `strings.Contains` against a precomputed space run, applied only to files that already passed the signature scan without matching. If a known signature matched, this check stays quiet — one injection produces one finding, not two.
+**How it works:** Search for a precomputed space run, then check each matching line with leading and trailing whitespace removed. Applied only to files that already passed the signature scan without matching. If a known signature matched, this check stays quiet — one injection produces one finding, not two.
 
 The text precondition is load-bearing, not a nicety. Pushing a payload off the right edge of an editor viewport is a trick that only means anything in a file a human reads as text; inside a binary container, a run of `0x20` bytes is just data. A 21 MB CJK TrueType font has ample room to contain 200 consecutive spaces in its glyph tables by coincidence, and flagging that is noise. Fonts that really are text are still caught — as a critical `fake-font-payload` finding, by the magic-number check above.
 
-**Why this matters:** This is the deliberate backstop for `payload-signature`. No formatter, minifier, or bundler produces a 200-space run in a config file; the padding exists purely to push the payload off the right edge of an editor viewport so it is invisible in review. Because it describes the *shape* of the injection rather than any particular payload, it keeps working after the campaign rotates its constants — which it has done once already and will do again. It is a warning rather than a critical finding because the shape alone is not proof, and the honest reading of a hit here is "this looks like an injection we do not have a signature for yet."
+**Why this matters:** This is the deliberate backstop for `payload-signature`. The check requires 200+ spaces between non-whitespace text on the same line, matching the documented off-screen append pattern. Leading indentation and trailing whitespace do not qualify; generated license comments can contain hundreds of leading spaces. Because it describes the *shape* of the injection rather than any particular payload, it keeps working after the campaign rotates its constants — which it has done once already and will do again. It is a warning rather than a critical finding because the shape alone is not proof, and the honest reading of a hit here is "this looks like an injection we do not have a signature for yet."
 
 ---
 
