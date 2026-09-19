@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -125,33 +126,15 @@ func (s *Scanner) checkApplicationFile(path string) {
 		s.persistenceError(path, fmt.Errorf("expected a regular entrypoint file"))
 		return
 	}
-	data := s.readCappedAt(path, 0)
-	if data == nil {
-		s.persistenceError(path, fmt.Errorf("entrypoint could not be read"))
-		return
-	}
-	s.stats.FilesChecked++
-	// ByteGuard documents both a prepended stub and code after the sourcemap.
-	// Read the tail too: real application bundles can exceed the project cap.
-	if info.Size() > SignatureScanMaxBytes {
-		offset := max(int64(SignatureScanMaxBytes), info.Size()-SignatureScanMaxBytes)
-		tail := s.readCappedAt(path, offset)
-		if tail == nil {
-			s.persistenceError(path, fmt.Errorf("entrypoint tail could not be read"))
-		} else {
-			if offset > SignatureScanMaxBytes {
-				data = append(data, 0) // do not create a signature across an unread gap
-			}
-			data = append(data, tail...)
+	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+		if sig, ok := persistenceSignature(data); ok {
+			local.addFinding(Finding{Check: "patched-application", Severity: SevCritical, Path: path,
+				Detail: fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack)})
 		}
+	}) != nil {
+		s.stats.FilesChecked++
 	}
-	if sig, ok := persistenceSignature(data); ok {
-		s.addFinding(Finding{Check: "patched-application", Severity: SevCritical, Path: path,
-			Detail: fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack)})
-	}
-	if info.Size() > 2*SignatureScanMaxBytes {
-		s.partialScan(path, fmt.Sprintf("entrypoint exceeds %d bytes; only the first and last %d bytes were checked", 2*SignatureScanMaxBytes, SignatureScanMaxBytes))
-	}
+
 }
 
 // These paths can have legitimate uses. Report them as context for an
@@ -189,6 +172,9 @@ func (s *Scanner) checkStagingPaths(paths []string) {
 // scanError reports incomplete coverage; it never classifies the path as malware.
 func (s *Scanner) scanError(path string, err error) {
 	category := "other errors"
+	if errors.Is(err, errFileTooLarge) {
+		category = "size limit exceeded"
+	}
 	if os.IsPermission(err) {
 		category = "permission denied"
 	}
@@ -295,9 +281,4 @@ func discoveredPersistenceEntrypoint(path string) bool {
 		}
 	}
 	return false
-}
-
-func (s *Scanner) partialScan(path, detail string) {
-	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path,
-		Detail: detail, coverageCategory: "partially checked"})
 }

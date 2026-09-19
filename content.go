@@ -2,12 +2,14 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -114,7 +116,7 @@ func isJSFamily(ext string) bool {
 	return false
 }
 
-// ReadTimeout bounds how long a single file read may take.
+// ReadTimeout bounds reading and content inspection together for one file.
 //
 // A file under Dropbox, OneDrive, iCloud Drive, or Google Drive may exist as a
 // placeholder whose contents are not on local disk. Opening one asks the
@@ -192,7 +194,7 @@ func (s *Scanner) recordStall(key, path string) {
 	first := s.stallCounts[key] == 1
 	s.mu.Unlock()
 
-	s.log("read timed out after %s, not scanned: %s", ReadTimeout, path)
+	s.log("file processing timed out after %s, not fully scanned: %s", ReadTimeout, path)
 
 	if first {
 		s.addFinding(Finding{
@@ -201,7 +203,7 @@ func (s *Scanner) recordStall(key, path string) {
 			Severity:         SevWarn,
 			Path:             key,
 			Detail: fmt.Sprintf(
-				"A read under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
+				"File reading or inspection under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
 					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
 					"Bring it online and re-run to cover it.",
 				StallThreshold, ReadTimeout),
@@ -209,18 +211,22 @@ func (s *Scanner) recordStall(key, path string) {
 	}
 }
 
-// readCapped reads up to SignatureScanMaxBytes from path, giving up after
-// ReadTimeout, and skipping outright if this path's subtree has already proven
-// unresponsive.
+// readCapped is the read-only form of the same per-file processing deadline.
 func (s *Scanner) readCapped(path string) []byte {
-	return s.readWindow(path, 0, true)
+	return s.processFile(path, ReadTimeout, nil)
 }
 
-func (s *Scanner) readCappedAt(path string, offset int64) []byte {
-	return s.readWindow(path, offset, false)
+var errFileTooLarge = errors.New("file size limit exceeded")
+
+type fileResult struct {
+	data     []byte
+	findings []Finding
+	err      error
 }
 
-func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) []byte {
+// Reading and inspection share one deadline. A private scanner collects results
+// so a timed-out worker can never append findings after the parent has moved on.
+func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*Scanner, []byte)) []byte {
 	key := s.stallKey(path)
 	if s.stalled(key) {
 		s.mu.Lock()
@@ -228,65 +234,76 @@ func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) [
 		s.mu.Unlock()
 		return nil
 	}
-
-	// Buffered so a goroutine still blocked on a hung read can send and exit
-	// rather than leaking for the lifetime of the scan.
-	type result struct {
-		data []byte
-		err  error
-	}
-	done := make(chan result, 1)
-
+	deadline := time.Now().Add(timeout)
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	cancel := make(chan struct{})
+	defer close(cancel)
+	var opened atomic.Pointer[os.File]
+	done := make(chan fileResult, 1)
 	go func() {
 		f, err := os.Open(path)
 		if err != nil {
-			done <- result{err: err}
+			done <- fileResult{err: err}
 			return
 		}
+		opened.Store(f)
 		defer f.Close()
-		if offset > 0 {
-			if _, err := f.Seek(offset, io.SeekStart); err != nil {
-				done <- result{err: err}
-				return
-			}
+		select {
+		case <-cancel:
+			return
+		default:
 		}
-
-		data, err := readScanContent(f, reportTruncation && slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(path))))
+		data, err := readScanContent(f, slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(path))))
 		if err != nil {
-			done <- result{err: err}
+			done <- fileResult{err: err}
 			return
 		}
-		done <- result{data: data}
+		select {
+		case <-cancel:
+			return
+		default:
+		}
+		local := New(s.HomeDir, false)
+		if inspect != nil {
+			inspect(local, data)
+		}
+		done <- fileResult{data: data, findings: local.Findings}
 	}()
-
 	select {
-	case read := <-done:
-		if read.err != nil {
+	case result := <-done:
+		if time.Now().After(deadline) {
+			s.recordStall(key, path)
+			return nil
+		}
+		if result.err != nil {
 			s.mu.Lock()
 			s.stats.FilesUnreadable++
 			s.mu.Unlock()
-			s.scanError(path, read.err)
+			s.scanError(path, result.err)
 			return nil
 		}
-		if len(read.data) > SignatureScanMaxBytes {
-			if reportTruncation {
-				s.partialScan(path, fmt.Sprintf("content exceeds %d bytes; only the first %d bytes were checked", SignatureScanMaxBytes, SignatureScanMaxBytes))
-			}
-			read.data = read.data[:SignatureScanMaxBytes]
+		for _, finding := range result.findings {
+			s.addFinding(finding)
 		}
-		return read.data
-	case <-time.After(ReadTimeout):
+		return result.data
+	case <-timer.C:
+		if f := opened.Load(); f != nil {
+			go f.Close()
+		}
 		s.recordStall(key, path)
 		return nil
 	}
 }
 
-// A recognized font container completes the fake-font check from its header.
-// Binary glyph tables are not JavaScript carriers for this check.
-func readScanContent(r io.Reader, sniffFont bool) ([]byte, error) {
+// Recognized fonts need only their header. Everything else is read in full
+// below 100 MB; stat avoids allocating for an already oversized regular file.
+// The reader limit also handles growing files and streams with no known size.
+func readScanContent(f *os.File, sniffFont bool) ([]byte, error) {
+	var r io.Reader = f
 	if sniffFont {
 		prefix := make([]byte, 32)
-		n, err := io.ReadFull(r, prefix)
+		n, err := io.ReadFull(f, prefix)
 		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 			return nil, err
 		}
@@ -294,9 +311,24 @@ func readScanContent(r io.Reader, sniffFont bool) ([]byte, error) {
 		if hasFontMagic(prefix) {
 			return prefix, nil
 		}
-		r = io.MultiReader(bytes.NewReader(prefix), r)
+		r = io.MultiReader(bytes.NewReader(prefix), f)
 	}
-	return io.ReadAll(io.LimitReader(r, SignatureScanMaxBytes+1))
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() >= SignatureScanMaxBytes {
+		return nil, fileSizeError()
+	}
+	data, err := io.ReadAll(io.LimitReader(r, SignatureScanMaxBytes))
+	if err == nil && len(data) >= SignatureScanMaxBytes {
+		return nil, fileSizeError()
+	}
+	return data, err
+}
+
+func fileSizeError() error {
+	return fmt.Errorf("%w: content must be below 100 MB (%d bytes); content was not checked", errFileTooLarge, SignatureScanMaxBytes)
 }
 
 // looksLikeText reports whether a buffer is plausibly text rather than a
@@ -396,24 +428,24 @@ func (s *Scanner) checkSourceFile(path, name string) {
 		return
 	}
 
-	data := s.readCapped(path)
-	if data == nil {
-		return
-	}
-	s.stats.FilesChecked++
-	if name == "tasks.json" && filepath.Base(filepath.Dir(path)) == ".vscode" {
-		s.checkFontTask(path, data)
+	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+		if name == "tasks.json" && filepath.Base(filepath.Dir(path)) == ".vscode" {
+			local.checkFontTask(path, data)
+		}
+
+		if isFont {
+			local.checkFakeFont(path, ext, data)
+		}
+
+		if local.checkPayloadSignatures(path, data) {
+			return
+		}
+
+		local.checkPadding(path, ext, isFont, data)
+	}) != nil {
+		s.stats.FilesChecked++
 	}
 
-	if isFont {
-		s.checkFakeFont(path, ext, data)
-	}
-
-	if s.checkPayloadSignatures(path, data) {
-		return
-	}
-
-	s.checkPadding(path, ext, isFont, data)
 }
 
 // checkRepoArtifactName reports whether a file is malicious by filename alone,
@@ -556,26 +588,25 @@ func hasInlinePadding(data []byte) bool {
 // dropped. A .gitignore listing a file the developer never created is a
 // deliberate concealment step, and it survives cleanup of the file itself.
 func (s *Scanner) checkGitignore(path string) {
-	data := s.readCapped(path)
-	if data == nil {
-		return
-	}
-	s.stats.FilesChecked++
-
-	for line := range strings.Lines(string(data)) {
-		trimmed := strings.TrimSpace(line)
-		for _, entry := range GitignoreInjectedLines {
-			if trimmed == entry.Signature {
-				s.addFinding(Finding{
-					Check:    "gitignore-injection",
-					Severity: SevCritical,
-					Path:     path,
-					Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
-				})
-				return
+	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+		for line := range strings.Lines(string(data)) {
+			trimmed := strings.TrimSpace(line)
+			for _, entry := range GitignoreInjectedLines {
+				if trimmed == entry.Signature {
+					local.addFinding(Finding{
+						Check:    "gitignore-injection",
+						Severity: SevCritical,
+						Path:     path,
+						Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
+					})
+					return
+				}
 			}
 		}
+	}) != nil {
+		s.stats.FilesChecked++
 	}
+
 }
 
 // scanDirFiles runs content checks over the files directly inside one
@@ -642,19 +673,16 @@ func (s *Scanner) checkNpmCLI() {
 
 			// Under the size threshold, still read it: a smaller loader stub
 			// carrying a known signature is just as bad.
-			data := s.readCapped(path)
-			if data == nil {
-				s.persistenceError(path, fmt.Errorf("npm entrypoint could not be read"))
-				continue
-			}
-			if sig, ok := persistenceSignature(data); ok {
-				s.addFinding(Finding{
-					Check:    "patched-npm-cli",
-					Severity: SevCritical,
-					Path:     path,
-					Detail:   fmt.Sprintf("global npm CLI entrypoint carries an injected payload — %s (attack: %s)", sig.Desc, sig.Attack),
-				})
-			}
+			s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+				if sig, ok := persistenceSignature(data); ok {
+					local.addFinding(Finding{
+						Check:    "patched-npm-cli",
+						Severity: SevCritical,
+						Path:     path,
+						Detail:   fmt.Sprintf("global npm CLI entrypoint carries an injected payload — %s (attack: %s)", sig.Desc, sig.Attack),
+					})
+				}
+			})
 		}
 	}
 }

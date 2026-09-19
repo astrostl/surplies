@@ -717,7 +717,7 @@ func TestSetupMjsNotMatchedAnywhere(t *testing.T) {
 func TestLargeRecognizedFontNeedsOnlyHeader(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "large.woff2")
-	os.WriteFile(path, append([]byte("wOF2"), make([]byte, SignatureScanMaxBytes+1)...), 0644)
+	os.WriteFile(path, append([]byte("wOF2"), make([]byte, 20<<20)...), 0644)
 	s := New(root, false)
 	data := s.readCapped(path)
 	if len(data) != 32 {
@@ -756,5 +756,26 @@ func TestPaddingIgnoresIndentedLicenseAndTrailingWhitespace(t *testing.T) {
 	}
 	if !hasInlinePadding([]byte("export default {};" + spaces + "unknownLoader();")) {
 		t.Fatal("off-screen appended code missed")
+	}
+}
+
+func TestProcessingSharesReadDeadlineAndCannotPublishLateFindings(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "index.js")
+	writeFixture(t, path, "fixture")
+	s := New(root, false)
+	finished := make(chan struct{})
+	start := time.Now()
+	data := s.processFile(path, 30*time.Millisecond, func(local *Scanner, data []byte) {
+		defer close(finished)
+		time.Sleep(80 * time.Millisecond)
+		local.addFinding(Finding{Check: "late-test-finding", Severity: SevCritical})
+	})
+	if data != nil || time.Since(start) > 200*time.Millisecond {
+		t.Fatal("inspection did not respect the deadline")
+	}
+	<-finished
+	if len(findingsFor(s, "scan-incomplete")) != 1 || len(findingsFor(s, "late-test-finding")) != 0 {
+		t.Fatalf("late worker changed parent results: %+v", s.Findings)
 	}
 }

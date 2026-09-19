@@ -66,11 +66,11 @@ func TestResultSummaryIsLast(t *testing.T) {
 func TestCoverageCategoriesAndCounts(t *testing.T) {
 	s := New(t.TempDir(), false)
 	for i := range 13 {
-		s.partialScan(fmt.Sprintf("/large/%d.js", i), "content exceeds read limit")
+		s.scanError(fmt.Sprintf("/large/%d.js", i), fileSizeError())
 	}
 	s.scanError("/protected", &os.PathError{Op: "open", Path: "/protected", Err: os.ErrPermission})
 	groups := groupCoverage(s.Findings)
-	if got := coverageSummary(groups); got != "Coverage incomplete: 13 partially checked, 1 permission denied." {
+	if got := coverageSummary(groups); got != "Coverage incomplete: 13 size limit exceeded, 1 permission denied." {
 		t.Fatal(got)
 	}
 	s.recordStall("/cloud", "/cloud/file.js")
