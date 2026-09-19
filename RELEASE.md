@@ -101,6 +101,7 @@ If testing from scratch:
 
 ```sh
 brew tap astrostl/surplies https://github.com/astrostl/surplies
+brew trust --formula astrostl/surplies/surplies
 brew install surplies
 surplies -version
 ```

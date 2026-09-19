@@ -6,13 +6,14 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
 
-**Currently detects indicators from five documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
+**Currently detects indicators from six documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team (see [Acknowledgments](#acknowledgments)):
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
 - **[TrapDoor crypto-stealer campaign](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates)** (attributed to GitHub actor `ddjidd564`, campaign marker `P-2024-001`, May 2026) — 34 purpose-built phantom packages across npm (21), PyPI (7), and Crates.io (6) impersonating crypto / DeFi / AI developer tooling. npm packages drop `trap-core.js` (48 KB, XOR-encrypted with key `cargo-build-helper-2026`) via `postinstall`, which writes `.cursorrules` and `CLAUDE.md` into the project directory for AI-assistant-driven persistence and pulls runtime config from `ddjidd564.github.io/defi-security-best-practices/`. surplies covers the npm and PyPI phantoms; Crates.io is out of scope (no Cargo scanner today).
 - **[Mini Shai-Hulud campaign](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** (attributed to TeamPCP, April–May 2026) — an ongoing self-spreading credential-theft worm across npm, PyPI, and Composer. The bulk of the campaign uses compromised maintainer accounts with "double-tap" publishing across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, `@cap-js/*`, `intercom-client`, PyPI `lightning`/`guardrails-ai`/`mistralai`, Composer `intercom/intercom-php`, and many more. On May 11 a distinct sub-incident hit 42 `@tanstack/*` packages (84 versions) via a different initial-access vector: a fork PR poisoned a GitHub Actions cache, then an attacker-controlled binary extracted an OIDC token from runner memory and published directly to npm — same campaign payload family (`router_init.js`, Session-network exfil via `filev2.getsession.org` / `seed{1,2,3}.getsession.org`, self-propagation), different door in. On May 19 the campaign struck again with the AntV maintainer compromise: 317 packages across `@antv/*`, `@lint-md/*`, and AntV-adjacent unscoped (`echarts-for-react`, `timeago.js`, `size-sensor`, and the rest of the visualization-ecosystem surface) published with the same "double-tap" pattern, a new `@antv/setup` phantom pulled from `github:antvis/G2#<imposter-commit-sha>`, a new C2 endpoint (`t.m-kosche.com`, disguised as OpenTelemetry traces), and a new kitty-monitor persistence variant (`~/.local/share/kitty/cat.py` + `kitty-monitor.{service,plist}`) — same Mini Shai-Hulud toolkit (Bun runtime, hex obfuscation, `firedalazer` GitHub dead-drop trigger, Dune-themed exfil repo naming) per SafeDep's writeup. On June 1 the campaign hit 31 `@redhat-cloud-services/*` packages, published after an attacker minted an npm token from a GitHub Actions OIDC credential stolen from the `RedHatInsights/javascript-clients` repo — same payload family (`preinstall` → `node index.js` → encrypted Bun loader harvesting GitHub Actions secrets, npm tokens, cloud/Kubernetes/Vault material, and SSH/Git credentials). Notably, this wave exfiltrates over a legitimate, non-actor-owned endpoint rather than dedicated C2 infrastructure, so no new network IOC is added; per Socket's writeup.
 - **[keyv npm compromise](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/)** (August 4, 2026) — compromised release path for maintainer `jaredwray` published 11 malicious releases across `keyv@6.0.0`, `@cacheable/*`, `cacheable`, `flat-cache`, `cacheable-request`, `file-entry-cache`, `cache-manager`, and `ecto@5.0.1`. Each tarball adds `"preinstall": "node setup.mjs"` plus two payload files (`setup.mjs` 29,918 bytes; `Math_Symbol.js` 727,680 bytes, byte-identical across all affected releases). A second execution path injected Claude Code `SessionStart` and VS Code `folderOpen` hooks (`.claude/setup.mjs`, `.claude/math_init.js`, `.vscode/setup.mjs`) into the keyv repository. The malicious `keyv@6.0.0` release carried valid npm trusted provenance signed by GitHub Actions.
+- **[PolinRider campaign](https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands)** (North Korea / DPRK, part of the Contagious Interview cluster; ongoing since December 2025) — a worm that spreads through developers rather than through a registry. It appends an obfuscated JavaScript loader to a real build config after ~280 spaces of padding, so the file still builds and still looks untouched in a diff; hides the same loader inside files named like web fonts, most often `public/fonts/fa-solid-400.woff2`, which reviewers and scanners skip as binary; and auto-executes via a `.vscode/tasks.json` task with `"runOn": "folderOpen"` the moment the project is opened in VS Code or Cursor. Once resident it harvests credentials, then propagates locally — `temp_auto_push.bat` resets the clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes with cached git credentials, so GitHub sees the real developer. That reaches npm, Packagist, Go, and PyPI through whatever the victim maintains. Confirmed footprint is 4,367 repositories across 2,152 owners. The loader resolves its C2 off the Ethereum blockchain (the NullReceiver technique: the IP is encoded in the destination address bytes of a zero-value transaction), so there is no domain or host to seize. It also overwrites the global `npm/lib/cli.js` with a ~1 MB malicious CLI, which re-spawns the payload on every `npm` invocation and survives reboots and credential rotation.
 
 ## Design principles
 
@@ -28,6 +29,7 @@ A cross-platform CLI tool that scans your home directory (and well-known system 
 
 ```sh
 brew tap astrostl/surplies https://github.com/astrostl/surplies
+brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
 
@@ -71,8 +73,8 @@ surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 
 The scanner runs five phases sequentially:
 
-1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads
-2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, and every `.claude/` / `.vscode/` for project-local payload files
+1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus the global npm CLI entrypoint (which lives outside the home directory) for signs of being overwritten
+2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content
 3. **Python site-packages scanning** — walk home directory + system Python paths, inspect every `site-packages`
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
 5. **Temp directory artifacts** — check temp dirs for payload remnants
@@ -119,6 +121,7 @@ Checks for npm packages that exist solely as malware delivery vehicles and have 
 | `@tanstack/setup` | Mini Shai-Hulud — TanStack sub-incident (May 2026) |
 | `@antv/setup` | Mini Shai-Hulud — @antv wave (May 19, 2026) |
 | 21 unscoped packages impersonating crypto/DeFi/AI tooling (`async-pipeline-builder`, `build-scripts-utils`, `chain-key-validator`, `crypto-credential-scanner`, `defi-env-auditor`, `defi-threat-scanner`, `deployment-key-auditor`, `dev-env-bootstrapper`, `eth-wallet-sentinel`, `llm-context-compressor`, `mnemonic-safety-check`, `model-switch-router`, `node-setup-helpers`, `project-init-tools`, `prompt-engineering-toolkit`, `solidity-deploy-guard`, `token-usage-tracker`, `wallet-backup-verifier`, `wallet-security-checker`, `web3-secrets-detector`, `workspace-config-loader`) | TrapDoor crypto stealer (May 2026) |
+| 7 attacker-published Tailwind/PostCSS typosquats (`tailwind-animationbased`, `tailwind-autoanimation`, `tailwind-mainanimation`, `tailwindcss-animate-style`, `tailwindcss-style-animate`, `tailwindcss-style-modify`, `tailwindcss-typography-style`) | PolinRider (DPRK / Contagious Interview) |
 
 **How it works:** For each `node_modules` directory found by walking the home directory, checks whether a subdirectory matching any known phantom package name exists.
 
@@ -140,6 +143,7 @@ Checks installed npm packages against a database of known-compromised versions.
 | 317 packages across `@antv/*` (the AntV visualization framework — 279 packages including `@antv/g2`, `@antv/g6`, `@antv/l7`, `@antv/x6`, `@antv/s2`, `@antv/f2`, `@antv/graphin`, and the rest of the visualization surface), `@lint-md/*`, and unscoped AntV-adjacent packages (`echarts-for-react`, `timeago.js`, `size-sensor`, `jest-canvas-mock`, `canvas-nest.js`, `ribbon.js`, and 30 more by the same maintainer) | 600+ versions — two-to-three per package per the "double-tap" pattern | Mini Shai-Hulud — @antv wave, AntV maintainer compromise (May 19, 2026) |
 | 31 packages across `@redhat-cloud-services/*` (`chrome`, `rbac-client`, `host-inventory-client`, the `frontend-components-*` family, the various `*-client` SDKs, and the `hcc-*-mcp` servers) | 31 versions — one per package | Mini Shai-Hulud — Red Hat Cloud Services wave, GitHub Actions OIDC token theft from `RedHatInsights/javascript-clients` (June 1, 2026) |
 | 11 packages: `keyv`, `@cacheable/net`, `@cacheable/node-cache`, `@cacheable/memory`, `@cacheable/utils`, `cacheable`, `flat-cache`, `cacheable-request`, `file-entry-cache`, `cache-manager`, `ecto` | 11 versions — one per package (`keyv@6.0.0`, `@cacheable/net@2.1.1`, `@cacheable/node-cache@3.1.2`, `@cacheable/memory@2.2.1`, `@cacheable/utils@2.5.1`, `cacheable@2.5.1`, `flat-cache@6.1.24`, `cacheable-request@13.0.20`, `file-entry-cache@11.1.6`, `cache-manager@7.2.10`, `ecto@5.0.1`) | keyv npm compromise — compromised release path for maintainer `jaredwray` (August 4, 2026) |
+| 38 compromised legitimate packages whose maintainers were infected, including `fetch-page-assets`, `html-to-gutenberg`, `itsa-react-docviewer`, `@joyfill/*`, `@testrelic/*`, `@common-stack/generate-plugin`, `@vite-*/*`, `@im_ahsan/chatbot-widget`, `bianira-ui`, `fluid-type-ui`, and the `tailwind-*` / `tailwindcss-*` plugin family | 100+ versions. `fetch-page-assets` is the notable one: only `1.2.9` was ever pulled (GHSA-vxq2-vhm7-7mhq), while `1.2.10`–`1.2.14` remained live and unflagged as `latest`. Pin to `<= 1.2.8`. npm's `0.0.1-security` takedown placeholders are deliberately excluded | PolinRider (DPRK / Contagious Interview) |
 
 **How it works:** For each `node_modules` directory, reads `package.json` for every package in the known-bad list and compares the installed version string.
 
@@ -226,6 +230,8 @@ Checks installed Python packages against a database of known-compromised version
 | `guardrails-ai` | 0.10.1 | Mini Shai-Hulud PyPI artifact (May 2026) |
 | `lightning` | 2.6.2, 2.6.3 | Mini Shai-Hulud PyPI artifact (May 2026) |
 | `mistralai` | 2.4.6 | Mini Shai-Hulud PyPI artifact (May 2026) |
+| `pybitjs` | 0.1.0 | PolinRider PyPI artifact — published by an infected maintainer |
+| `pyservercheck` | 0.1.1 | PolinRider PyPI artifact — published by an infected maintainer |
 
 **How it works:** Walks the home directory for `site-packages` directories (virtualenvs, `.local`, etc.) and also checks well-known system Python paths:
 - Unix: `/usr/lib/python3.*/site-packages`, `/usr/local/lib/python3.*/site-packages`, `/opt/homebrew/lib/python3.*/site-packages`
@@ -290,10 +296,13 @@ Checks installed Composer (PHP/Packagist) packages against a database of known-c
 | Package | Compromised versions | Attack type |
 |---------|---------------------|-------------|
 | `intercom/intercom-php` | 5.0.2 | Mini Shai-Hulud Composer artifact (May 2026) |
+| 19 packages: `sevenspan/laravel-chat`, `sevenspan/code-generator`, `sevenspan/laravel-whatsapp`, `roberts/leads`, `visanduma/nova-two-factor`, `visanduma/laravel-hrm`, `visanduma/laravel-invoice`, `visanduma/laravel-auth-switch`, `visanduma/nova-back-navigation`, `plusinfolab/logstation`, `thiio/kubernetes-php-sdk`, `olc/olc-php`, `adxio/twig-hmvc`, `arsl/optima-class`, `lambda-platform/moqup`, `imfaisii/twitter-api-v2-php`, `mahbub/laravel-saas-kit`, `mahbubur508/api-auth`, `henrique-borba/php-sieve-manager` | 61 artifacts — mostly `dev-*` branch refs rather than tagged releases | PolinRider (DPRK / Contagious Interview) |
 
 **How it works:** During the home-directory walk, any `vendor/` directory that contains a `composer/installed.json` is identified as a Composer install. The scanner parses both Composer 1.x (flat array) and 2.x (`{packages: [...]}`) envelope formats, then compares each installed package against the known-bad list. A leading `v` on either the installed or known-bad version string is stripped so `v5.0.2` and `5.0.2` both match.
 
 **Why this matters:** The Mini Shai-Hulud worm's reach extended beyond npm into PyPI and Composer/Packagist. Detection here mirrors the npm and Python version checks for cross-ecosystem coverage of the same campaign.
+
+PolinRider hits Packagist harder than it hits npm, and for a structural reason worth understanding: it propagates through maintainer machines rather than through the registry. The worm finds local git repos, injects its loader into a JS config file, amends the last commit and force-pushes — and Packagist then picks up the poisoned commit on *every tracked branch*. That is why most entries are `dev-*` branch refs (the version string in `installed.json` is literally `dev-main`) rather than semver tags. One entry, `olc/olc-php` at `dev-fix/remove-malware`, is not a typo: the branch a maintainer opened to clean up was itself re-poisoned before Packagist indexed it.
 
 ---
 
@@ -317,6 +326,12 @@ Checks active network connections for known command-and-control domains and IP a
 | `seed3.getsession.org` | Domain | mini-shai-hulud (TanStack sub-incident) — Session seed for exfil channel |
 | `litter.catbox.moe` | Domain | mini-shai-hulud (TanStack sub-incident) — secondary payload host (legit pastebin service abused) |
 | `t.m-kosche.com` | Domain | mini-shai-hulud (@antv wave) — RSA+AES exfil disguised as OpenTelemetry traces (`/api/public/otel/v1/traces`) |
+| `193.247.144.38`, `166.88.73.46`, `166.88.134.62`, `23.27.13.135` | IP | PolinRider — C2 hosts observed in the Packagist wave (all AS149440 / Evoxt) |
+| `166.88.54.158`, `198.105.127.210`, `23.27.202.27`, `154.91.0.103`, `136.0.9.8`, `166.88.4.2`, `23.27.120.142`, `202.155.8.173`, `166.88.134.82`, `188.43.33.249`, `23.27.13.43` | IP | PolinRider — interim firewall-block list from OSM's remediation guide |
+
+**A note on the PolinRider IPs:** they are a snapshot, not a list, and a miss here means nothing. That campaign resolves its C2 off the Ethereum blockchain — the NullReceiver technique encodes an IPv4 address in the destination-address bytes of a zero-value transaction from a known wallet, tailed with the ASCII marker `helloipbot!!`. There is no domain, registrar, certificate or host to seize, and publishing the next address costs the operator about one transaction's worth of gas, so the addresses rotate on their whim.
+
+The Ethereum JSON-RPC endpoints the loader queries (`1rpc.io`, `eth.drpc.org`, `ethereum-rpc.publicnode.com`, `eth-mainnet.public.blastapi.io`, `eth.blockscout.com`) are deliberately **not** listed as C2 domains. They are legitimate public infrastructure, and flagging them would report every web3 developer on the machine as compromised. Egress to them from a host that has no business speaking JSON-RPC is the durable signal in this campaign, but it is one for network monitoring to act on, not for a filesystem scanner's connection check.
 
 **How it works:** Runs `netstat -n` (numeric output, no reverse DNS) in parallel with forward DNS lookups (5s timeout) for each known C2 domain. Each known C2 IP — both the hardcoded entries and the IPs resolved from C2 domains — is then substring-matched against the netstat output. Forward DNS on the small known-bad list takes well under a second, whereas reverse DNS on every active connection (the prior approach) can take minutes on a busy machine. Attackers control forward DNS for their domains but not reverse DNS for the IPs they're hosted on, so forward resolution is also more reliable. Unspecified addresses (`0.0.0.0`, `::`) and loopback addresses are dropped from the resolved-IP set before matching, so DNS-sinkholed domains can't false-positive against every listener line in netstat output.
 
@@ -394,6 +409,91 @@ The PyPI counterpart to `phantom-dependency`. Checks for PyPI distribution names
 
 **Why this matters:** Unlike compromised legitimate packages (where downgrading to a pre-incident version restores safety), phantom packages have no clean version — every release is malware. The TrapDoor campaign published 7 such PyPI packages impersonating crypto / DeFi / data-pipeline tooling, all from GitHub actor `ddjidd564`. The earliest observed upload was `eth-security-auditor@0.1.0` on May 22, 2026; matching on name lets the check stay valid as the attacker republishes under new versions.
 
+---
+
+### 15. `fake-font-payload` (CRITICAL)
+
+Checks whether a file named like a web font actually contains font data. A `.woff2`, `.woff`, `.ttf`, or `.otf` whose bytes are text rather than a font container is a JavaScript loader wearing an asset's name.
+
+**How it works:** Reads the first bytes of each font-extension file found during the project walk and compares them against the magic numbers for every font container format (`wOF2`, `wOFF`, `OTTO`, `ttcf`, `true`, `typ1`, the TrueType `00 01 00 00` header, and the Type 1 variants). If none match, the file is sampled for text: any NUL byte means binary, and at least 95% of the first 512 bytes must be printable ASCII or whitespace. HTML and XML documents are excluded — a site mirrored with `wget`, or a single-page app behind a catch-all route, saves the index page under a missing asset's name, which is genuinely not font data and genuinely not an indicator of anything.
+
+**Why this matters:** This is the check that survives the campaign rotating its constants. PolinRider hides its loader inside `public/fonts/fa-solid-400.woff2` specifically because a `.woff2` reads as binary: reviewers skip it, `grep`-for-IOCs passes report it clean, and diff tools show it as an opaque blob. But whatever generation of the payload is inside, and whatever string constants it uses, the file still has to be JavaScript for `node` to run it — so the extension/content mismatch holds even when every signature in the list below has been rotated out from under us. It is also the cheapest possible check: the first four bytes settle it.
+
+---
+
+### 16. `payload-signature` (CRITICAL)
+
+Checks build configs, web fonts, dictionary files, and `.vscode/tasks.json` for byte sequences published as identifying an injected payload.
+
+**Known signatures:**
+
+| Signature | Description | Source attack |
+|-----------|-------------|---------------|
+| `("rmcej%otb%",2857687)` (matched as `rmcej%otb%`) | Loader signature, original March 2026 variant | PolinRider |
+| `_$_1e42` | Decoder function name, original March 2026 variant | PolinRider |
+| `Cot%3t=shtP` | Loader signature, rotated April 2026 variant | PolinRider |
+| `global['!']=` | Global injection marker | PolinRider |
+| `global['_V']=` | Global injection marker, rotated April 2026 variant | PolinRider |
+| `global.i="A8-` | Campaign-tag marker (fake-font and `babel.config.cjs` variants) | PolinRider |
+
+**How it works:** Matching is on exact bytes, never a regex — these are constants lifted from published analyses, not heuristics. The file set is deliberately narrow (JS-family `*.config.*` files, `App.js`, `index.js`, `truffle.js`, `tasks.json`, `cli.js`, and `.woff2` / `.woff` / `.dict` assets), because an unbounded content scan of a developer home directory is both slow and a false-positive generator. At most 4 MiB is read per file: the loader is *appended* after the original content and the observed payloads run to ~1 MB, so a small cap would read only the clean prefix and report nothing.
+
+**Why this matters:** PolinRider appends its loader to the end of a real build config after roughly 280 spaces of padding. The file still opens, still builds, and still looks untouched in a diff unless you scroll right — a `tailwind.config.js` that is normally 80–200 bytes becomes ~5,000. Filename matching cannot find this, because the file is supposed to exist and is supposed to have that name. Content matching is the only option. Note that the campaign has already rotated its constants once (the March `rmcej%otb%` / `_$_1e42` pair became `Cot%3t=shtP` / `MDy` in April, an evasion response to OSM's published YARA rule), which is why every generation is listed and why a clean result here is not proof of anything — see the next check.
+
+---
+
+### 17. `padded-source-file` (WARN)
+
+Flags a JS-family file, dictionary file, or font-extension file containing a run of 200 or more consecutive spaces.
+
+**How it works:** A single `strings.Contains` against a precomputed space run, applied only to files that already passed the signature scan without matching. If a known signature matched, this check stays quiet — one injection produces one finding, not two.
+
+**Why this matters:** This is the deliberate backstop for `payload-signature`. No formatter, minifier, or bundler produces a 200-space run in a config file; the padding exists purely to push the payload off the right edge of an editor viewport so it is invisible in review. Because it describes the *shape* of the injection rather than any particular payload, it keeps working after the campaign rotates its constants — which it has done once already and will do again. It is a warning rather than a critical finding because the shape alone is not proof, and the honest reading of a hit here is "this looks like an injection we do not have a signature for yet."
+
+---
+
+### 18. `malicious-repo-artifact` (CRITICAL)
+
+Checks for filenames that are malicious wherever they appear in a project tree, matched on basename during the home-directory walk rather than at a fixed path.
+
+**Known artifacts:**
+
+| Filename | Description | Source attack |
+|----------|-------------|---------------|
+| `temp_auto_push.bat` | Propagation script: resets the clock, amends the last commit, force-pushes | PolinRider |
+| `config.bat` | Hidden orchestrator (added to `.gitignore` to hide it from `git status`) | PolinRider |
+| `*.inz.cjs`, `*.inz.orig` | Implant module dropped beside a patched Electron or npm entrypoint | PolinRider |
+
+**How it works:** Exact basename match for the first two; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. Note that matching is on the full filename, not the extension — a legitimate `build.bat` is not flagged.
+
+**Why this matters:** `temp_auto_push.bat` is the highest-confidence indicator of past compromise in the entire campaign. PolinRider's propagation runs locally, not from a server: the script resets the machine clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes using whatever git credentials are already cached. Nothing leaves the machine that GitHub can distinguish from the real developer — same device, same SSH key, same behavior GitHub sees every day — which is exactly why the artifact left on disk is the evidence. OSM found it still sitting in 101 victim repositories whose owners had already cleaned the payload out of their config files and believed they were done.
+
+---
+
+### 19. `gitignore-injection` (CRITICAL)
+
+Checks `.gitignore` files for entries an attack added to conceal a file it dropped.
+
+**Known injected entries:**
+
+| Entry | Description | Source attack |
+|-------|-------------|---------------|
+| `config.bat` | Hides the dropped orchestrator from `git status` | PolinRider |
+
+**How it works:** Reads each `.gitignore` found during the walk and compares every trimmed line against the known-injected list as a whole-line match.
+
+**Why this matters:** This one survives cleanup of the file it was hiding. A developer who finds and deletes `config.bat` has removed the payload but not the evidence that something put it there — and the `.gitignore` line is what kept `git status` quiet while the orchestrator sat in the repo. A `.gitignore` listing a file the developer never created is a deliberate concealment step, and it is worth knowing about even after the file itself is gone.
+
+---
+
+### 20. `patched-npm-cli` (CRITICAL)
+
+Checks the global npm CLI entrypoint (`npm/lib/cli.js`) for signs of having been overwritten.
+
+**How it works:** Glob-matches every install layout surplies supports — system (`/usr/lib`, `/usr/local/lib`), Homebrew (`/opt/homebrew`), MacPorts (`/opt/local`), nvm, fnm, Volta, `n`, `.npm-global`, and the Windows `%APPDATA%\npm` and `%ProgramFiles%\nodejs` paths. Globs rather than `npm root -g` on purpose: multiple Node installs routinely coexist, and asking one of them where it lives reports on that one only. A file over 100 KiB is flagged on size; under that, it is still read and checked against the `payload-signature` list, so a smaller loader stub is caught too.
+
+**Why this matters:** This is the persistence that outlasts everything else. A poisoned project config only runs when that project builds; a patched `cli.js` re-spawns the payload on *every* `npm`, `npx`, or `npm exec` invocation, survives a reboot, and survives a full credential rotation — one developer traced their reinfection to an editor silently running `npm exec <package>@latest` in the background. The real file is a few hundred bytes across every npm major version (four lines that require the implementation); the PolinRider replacement is roughly 1 MB with the payload appended after a long whitespace run starting on line 5. The 100 KiB threshold sits two orders of magnitude above normal and an order below the malicious size, so the check does not depend on either number staying exact.
+
 ## Acknowledgments
 
 Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from incident analyses published by others. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs so you can sweep a developer machine for them in a few seconds.
@@ -401,7 +501,8 @@ Every IOC, malicious filename, C2 domain, persistence path, and obfuscation patt
 Sources, in rough order of how much of the IOC set they contribute:
 
 - **[StepSecurity](https://www.stepsecurity.io/)** ([blog](https://www.stepsecurity.io/blog)) — the bulk of the IOC set, including the full axios, litellm, and Mini Shai-Hulud writeups.
-- **[Socket](https://socket.dev/)** — broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems, the campaign-level attribution to TeamPCP, the Mini Shai-Hulud attribution and payload hashes for the June 1, 2026 Red Hat Cloud Services wave (plus the `tmp.0987654321.lock` / `/tmp/b-*/b.zip` Bun-loader artifacts), and the full IOC set for the TrapDoor crypto-stealer campaign (npm, PyPI, and Crates.io phantoms; `ddjidd564` actor attribution; `trap-core.js` payload; `.cursorrules` / `CLAUDE.md` AI-persistence vector).
+- **[Socket](https://socket.dev/)** — the PolinRider campaign framing, DPRK / Contagious Interview attribution, and the cross-ecosystem affected-package list with versions (npm, Packagist, PyPI) that the version checks are built from, plus the Packagist-wave payload hashes and C2 IPs; broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems, the campaign-level attribution to TeamPCP, the Mini Shai-Hulud attribution and payload hashes for the June 1, 2026 Red Hat Cloud Services wave (plus the `tmp.0987654321.lock` / `/tmp/b-*/b.zip` Bun-loader artifacts), and the full IOC set for the TrapDoor crypto-stealer campaign (npm, PyPI, and Crates.io phantoms; `ddjidd564` actor attribution; `trap-core.js` payload; `.cursorrules` / `CLAUDE.md` AI-persistence vector).
+- **[OpenSourceMalware](https://opensourcemalware.com/)** ([blog](https://opensourcemalware.com/blog), [PolinRider dossier](https://github.com/OpenSourceMalware/PolinRider)) — the entire PolinRider filesystem IOC set: both generations of loader signature constants (`("rmcej%otb%",2857687)` / `_$_1e42`, rotated to `Cot%3t=shtP` / `MDy`) and the `global['!']` / `global['_V']` injection markers, the infected-file-type list and the ~280-space padding pattern, the `temp_auto_push.bat` and `config.bat` propagation artifacts plus the `config.bat` line injected into `.gitignore`, the `fa-solid-400.woff2` and `spellright.dict` loader hiding places, the `npm/lib/cli.js` overwrite, the attacker-published Tailwind typosquat list, the interim C2 IP block list, and the `fetch-page-assets` case study (five versions live and unflagged on npm, plus the `global.i="A8-3292-*"` campaign-tag markers and the NullReceiver wallet linking PolinRider to the Ethereum dead-drop C2).
 - **[TanStack](https://tanstack.com/)** — postmortem and IOCs for the Mini Shai-Hulud sub-incident that hit 42 `@tanstack/*` packages on May 11, 2026 (`@tanstack/setup` phantom, `router_init.js` payload filename, `seed{2,3}.getsession.org` / `litter.catbox.moe`, the pwn-request → Actions cache poisoning → OIDC token vector).
 - **[Aikido](https://www.aikido.dev/)** — `tanstack_runner.js` payload filename (with SHA-256 hash) and `execution.js` as the alternate Bun-loaded payload name across the Mini Shai-Hulud campaign, plus the `"prepare": "bun run tanstack_runner.js && exit 1"` lifecycle pattern.
 - **[SafeDep](https://safedep.io/)** — the May 19, 2026 @antv-wave writeup: full 317-package compromise list, `@antv/setup` phantom + `github:antvis/G2#<imposter-commit-sha>` `optionalDependencies` vector, the `t.m-kosche.com` C2 endpoint (disguised as OpenTelemetry traces), the kitty-monitor persistence variant (`~/.local/share/kitty/cat.py`, `kitty-monitor.{service,plist}`, `/var/tmp/.gh_update_state`), and `.claude/index.js` as the payload-copy committed into repos.
@@ -420,6 +521,13 @@ Specifically, the following writeups are the basis for every check in this scann
 - [Mini Shai-Hulud Campaign Hits Red Hat Cloud Services npm Packages](https://socket.dev/blog/mini-shai-hulud-campaign-hits-red-hat-cloud-services-npm-packages) (Socket — Mini Shai-Hulud Red Hat Cloud Services wave; attribution + payload hashes + temp artifacts)
 - [TrapDoor Crypto Stealer Supply Chain Attack Hits 34 Packages and Hundreds of Versions Across npm, PyPI, and Crates.io](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates) (Socket — TrapDoor campaign)
 - [Inside the keyv npm Supply Chain Compromise](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/) (Snyk — keyv npm compromise; 11 malicious releases, payload hashes, IDE hooks)
+- [PolinRider: North Korea-Linked Supply Chain Campaign Expands Across Open Source Ecosystems](https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands) (Socket — PolinRider campaign framing and attribution)
+- [PolinRider supply chain attack tracker](https://socket.dev/supply-chain-attacks/polinrider) (Socket — full affected-package list with versions across npm, Packagist, and PyPI)
+- [PolinRider Expands to GitHub and Packagist](https://socket.dev/blog/polinrider-github-packagist) (Socket — Packagist wave; payload hashes, C2 IPs, NullReceiver wallet)
+- [PolinRider: DPRK Threat Actor Implants Malware in Hundreds of GitHub Repos](https://github.com/OpenSourceMalware/PolinRider) (OpenSourceMalware — campaign dossier; signature constants for both variants, YARA rules, infected-file-type table, typosquat list)
+- [A Developer's Guide to Getting Rid of PolinRider](https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider) (OpenSourceMalware — host artifacts, padding pattern, `npm/lib/cli.js` overwrite, `.gitignore` injection, interim C2 IP list)
+- [NPM Isn't Prepared For North Korean PolinRider Attack](https://opensourcemalware.com/blog/polinrider-npm-case-study-dprk-attack) (OpenSourceMalware — `fetch-page-assets` case study; live unflagged versions, payload hashes, `global.i="A8-…"` markers)
+- [NullReceiver's Blank Crypto Transfers Solves the Challenges of EtherHiding](https://opensourcemalware.com/blog/nullreceiver-dprk-c2-technique) (OpenSourceMalware — blockchain dead-drop C2 technique; `bianira-ui` / `fluid-type-ui` npm artifacts)
 
 If surplies is useful to you, the credit belongs to them. Go read their writeups.
 

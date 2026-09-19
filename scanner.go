@@ -104,9 +104,11 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "Scanning home directory: %s\n", s.HomeDir)
 	fmt.Fprintf(os.Stderr, "Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 
-	// Phase 1: Check known malicious artifacts (fast, fixed paths)
+	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
+	// global npm CLI entrypoint, which lives outside the home directory.
 	fmt.Fprintf(os.Stderr, "[1/5] Checking known malicious artifacts...\n")
 	s.checkArtifacts()
+	s.checkNpmCLI()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
 	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
@@ -173,6 +175,7 @@ func (s *Scanner) scanProjectDirs() {
 		}
 
 		if !d.IsDir() {
+			s.checkSourceFile(path, d.Name())
 			return nil
 		}
 
@@ -191,6 +194,10 @@ func (s *Scanner) scanProjectDirs() {
 		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
 			s.log("checking project config dir: %s", path)
 			s.checkProjectArtifactDir(path, files)
+			// The walk stops here, so inspect this directory's own files
+			// before returning — `.vscode/tasks.json` is the PolinRider
+			// loader and would otherwise never be read.
+			s.scanDirFiles(path)
 			return filepath.SkipDir
 		}
 

@@ -1,0 +1,418 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+)
+
+// Content-based checks. Every other check in surplies matches on a path, a
+// filename, or a declared version. These match on bytes inside a file, which
+// is necessary for attacks that inject into a file that is supposed to exist
+// and is supposed to have that name — PolinRider appends its loader to a real
+// `tailwind.config.js` and hides a JavaScript loader inside a real-looking
+// `fa-solid-400.woff2`. Neither is findable by name.
+//
+// Everything here is read-only and bounded: files are opened, at most
+// SignatureScanMaxBytes are read, and nothing is executed, parsed as code, or
+// written back.
+
+// fontMagics are the leading bytes of each font container format. A file whose
+// name claims to be a font but whose bytes match none of these is not a font.
+var fontMagics = [][]byte{
+	[]byte("wOF2"),           // WOFF2
+	[]byte("wOFF"),           // WOFF
+	[]byte("OTTO"),           // OpenType with CFF outlines
+	[]byte("ttcf"),           // TrueType collection
+	[]byte("true"),           // legacy Mac TrueType
+	[]byte("typ1"),           // legacy Mac Type 1
+	{0x00, 0x01, 0x00, 0x00}, // TrueType
+	{0x80, 0x01},             // PFB (Type 1 binary)
+	[]byte("%!PS-AdobeFont"), // Type 1 ASCII
+	[]byte("\x1fsttf"),       // rare compressed TrueType wrapper
+}
+
+// fontExtensions are the extensions the fake-font check applies to.
+var fontExtensions = []string{".woff2", ".woff", ".ttf", ".otf"}
+
+// paddingRun is the literal space run that marks a whitespace-padded
+// injection, built once from ConfigPaddingRunLength.
+var paddingRun = strings.Repeat(" ", ConfigPaddingRunLength)
+
+// injectableSourceNames are exact filenames a documented attack has been
+// observed injecting a payload into, beyond the `*.config.*` pattern.
+// From OSM's infected-file-type table (occurrence counts across a corpus of
+// 1,736 compromised repos) plus the babel.config.cjs variant documented in
+// their npm case study.
+// https://github.com/OpenSourceMalware/PolinRider
+var injectableSourceNames = []string{
+	"App.js",
+	"index.js",
+	"truffle.js",
+	"tasks.json",
+	"cli.js",
+}
+
+// shouldScanForSignatures reports whether a file is worth reading for payload
+// signatures. Kept narrow on purpose: an unbounded content scan of a developer
+// home directory is both slow and a false-positive generator, and every
+// documented injection target for the campaigns tracked here is either a
+// JS-family build config, an asset file chosen because reviewers skip it as
+// binary, or one of the specific filenames above.
+func shouldScanForSignatures(name string) bool {
+	if slices.Contains(injectableSourceNames, name) {
+		return true
+	}
+
+	ext := strings.ToLower(filepath.Ext(name))
+	if !slices.Contains(SignatureScannedExtensions, ext) {
+		return false
+	}
+
+	// `.json` is only interesting for the specific filenames above — scanning
+	// every JSON file in a home directory reads caches, lockfiles and package
+	// manifests for no benefit.
+	if ext == ".json" {
+		return false
+	}
+
+	// JS-family: only build configs (`vite.config.ts`, `postcss.config.mjs`,
+	// `babel.config.cjs`, …). Other source files are excluded to keep the
+	// scan bounded.
+	if isJSFamily(ext) {
+		return strings.Contains(name, ".config.")
+	}
+
+	// Asset extensions (.woff2, .woff, .dict) are always read: hiding the
+	// loader in one is the campaign's defining technique.
+	return true
+}
+
+func isJSFamily(ext string) bool {
+	switch ext {
+	case ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts":
+		return true
+	}
+	return false
+}
+
+// readCapped reads up to SignatureScanMaxBytes from path. Returns nil on any
+// error — an unreadable file is not a finding.
+func readCapped(path string) []byte {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer f.Close()
+
+	data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes))
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// looksLikeText reports whether a buffer is plausibly text rather than a
+// binary container. Used to distinguish "this .woff2 is JavaScript" from
+// "this .woff2 is a font in a format we don't have a magic number for".
+func looksLikeText(data []byte) bool {
+	if len(data) == 0 {
+		return false
+	}
+
+	sample := data
+	if len(sample) > 512 {
+		sample = sample[:512]
+	}
+
+	printable := 0
+	for _, b := range sample {
+		if b == 0x00 {
+			return false // NUL byte: binary
+		}
+		if b >= 0x20 && b < 0x7f {
+			printable++
+			continue
+		}
+		if b == '\n' || b == '\r' || b == '\t' {
+			printable++
+		}
+	}
+
+	return printable*100/len(sample) >= 95
+}
+
+// htmlPrefixes are the leading tokens of a document saved where a binary asset
+// was expected.
+var htmlPrefixes = []string{"<!doctype html", "<html", "<?xml", "<!--"}
+
+// looksLikeHTML reports whether a buffer is an HTML or XML document.
+//
+// This exists to suppress a benign false-positive class rather than to detect
+// anything: a site mirrored with `wget`, or a single-page app served behind a
+// catch-all route, saves the index page under the requested asset's name when
+// the asset 404s. The result is a `.otf` or `.woff2` on disk whose bytes are
+// plainly not font data — true, and not an indicator of anything. The attack
+// this check exists for hides JavaScript, not markup, so excluding documents
+// costs no detection.
+func looksLikeHTML(data []byte) bool {
+	sample := data
+	if len(sample) > 256 {
+		sample = sample[:256]
+	}
+	lower := strings.ToLower(strings.TrimSpace(string(sample)))
+	for _, p := range htmlPrefixes {
+		if strings.HasPrefix(lower, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// hasFontMagic reports whether a buffer starts with any known font container
+// signature.
+func hasFontMagic(data []byte) bool {
+	for _, magic := range fontMagics {
+		if bytes.HasPrefix(data, magic) {
+			return true
+		}
+	}
+	return false
+}
+
+// checkSourceFile runs every content-based check against a single file found
+// during the project walk. Called for non-directory entries only.
+//
+// Name-based checks run first and short-circuit: a file that is malicious by
+// name alone never needs reading.
+func (s *Scanner) checkSourceFile(path, name string) {
+	if s.checkRepoArtifactName(path, name) {
+		return
+	}
+
+	if name == ".gitignore" {
+		s.checkGitignore(path)
+		return
+	}
+
+	ext := strings.ToLower(filepath.Ext(name))
+	isFont := slices.Contains(fontExtensions, ext)
+
+	if !isFont && !shouldScanForSignatures(name) {
+		return
+	}
+
+	data := readCapped(path)
+	if data == nil {
+		return
+	}
+	s.stats.FilesChecked++
+
+	if isFont {
+		s.checkFakeFont(path, ext, data)
+	}
+
+	if s.checkPayloadSignatures(path, data) {
+		return
+	}
+
+	s.checkPadding(path, ext, isFont, data)
+}
+
+// checkRepoArtifactName reports whether a file is malicious by filename alone,
+// adding a finding if so.
+func (s *Scanner) checkRepoArtifactName(path, name string) bool {
+	// Propagation artifacts are matched on basename alone — these filenames
+	// have no legitimate use anywhere in a project tree.
+	for _, a := range KnownRepoArtifacts {
+		if name == a.Filename {
+			s.stats.FilesChecked++
+			s.addFinding(Finding{
+				Check:    "malicious-repo-artifact",
+				Severity: SevCritical,
+				Path:     path,
+				Detail:   fmt.Sprintf("%s (attack: %s)", a.Desc, a.Attack),
+			})
+			return true
+		}
+	}
+
+	// `.inz.cjs` / `.inz.orig` are the sibling modules a patched Electron
+	// entrypoint requires. Matched by suffix because the stem varies with
+	// whichever file was patched.
+	if strings.HasSuffix(name, ".inz.cjs") || strings.HasSuffix(name, ".inz.orig") {
+		s.stats.FilesChecked++
+		s.addFinding(Finding{
+			Check:    "malicious-repo-artifact",
+			Severity: SevCritical,
+			Path:     path,
+			Detail:   "PolinRider implant module dropped beside a patched Electron or npm entrypoint (attack: polinrider (DPRK))",
+		})
+		return true
+	}
+
+	return false
+}
+
+// checkFakeFont reports a file named like a web font whose bytes are text.
+// This holds regardless of which payload generation is inside, so it fires
+// even when every string constant has rotated.
+func (s *Scanner) checkFakeFont(path, ext string, data []byte) {
+	if hasFontMagic(data) || !looksLikeText(data) || looksLikeHTML(data) {
+		return
+	}
+	s.addFinding(Finding{
+		Check:    "fake-font-payload",
+		Severity: SevCritical,
+		Path:     path,
+		Detail:   fmt.Sprintf("%s file contains text, not font data — JavaScript loader disguised as a web font (attack: polinrider (DPRK))", ext),
+	})
+}
+
+// checkPayloadSignatures reports whether a known payload signature is present,
+// adding a finding if so.
+func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
+	content := string(data)
+	for _, sig := range KnownPayloadSignatures {
+		if strings.Contains(content, sig.Signature) {
+			s.addFinding(Finding{
+				Check:    "payload-signature",
+				Severity: SevCritical,
+				Path:     path,
+				Detail:   fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack),
+			})
+			return true
+		}
+	}
+	return false
+}
+
+// checkPadding warns on a file carrying the shape of an injection without a
+// known signature: a run of padding long enough to push an appended payload
+// off the right edge of an editor. Reported as a warning rather than a finding
+// of fact, because the campaign rotates its constants and this is what a
+// rotation past our signature list would look like.
+func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
+	if !isJSFamily(ext) && ext != ".dict" && !isFont {
+		return
+	}
+	if !strings.Contains(string(data), paddingRun) {
+		return
+	}
+	s.addFinding(Finding{
+		Check:    "padded-source-file",
+		Severity: SevWarn,
+		Path:     path,
+		Detail:   fmt.Sprintf("file contains a run of %d+ spaces, the padding pattern used to hide an appended payload off-screen", ConfigPaddingRunLength),
+	})
+}
+
+// checkGitignore looks for entries an attack added to conceal a file it
+// dropped. A .gitignore listing a file the developer never created is a
+// deliberate concealment step, and it survives cleanup of the file itself.
+func (s *Scanner) checkGitignore(path string) {
+	data := readCapped(path)
+	if data == nil {
+		return
+	}
+	s.stats.FilesChecked++
+
+	for line := range strings.Lines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		for _, entry := range GitignoreInjectedLines {
+			if trimmed == entry.Signature {
+				s.addFinding(Finding{
+					Check:    "gitignore-injection",
+					Severity: SevCritical,
+					Path:     path,
+					Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
+				})
+				return
+			}
+		}
+	}
+}
+
+// scanDirFiles runs content checks over the files directly inside one
+// directory, without recursing. Used for project config directories
+// (`.vscode`, `.claude`) that the walk stops descending into once it has
+// matched them, so that `.vscode/tasks.json` is still inspected.
+func (s *Scanner) scanDirFiles(dir string) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		s.checkSourceFile(filepath.Join(dir, e.Name()), e.Name())
+	}
+}
+
+// checkNpmCLI looks for a global npm CLI entrypoint that has been overwritten.
+// This is checked separately from the project walk because the global npm
+// install lives outside the home directory on most platforms, and because it
+// is the persistence that matters most: a patched cli.js re-spawns the malware
+// on every npm invocation and survives a reboot, so a machine can be
+// reinfected long after every poisoned repo has been cleaned.
+func (s *Scanner) checkNpmCLI() {
+	seen := make(map[string]bool)
+
+	for _, pattern := range NpmCLIGlobs(s.HomeDir) {
+		matches, err := filepath.Glob(pattern)
+		if err != nil {
+			continue
+		}
+
+		for _, path := range matches {
+			if seen[path] {
+				continue
+			}
+			seen[path] = true
+
+			info, err := os.Stat(path)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			s.stats.FilesChecked++
+			s.log("checking npm CLI entrypoint: %s (%d bytes)", path, info.Size())
+
+			if info.Size() > NpmCLIMaxNormalBytes {
+				s.addFinding(Finding{
+					Check:    "patched-npm-cli",
+					Severity: SevCritical,
+					Path:     path,
+					Detail: fmt.Sprintf(
+						"global npm CLI entrypoint is %d bytes (a genuine cli.js is under 1 KB) — overwritten to re-spawn a payload on every npm/npx/npm exec call (attack: polinrider (DPRK))",
+						info.Size(),
+					),
+				})
+				continue
+			}
+
+			// Under the size threshold, still read it: a smaller loader stub
+			// carrying a known signature is just as bad.
+			data := readCapped(path)
+			if data == nil {
+				continue
+			}
+			content := string(data)
+			for _, sig := range KnownPayloadSignatures {
+				if strings.Contains(content, sig.Signature) {
+					s.addFinding(Finding{
+						Check:    "patched-npm-cli",
+						Severity: SevCritical,
+						Path:     path,
+						Detail:   fmt.Sprintf("global npm CLI entrypoint carries an injected payload — %s (attack: %s)", sig.Desc, sig.Attack),
+					})
+					break
+				}
+			}
+		}
+	}
+}

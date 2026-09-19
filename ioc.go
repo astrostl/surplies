@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // IOCs in this file come from public incident analyses — primarily
@@ -77,6 +78,25 @@ var KnownPhantomPackages = []string{
 	"wallet-security-checker",
 	"web3-secrets-detector",
 	"workspace-config-loader",
+
+	// PolinRider (DPRK / Contagious Interview cluster). Attacker-published
+	// typosquats impersonating Tailwind / PostCSS plugins, used as the
+	// direct-install vector alongside the repo-poisoning worm. Published by
+	// the now-deleted npm accounts `allavin` and `blackedward`; installing one
+	// injects the PolinRider JS loader into the project's build configs. npm
+	// has scrubbed some of these, but victim repos still carry the dependency
+	// reference and the injected payload. Only the packages OSM's dossier
+	// names as attacker-published are listed as phantoms — compromised
+	// legitimate packages from the same campaign are version-pinned in
+	// KnownBadNpmVersions instead.
+	// https://github.com/OpenSourceMalware/PolinRider
+	"tailwind-animationbased",
+	"tailwind-autoanimation",
+	"tailwind-mainanimation",
+	"tailwindcss-animate-style",
+	"tailwindcss-style-animate",
+	"tailwindcss-style-modify",
+	"tailwindcss-typography-style",
 }
 
 // KnownBadNpmVersions maps legitimate npm package names to known-compromised versions.
@@ -720,6 +740,79 @@ var KnownBadNpmVersions = map[string][]string{
 	"@cacheable/utils":      {"2.5.1"},
 	"cache-manager":         {"7.2.10"},
 	"ecto":                  {"5.0.1"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). Compromised legitimate
+	// packages — maintainers whose machines were infected and whose npm
+	// publishing access the worm then reused. Distinct from the attacker-
+	// published typosquats in KnownPhantomPackages above.
+	//
+	// npm's `0.0.1-security` placeholder versions are deliberately NOT listed:
+	// that version is the clean stub npm publishes after a takedown, so
+	// flagging it would report the remediation as the compromise.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"@bcryptln/becryptjs":               {"3.0.9", "3.0.10", "3.0.11"},
+	"@im_ahsan/chatbot-widget":          {"0.0.77", "0.0.78", "0.0.79", "0.0.80", "0.0.81", "0.0.82"},
+	"@joyfill/components":               {"4.0.0-rc24-2773-beta.4"},
+	"@joyfill/layouts":                  {"0.1.2-2773.beta.0"},
+	"@lambda-platform/lambda-vue":       {"3.3.24"},
+	"@modhamanish/rn-mm-template":       {"1.1.3"},
+	"@muhammadahsan100d/chatbot-widget": {"0.0.82", "0.0.83", "0.0.84", "0.0.85"},
+	"@testrelic/appium-analytics":       {"1.1.1-next.88"},
+	"@testrelic/playwright-analytics":   {"2.12.1-next.88", "2.13.0"},
+	"@usemosaik/template-react-js":      {"1.0.0", "1.0.1"},
+	"@uw010010/vite-tree":               {"3.4.2", "3.4.3", "3.6.1"},
+	"@vite-ln/build-ts":                 {"5.15.10", "5.17.0"},
+	"@vite-mcp/vite-type":               {"6.44.1"},
+	"@vite-pro/vite-ui":                 {"2.5.10"},
+	"@vite-tab/tab":                     {"3.15.10", "5.7.0"},
+	"@vite-ts/vite-ui":                  {"6.44.1"},
+	"@vitets/vite-ts":                   {"1.5.10"},
+	"html-to-gutenberg":                 {"4.2.11", "4.2.19", "4.2.20", "4.2.21", "4.2.22"},
+	"itsa-react-docviewer":              {"16.1.2"},
+	"tailwind-animationbasis":           {"2.3.3"},
+	"tailwind-container-queries":        {"0.1.1"},
+	"tailwind-scrollbar-hider":          {"0.0.1", "5.0.1", "5.0.2"},
+	"tailwind-scrollbar-styles":         {"4.0.3"},
+	"tailwind-style-typography":         {"0.5.8"},
+	"tailwind-stylecss-typography":      {"0.8.3"},
+	"tailwind-typography-cssstyle":      {"0.8.3"},
+	"tailwind-typography-style":         {"0.5.8"},
+	"tailwind-typography-stylecss":      {"0.8.3"},
+	"tailwindcss-animate-styles":        {"1.0.9"},
+	"tailwindcss-contact-forms":         {"0.5.6"},
+	"tailwindcss-fluid-styles":          {"2.0.7"},
+	"tailwindcss-style-typography":      {"0.5.6", "0.5.8"},
+	"tailwindthml-flips":                {"1.0.3", "1.0.4", "1.0.5"},
+	"viteplugiin":                       {"1.0.28"},
+
+	// @common-stack/generate-plugin — the campaign republished the malicious
+	// loader across an entire alpha line rather than a single release.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"@common-stack/generate-plugin": {
+		"9.0.2-alpha.21", "9.0.2-alpha.22", "9.0.2-alpha.23", "9.0.2-alpha.24",
+		"9.0.4-alpha.0", "9.0.4-alpha.1",
+		"9.0.5-alpha.0", "9.0.5-alpha.1", "9.0.5-alpha.2", "9.0.5-alpha.3",
+		"9.0.5-alpha.4", "9.0.5-alpha.5",
+		"9.0.6-alpha.0", "9.0.6-alpha.1",
+		"10.0.1-alpha.0",
+	},
+
+	// PolinRider — fetch-page-assets. Socket's tracker carries 1.2.9 and
+	// 1.2.10; OSM's case study documents 1.2.11 through 1.2.14 as still live
+	// and unflagged on npm at publication, with 1.2.12 adding a
+	// babel.config.cjs payload (marker A8-3292-1) and 1.2.13 refreshing it
+	// (A8-3292-2). Only 1.2.9 was ever pulled (GHSA-vxq2-vhm7-7mhq), so the
+	// registry's own advisory data under-reports this package by five
+	// versions. Pin to <= 1.2.8.
+	// https://opensourcemalware.com/blog/polinrider-npm-case-study-dprk-attack
+	"fetch-page-assets": {"1.2.9", "1.2.10", "1.2.11", "1.2.12", "1.2.13", "1.2.14"},
+
+	// PolinRider / NullReceiver — trojanized Tailwind-plugin impersonators
+	// that resolve their C2 off the Ethereum chain (same publisher wallet
+	// 0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a as the rest of the campaign).
+	// https://opensourcemalware.com/blog/nullreceiver-dprk-c2-technique
+	"bianira-ui":    {"1.27.0"},
+	"fluid-type-ui": {"2.0.8"},
 }
 
 // --- Composer/Packagist ---
@@ -732,6 +825,72 @@ var KnownBadComposerVersions = map[string][]string{
 	// Mini Shai-Hulud worm — Composer artifact tracked alongside the npm campaign
 	// https://socket.dev/supply-chain-attacks/mini-shai-hulud
 	"intercom/intercom-php": {"5.0.2"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). Packagist is hit
+	// harder than npm here because the campaign propagates through maintainer
+	// machines rather than the registry: the worm finds local git repos,
+	// injects its loader into a JS config file, amends the last commit and
+	// force-pushes. Packagist then picks the poisoned commit up on every
+	// tracked branch, which is why most entries are `dev-*` branch refs
+	// rather than tagged releases — the version string in installed.json is
+	// literally `dev-main`, so exact matching works without normalization.
+	//
+	// `olc/olc-php dev-fix/remove-malware` is not a mistake: the branch a
+	// maintainer opened to clean up was itself re-poisoned before Packagist
+	// indexed it.
+	// https://socket.dev/blog/polinrider-github-packagist
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"adxio/twig-hmvc":                  {"dev-master"},
+	"arsl/optima-class":                {"dev-auction-added"},
+	"henrique-borba/php-sieve-manager": {"dev-master"},
+	"imfaisii/twitter-api-v2-php":      {"dev-master"},
+	"lambda-platform/moqup":            {"dev-master"},
+	"mahbub/laravel-saas-kit":          {"dev-main"},
+	"mahbubur508/api-auth":             {"dev-main"},
+	"olc/olc-php":                      {"dev-fix/remove-malware"},
+	"thiio/kubernetes-php-sdk":         {"dev-main"},
+	"visanduma/laravel-auth-switch":    {"dev-main"},
+	"visanduma/laravel-hrm":            {"dev-main"},
+	"visanduma/laravel-invoice":        {"dev-main"},
+	"visanduma/nova-back-navigation":   {"dev-master"},
+	"visanduma/nova-two-factor":        {"dev-main", "dev-nova4support", "dev-nova5", "dev-using-inertia"},
+	"plusinfolab/logstation": {
+		"dev-master",
+		"dev-dependabot/github_actions/actions/checkout-6",
+		"dev-dependabot/github_actions/dependabot/fetch-metadata-3.1.0",
+		"dev-dependabot/github_actions/ramsey/composer-install-4",
+	},
+	"roberts/leads": {
+		"2.0.0", "2.0.1", "2.0.2", "2.0.3",
+		"2.1.0", "2.1.1", "2.1.2", "2.1.3", "2.1.4",
+		"dev-main", "dev-drewroberts/feature/test-case",
+	},
+	"sevenspan/code-generator": {
+		"dev-master",
+		"dev-feat/livewire-version-update",
+		"dev-feat/migration-message",
+		"dev-feat/notification-blade-file-support",
+		"dev-feat/resource-collection-changes",
+		"dev-fix/data-type-mapping",
+		"dev-fix/feedback",
+		"dev-fix/generator-path-and-migration-table-name",
+		"dev-hotfix/vitepress-setup",
+		"dev-update/notification-modal",
+	},
+	"sevenspan/laravel-chat": {
+		"1.4.0", "1.4.1", "1.4.2", "1.5.0", "1.5.1", "1.5.2",
+		"dev-main",
+		"dev-ability-to-encrypt-body",
+		"dev-feat/doc",
+		"dev-feat/message-variables",
+		"dev-feat/php-version-upgrade",
+		"dev-imp/message-type",
+	},
+	"sevenspan/laravel-whatsapp": {
+		"dev-master", "dev-dev", "dev-feat/doc",
+		"dev-imp-message-template-api",
+		"dev-upgrade/laravel-9-to-10",
+	},
 }
 
 // --- Python/PyPI ---
@@ -748,6 +907,13 @@ var KnownBadPythonVersions = map[string][]string{
 	"guardrails-ai": {"0.10.1"},
 	"lightning":     {"2.6.2", "2.6.3"},
 	"mistralai":     {"2.4.6"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). PyPI is the campaign's
+	// smallest footprint — the worm reaches it only when an infected
+	// maintainer also publishes Python packages.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"pybitjs":       {"0.1.0"},
+	"pyservercheck": {"0.1.1"},
 }
 
 // KnownPhantomPythonPackages are PyPI distribution names that exist solely
@@ -881,6 +1047,161 @@ var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
 	},
 }
 
+// --- Source-file payload signatures ---
+
+// PayloadSignature is a fixed string that appears verbatim inside a file a
+// documented supply chain attack has injected code into. Matching is on exact
+// bytes, never a regex — these are constants lifted from published analyses,
+// not heuristics.
+type PayloadSignature struct {
+	Signature string
+	Desc      string
+	Attack    string
+}
+
+// KnownPayloadSignatures are byte sequences that identify an injected payload
+// inside an otherwise-legitimate source or config file.
+//
+// PolinRider appends its loader to the end of a real build config after ~280
+// spaces of padding, so the file still opens, still builds, and still looks
+// untouched in a diff unless you scroll right. Filename matching cannot find
+// that — the file is `tailwind.config.js` and it is supposed to be there — so
+// content matching is the only option.
+//
+// The campaign has rotated its constants once already (the original March
+// `rmcej%otb%` / `_$_1e42` pair became `Cot%3t=shtP` / `MDy` in April, an
+// evasion response to OSM's published YARA rule), so every generation's
+// markers are listed and a clean result is not proof of anything. The
+// `global['!']=` and `global['_V']=` forms are included because assigning to a
+// property literally named `!` or `_V` on the global object is not something
+// any legitimate build config does, which makes them durable across rotations
+// of the surrounding constants.
+//
+// Sources:
+//   - OSM PolinRider dossier (signature constants, both variants, YARA rules)
+//     https://github.com/OpenSourceMalware/PolinRider
+//   - OSM npm case study (the `global.i="A8-…"` campaign-tag markers)
+//     https://opensourcemalware.com/blog/polinrider-npm-case-study-dprk-attack
+var KnownPayloadSignatures = []PayloadSignature{
+	{Signature: `rmcej%otb%`, Desc: "PolinRider loader signature (original March 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `_$_1e42`, Desc: "PolinRider decoder function (original March 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `Cot%3t=shtP`, Desc: "PolinRider loader signature (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `global['!']=`, Desc: "PolinRider global injection marker", Attack: "polinrider (DPRK)"},
+	{Signature: `global['_V']=`, Desc: "PolinRider global injection marker (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `global.i="A8-`, Desc: "PolinRider campaign-tag marker (fake-font and babel.config.cjs variants)", Attack: "polinrider (DPRK)"},
+}
+
+// SignatureScannedExtensions are file extensions worth reading for
+// KnownPayloadSignatures during the project walk. Kept deliberately narrow:
+// the campaign injects into JS-family build configs and into asset files it
+// expects reviewers to skip as binary.
+var SignatureScannedExtensions = []string{
+	".js", ".mjs", ".cjs", ".ts", ".mts", ".cts",
+	".woff2", ".woff", ".dict", ".json",
+}
+
+// SignatureScanMaxBytes caps how much of a file is read when hunting for
+// payload signatures. The injected loader is appended after the original
+// content, and the observed payloads run to ~1 MB, so a small cap would read
+// only the clean prefix and report nothing.
+const SignatureScanMaxBytes = 4 << 20 // 4 MiB
+
+// ConfigPaddingRunLength is the number of consecutive spaces that marks a
+// whitespace-padded injection. PolinRider pads with roughly 280 spaces to push
+// the payload off the right edge of an editor viewport; no formatter or
+// minifier produces a run anywhere near this long in a config file.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+const ConfigPaddingRunLength = 200
+
+// --- Repo-local propagation artifacts ---
+
+// KnownRepoArtifacts are filenames that are malicious wherever they appear in
+// a project tree, matched on basename during the home-directory walk rather
+// than at a fixed path.
+//
+// PolinRider's propagation runs locally: `temp_auto_push.bat` resets the
+// machine clock, amends the last commit so the timestamp matches the one it
+// replaced, and force-pushes with whatever git credentials are already cached.
+// Nothing leaves the machine that GitHub can distinguish from the real
+// developer, which is why the artifact left on disk is the evidence. OSM
+// found it still present in 101 victim repos whose owners had already cleaned
+// the payload out of their config files, making it the single
+// highest-confidence indicator of past compromise in the campaign.
+//
+// Sources:
+//   - OSM PolinRider remediation guide (temp_auto_push.bat, config.bat, and
+//     the `config.bat` line injected into .gitignore to hide it)
+//     https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+//   - OSM PolinRider dossier (polinrider-scanner.sh checks the same three)
+//     https://github.com/OpenSourceMalware/PolinRider
+var KnownRepoArtifacts = []ProjectArtifact{
+	{Filename: "temp_auto_push.bat", Desc: "PolinRider propagation script (clock reset + commit amend + force-push)", Attack: "polinrider (DPRK)"},
+	{Filename: "config.bat", Desc: "PolinRider hidden orchestrator (added to .gitignore to hide it from git status)", Attack: "polinrider (DPRK)"},
+}
+
+// GitignoreInjectedLines are exact .gitignore entries a documented attack adds
+// to conceal a file it dropped. Matched as a whole line.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+var GitignoreInjectedLines = []PayloadSignature{
+	{Signature: "config.bat", Desc: "PolinRider hid its orchestrator from git status by adding it to .gitignore", Attack: "polinrider (DPRK)"},
+}
+
+// --- Patched package-manager entrypoints ---
+
+// NpmCLIGlobs are glob patterns for the global npm CLI entrypoint across the
+// install layouts surplies supports. Globs rather than `npm root -g` on
+// purpose: multiple node installs routinely coexist (system, Homebrew, nvm,
+// fnm, Volta, n) and asking one of them where it lives reports on that one
+// only. Paths are resolved against the home directory where relative.
+//
+// PolinRider overwrites this file with a ~1 MB malicious npm CLI. It matters
+// more than a poisoned project config because every `npm`, `npx`, or
+// `npm exec` call then re-spawns the malware, and it survives a reboot — one
+// developer traced their reinfection to an editor silently running
+// `npm exec <package>@latest` in the background.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+func NpmCLIGlobs(homeDir string) []string {
+	rel := []string{
+		filepath.Join(".nvm", "versions", "node", "*", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".volta", "tools", "image", "npm", "*", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".local", "share", "fnm", "node-versions", "*", "installation", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join("n", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".npm-global", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join("node_modules", "npm", "lib", "cli.js"),
+	}
+
+	globs := make([]string, 0, len(rel)+6)
+	for _, r := range rel {
+		globs = append(globs, filepath.Join(homeDir, r))
+	}
+
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			globs = append(globs, filepath.Join(appData, "npm", "node_modules", "npm", "lib", "cli.js"))
+		}
+		if pf := os.Getenv("ProgramFiles"); pf != "" {
+			globs = append(globs, filepath.Join(pf, "nodejs", "node_modules", "npm", "lib", "cli.js"))
+		}
+		return globs
+	}
+
+	return append(globs,
+		"/usr/lib/node_modules/npm/lib/cli.js",
+		"/usr/local/lib/node_modules/npm/lib/cli.js",
+		"/opt/homebrew/lib/node_modules/npm/lib/cli.js",
+		"/opt/local/lib/node_modules/npm/lib/cli.js",
+	)
+}
+
+// NpmCLIMaxNormalBytes is the size above which a global npm CLI entrypoint is
+// treated as overwritten. The real file is a few hundred bytes across every
+// npm major version — four lines that require the implementation — while the
+// PolinRider replacement is roughly 1 MB with the payload appended after a
+// long whitespace run starting on line 5. The threshold sits two orders of
+// magnitude above normal and three below the malicious size, so it does not
+// depend on either number staying exact.
+const NpmCLIMaxNormalBytes = 100 << 10 // 100 KiB
+
 // --- Network IOCs ---
 
 // KnownC2Domains are command-and-control domains from documented supply chain attacks.
@@ -900,8 +1221,47 @@ var KnownC2Domains = []string{
 }
 
 // KnownC2IPs are command-and-control IP addresses from documented supply chain attacks.
+//
+// The PolinRider entries are a snapshot, not a fixed list. That campaign
+// resolves its C2 off the Ethereum blockchain (the NullReceiver technique:
+// the IPv4 address is encoded in the destination address bytes of a zero-value
+// transaction from wallet 0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a, tailed
+// with ASCII `helloipbot!!`). There is no domain, registrar or host to seize,
+// and republishing the next address costs the operator one transaction, so
+// these rotate on their whim and a miss here means nothing.
+//
+// The Ethereum JSON-RPC endpoints the loader queries (1rpc.io, eth.drpc.org,
+// ethereum-rpc.publicnode.com, eth-mainnet.public.blastapi.io,
+// eth.blockscout.com) are deliberately NOT listed as C2 domains: they are
+// legitimate public infrastructure, and flagging them would report every web3
+// developer as compromised. Egress to them from a machine that has no business
+// speaking JSON-RPC is a real signal, but it is one for network monitoring,
+// not for a filesystem scanner's connection check.
 var KnownC2IPs = []string{
 	"142.11.206.73", // axios
+
+	// PolinRider — C2 hosts observed in the Packagist wave. All AS149440
+	// (Evoxt), the provider the operator rotates hosts within.
+	// https://socket.dev/blog/polinrider-github-packagist
+	"193.247.144.38",
+	"166.88.73.46",
+	"166.88.134.62",
+	"23.27.13.135",
+
+	// PolinRider — the interim firewall-block list from OSM's remediation
+	// guide, published as a snapshot of then-live infrastructure.
+	// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+	"166.88.54.158",
+	"198.105.127.210",
+	"23.27.202.27",
+	"154.91.0.103",
+	"136.0.9.8",
+	"166.88.4.2",
+	"23.27.120.142",
+	"202.155.8.173",
+	"166.88.134.82",
+	"188.43.33.249",
+	"23.27.13.43",
 }
 
 // --- Filesystem artifacts ---
