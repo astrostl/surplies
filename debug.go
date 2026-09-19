@@ -40,6 +40,15 @@ func (d *scanDebug) event(action, path string, bytes int64, elapsed time.Duratio
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if action == "read" || action == "reuse-content" {
+		f := d.report.Files[path]
+		if action == "read" {
+			f.Reads++
+		} else {
+			f.CacheHits++
+		}
+		d.report.Files[path] = f
+	}
 	if strings.HasPrefix(action, "selected-") {
 		d.reasons[path] = action
 	}
@@ -76,7 +85,6 @@ func (d *scanDebug) fileDone(path string, stats *contentReadStats, read, inspect
 	n := stats.bytes.Load()
 	fmt.Fprintf(d.out, "[debug] done path=%q bytes=%d read=%s inspect=%s total=%s\n", path, n, read.Round(time.Microsecond), inspect.Round(time.Microsecond), elapsed.Round(time.Microsecond))
 	f := d.report.Files[path]
-	f.Reads++
 	f.Bytes += n
 	f.ReadTime += read
 	f.InspectTime += inspect
@@ -133,7 +141,7 @@ func (d *scanDebug) summary() {
 // Durations are nanoseconds. Byte counts are logical reads, not physical disk traffic.
 type DebugFile struct {
 	Bytes                     int64
-	Reads                     int
+	Reads, CacheHits          int
 	ReadTime, InspectTime     time.Duration
 	Stage, Selection, Package string
 }

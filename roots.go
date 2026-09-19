@@ -8,7 +8,7 @@ import (
 	"strings"
 )
 
-// Each scan phase walks home plus explicitly requested roots. Resolve root
+// Shared discovery walks home plus explicitly requested roots. Resolve root
 // symlinks (e.g. /tmp), deduplicate overlapping roots, and retain the caller's
 // path spelling in findings. Internal directory symlinks are not followed.
 func (s *Scanner) walkScanRoots(visit fs.WalkDirFunc) {

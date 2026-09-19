@@ -121,7 +121,7 @@ func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 		printReportSummary(os.Stderr, findings, stats, invocation)
 	} else {
 		if path, err := saveScanReport("", findings, stats, invocation); err == nil {
-			fmt.Fprintf(os.Stdout, "\n-------\nFull report saved: %s\n", path)
+			fmt.Fprintf(os.Stdout, "\n-----------------------------------------------------------------------------\n\nFull report saved: %s\n", path)
 		} else {
 			fmt.Fprintf(os.Stderr, "Could not save full report: %v\n", err)
 			printDiagnosticGroups(os.Stdout, findings)
