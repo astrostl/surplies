@@ -258,3 +258,20 @@ func TestGeneralWalkFailureReported(t *testing.T) {
 		t.Fatal("failed walk reported clean")
 	}
 }
+
+func TestProjectWalkPreservesPersistenceInsideSkippedTrees(t *testing.T) {
+	root := t.TempDir()
+	for _, tree := range []string{"node_modules", ".vscode", "vendor"} {
+		writeFixture(t, filepath.Join(root, tree, "nested", "orphan.inz.cjs"), "fixture")
+		writeFixture(t, filepath.Join(root, tree, "portable", "resources", "app", "main.js"), "/*RS260605*/")
+	}
+	writeFixture(t, filepath.Join(root, "vendor", "composer", "installed.json"), "[]")
+	for _, deep := range []bool{false, true} {
+		s := New(root, false)
+		s.Deep = deep
+		s.scanProjectDirs()
+		if len(findingsFor(s, "malicious-repo-artifact")) != 3 || len(findingsFor(s, "patched-application")) != 3 {
+			t.Fatalf("deep=%v lost coverage: %+v", deep, s.Findings)
+		}
+	}
+}

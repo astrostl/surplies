@@ -29,6 +29,7 @@ func main() {
 		showVer          bool
 		deep             bool
 		persistenceRoots []string
+		coverageDetails  bool
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
@@ -42,6 +43,7 @@ func main() {
 		persistenceRoots = append(persistenceRoots, path)
 		return nil
 	})
+	flag.BoolVar(&coverageDetails, "coverage-details", false, "list individual paths with incomplete scan coverage")
 	flag.Parse()
 
 	if showVer {
@@ -65,7 +67,7 @@ func main() {
 		enc.SetIndent("", "  ")
 		enc.Encode(findings)
 	} else {
-		printFindings(findings, stats)
+		printFindings(findings, stats, coverageDetails)
 	}
 
 	// Exit code reflects worst severity
@@ -105,7 +107,10 @@ func printScanSummary(stats ScanStats) {
 	}
 }
 
-func printFindings(findings []Finding, stats ScanStats) {
+func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
+	indicators, coverage := splitFindings(findings)
+	findings = indicators
+	defer printCoverage(coverage, coverageDetails)
 	if len(findings) == 0 {
 		pkgs := make(map[string]bool)
 		for pkg := range KnownBadNpmVersions {
@@ -156,5 +161,32 @@ func printFindings(findings []Finding, stats ScanStats) {
 			marker = "?"
 		}
 		fmt.Printf("[%s] %s\n    %s\n    %s\n\n", marker, f.Check, f.Path, f.Detail)
+	}
+}
+
+// Coverage limitations are diagnostics, not indicators of compromise. Keep
+// scan-incomplete records in JSON and the nonzero exit status for automation.
+func splitFindings(findings []Finding) (indicators, coverage []Finding) {
+	for _, f := range findings {
+		if f.Check == "scan-incomplete" {
+			coverage = append(coverage, f)
+		} else {
+			indicators = append(indicators, f)
+		}
+	}
+	return
+}
+
+func printCoverage(coverage []Finding, details bool) {
+	if len(coverage) == 0 {
+		return
+	}
+	fmt.Printf("\nCoverage incomplete: %d path(s) could not be fully checked. These are not attack indicators.\n", len(coverage))
+	if !details {
+		fmt.Println("Use --coverage-details or -json to inspect the affected paths.")
+		return
+	}
+	for _, f := range coverage {
+		fmt.Printf("    %s\n    %s\n\n", f.Path, f.Detail)
 	}
 }

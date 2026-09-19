@@ -54,6 +54,7 @@ surplies -deep        # also read file contents inside dependency directories
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
+surplies --coverage-details  # list paths with incomplete coverage
 surplies --persistence-root /custom/apps  # additional recursive persistence search; repeatable
 ```
 
@@ -539,13 +540,13 @@ Checks the global npm CLI entrypoint (`npm/lib/cli.js`) for signs of having been
 
 Reports general project/persistence traversal errors, failed content reads, the first read timeout in each subtree, and content omitted by read limits. Missing explicit persistence roots also warn; absent optional default installation paths do not.
 
-**How it works:** Every content read is bounded at 5 seconds. Ordinary content scans inspect at most the first 4 MiB and warn when more content exists; application entrypoint limits are described below. Reads that time out are tracked per subtree — keyed on the first three path components below the home directory, which resolves the cloud-provider layouts that matter (`Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`) without lumping all of `~/Library` together. The first timeout emits a finding naming the subtree. After three timeouts in that subtree, further content reads there are abandoned for the rest of the scan.
+**How it works:** Every content read is bounded at 5 seconds. Recognized font containers are checked from their first 32 bytes for the fake-font test; their glyph data is not scanned for JavaScript signatures and their size does not produce a coverage warning. Text disguised as a font still receives content checks. Other ordinary content scans inspect at most the first 4 MiB and report incomplete coverage when more content exists; application entrypoint limits are described below. Reads that time out are tracked per subtree — keyed on the first three path components below the home directory, which resolves the cloud-provider layouts that matter (`Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`) without lumping all of `~/Library` together. The first timeout emits a finding naming the subtree. After three timeouts in that subtree, further content reads there are abandoned for the rest of the scan.
 
 **Why this matters:** Files under Dropbox, OneDrive, iCloud Drive, or Google Drive often exist only as placeholders whose contents live on the provider's servers. Opening one asks the provider to fetch it. Usually that works, and it *should* — cloud-synced folders hold real repositories, and skipping them outright would be a blind spot in exactly the kind of place this campaign spreads. But when the provider is offline, the account is unlinked, or the file is gone server-side, the read blocks indefinitely and then fails. The same happens on a stalled NFS or SMB mount.
 
 A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
 
-The result is reported as a **finding rather than a log line** on purpose. It lands in the JSON output, it appears in the findings list, and it pushes the exit code off zero — so a scan that quietly gave up on a folder full of repositories can never be mistaken for a scan that read them and found nothing. That is the same failure mode as a rate-limited API sweep returning empty results and being read as "nothing there."
+Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. Use `--coverage-details` to list affected paths. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
 
 ### 22. `patched-application` (CRITICAL)
 
@@ -561,7 +562,7 @@ The default scan checks these paths independently of the home walk and dependenc
 
 Adjacent `*.inz.cjs` / `*.inz.orig` files produce `malicious-repo-artifact` findings even if the entrypoint is absent. Duplicate discovery of the same path is suppressed. Entry files up to 8 MiB are fully inspected; larger files have their first and last 4 MiB inspected and receive a `scan-incomplete` warning for the omitted middle. Reads retain the five-second timeout. Access/read failures also produce `scan-incomplete` warnings. No application or package manager is executed.
 
-A separate recursive discovery pass finds the same entrypoint shapes and sidecars under home, `/usr/local/lib`, `/opt`, `/usr/lib`, and `/usr/share` on Unix, plus `/Applications` on macOS; Windows searches home and Program Files. This pass crosses dependency directories even without `-deep` and recognizes renamed app bundles and custom npm prefixes. It reads selected entrypoints, not every file's contents. The public [NullReceiver scanner](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh) supplies the recursive sidecar/entrypoint approach; [StepSecurity](https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise) documents the application targets. Search roots are coverage choices, not additional IOCs.
+Persistence discovery shares the project walk under home and recursively searches `/usr/local/lib`, `/opt`, `/usr/lib`, and `/usr/share` on Unix, plus `/Applications` on macOS; Windows searches home and Program Files. Discovery crosses dependency directories even without `-deep` and recognizes renamed app bundles and custom npm prefixes. It reads selected entrypoints, not every file's contents. The public [NullReceiver scanner](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh) supplies the recursive sidecar/entrypoint approach; [StepSecurity](https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise) documents the application targets. Search roots are coverage choices, not additional IOCs.
 
 Use `--persistence-root /custom/apps` (repeatable) to include other locations. Root symlinks are resolved; directory symlinks encountered within a tree are not traversed. Supply their destination as another root when needed. Overlapping recursive roots are deduplicated. ASAR archives are not unpacked. Signature matching does not unpack obfuscated code, and absence of a marker does not establish that the host was never compromised.
 

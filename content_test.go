@@ -713,3 +713,29 @@ func TestSetupMjsNotMatchedAnywhere(t *testing.T) {
 		t.Errorf("setup.mjs was matched as a repo artifact: %v", hits)
 	}
 }
+
+func TestLargeRecognizedFontNeedsOnlyHeader(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "large.woff2")
+	os.WriteFile(path, append([]byte("wOF2"), make([]byte, SignatureScanMaxBytes+1)...), 0644)
+	s := New(root, false)
+	data := s.readCapped(path)
+	if len(data) != 32 {
+		t.Fatalf("read %d bytes of recognized font", len(data))
+	}
+	s.checkSourceFile(path, "large.woff2")
+	if len(s.Findings) != 0 {
+		t.Fatalf("recognized font produced findings: %+v", s.Findings)
+	}
+}
+
+func TestTextFontStillScansBeyondHeader(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "fake.woff2")
+	os.WriteFile(path, []byte(strings.Repeat(" ", 100)+"/*RS260605*/"), 0644)
+	s := New(root, false)
+	s.checkSourceFile(path, "fake.woff2")
+	if len(findingsFor(s, "fake-font-payload")) != 1 || len(findingsFor(s, "payload-signature")) != 1 {
+		t.Fatalf("fake font missed: %+v", s.Findings)
+	}
+}
