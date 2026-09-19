@@ -7,6 +7,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -62,12 +63,18 @@ func main() {
 	s.PersistenceRoots = persistenceRoots
 	findings, stats := s.Run()
 
+	invocation := invocationLabel(version, os.Args[1:])
 	if jsonOutput {
+		indicators, coverage := splitFindings(findings)
+		fmt.Fprintln(os.Stderr, resultSummary(invocation, indicators))
+		if len(coverage) > 0 {
+			fmt.Fprintf(os.Stderr, "Coverage incomplete: %d path(s); see scan-incomplete JSON records.\n", len(coverage))
+		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(findings)
 	} else {
-		printFindings(findings, stats, coverageDetails)
+		printFindings(findings, stats, coverageDetails, invocation)
 	}
 
 	// Exit code reflects worst severity
@@ -107,7 +114,7 @@ func printScanSummary(stats ScanStats) {
 	}
 }
 
-func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
+func printFindings(findings []Finding, stats ScanStats, coverageDetails bool, invocation string) {
 	indicators, coverage := splitFindings(findings)
 	findings = indicators
 	defer printCoverage(coverage, coverageDetails)
@@ -130,27 +137,14 @@ func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
 		fmt.Printf("Checked for: %s.\n\n", strings.Join(names, ", "))
 		printScanSummary(stats)
 		fmt.Println()
-		fmt.Println("No supply chain attack indicators found.")
+		fmt.Println(resultSummary(invocation, findings))
 		return
 	}
 
 	printScanSummary(stats)
 	fmt.Fprintln(os.Stderr)
 
-	critical, warn, info := 0, 0, 0
-	for _, f := range findings {
-		switch f.Severity {
-		case SevCritical:
-			critical++
-		case SevWarn:
-			warn++
-		case SevInfo:
-			info++
-		}
-	}
-
-	fmt.Printf("Found %d indicator(s): %d critical, %d warning, %d info\n\n",
-		len(findings), critical, warn, info)
+	fmt.Printf("%s\n\n", resultSummary(invocation, findings))
 
 	for _, f := range findings {
 		marker := " "
@@ -189,4 +183,33 @@ func printCoverage(coverage []Finding, details bool) {
 	for _, f := range coverage {
 		fmt.Printf("    %s\n    %s\n\n", f.Path, f.Detail)
 	}
+}
+
+func invocationLabel(buildVersion string, args []string) string {
+	parts := []string{"surplies", strings.TrimPrefix(buildVersion, "v")}
+	for _, arg := range args {
+		if strings.ContainsAny(arg, " \t\r\n\"\\") || arg == "" {
+			arg = strconv.Quote(arg)
+		}
+		parts = append(parts, arg)
+	}
+	return strings.Join(parts, " ")
+}
+
+func resultSummary(invocation string, indicators []Finding) string {
+	if len(indicators) == 0 {
+		return invocation + " : No supply chain attack indicators found."
+	}
+	critical, warn, info := 0, 0, 0
+	for _, f := range indicators {
+		switch f.Severity {
+		case SevCritical:
+			critical++
+		case SevWarn:
+			warn++
+		case SevInfo:
+			info++
+		}
+	}
+	return fmt.Sprintf("%s : Found %d indicator(s): %d critical, %d warning, %d info", invocation, len(indicators), critical, warn, info)
 }
