@@ -4,9 +4,9 @@
 
 > **Disclaimer:** This tool is vibe coded and provided as-is, without warranty or guarantee of any kind. It may produce false positives, miss indicators, or behave unexpectedly. Use it as one signal among many, not as a definitive security verdict. Testing has only been performed on macOS — Linux and Windows behavior is untested.
 
-A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, zero dependencies.
+A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Optional Git-history checks require Git.
 
-**Currently detects indicators from six documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)):
+**Currently detects indicators from six documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)). The [active hash list](#active-payload-hashes) also includes an incident-sourced sample within the existing PolinRider campaign; its exact hash is not independently publicly corroborated:
 
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
@@ -17,11 +17,11 @@ A cross-platform CLI tool that scans your home directory (and well-known system 
 
 ## Design principles
 
-- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The sole exception is `netstat`, used only for live network connection IOC matching where no filesystem equivalent exists.
+- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and opt-in `-git` scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
 - **Report only, never remediate.** Read-only scanner. Never deletes files, uninstalls packages, modifies configs, or takes any corrective action. Findings are reported; the user decides what to do.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
-- **Zero dependencies.** stdlib only. No third-party Go modules.
+- **Zero Go dependencies.** stdlib only. No third-party Go modules. Optional `-git` mode requires Git with support for `--no-lazy-fetch`.
 
 ## Install
 
@@ -51,6 +51,8 @@ make all         # all platforms: darwin/linux/windows x amd64/arm64
 ```
 surplies              # scan with verbose output (default)
 surplies -deep        # also read file contents inside dependency directories
+surplies -git         # check known payload hashes in local Git refs/history
+surplies -a           # enable -cov -deep -git
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
@@ -83,6 +85,29 @@ The final output block shows timing, statistics, then the version, supplied flag
 surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 ```
 
+### `-git` and `-a`
+
+`-git` discovers repositories under home and additional `-root` directories, including nested repositories, bare repositories and linked worktrees. It checks blobs reachable from all locally available refs (branches, remote-tracking branches, tags and HEADs) and their history against the shared [active payload hashes](#active-payload-hashes), regardless of filename. Loose and packed objects and SHA-1/SHA-256 Git repositories are supported. A matching historical blob is reported even when the checked-out branch is clean; it does not by itself prove execution or current infection.
+
+Git inspection is independent of `-deep`. `-a` enables `-cov -deep -git` together.
+
+The scanner uses [Git object enumeration](https://git-scm.com/docs/git-rev-list) and [raw blob reads](https://git-scm.com/docs/git-cat-file), with replacement objects and lazy fetching disabled. It does not fetch remote refs, check out branches, run hooks, apply text conversion or content filters, or modify repositories. Repo discovery follows the normal root symlink policy; internal directory symlinks are not traversed. Repositories outside the selected roots need `-root`.
+
+Only locally available reachable history is covered. Unfetched remote branches, missing shallow history, reflog-only/unreachable objects, uninitialized submodules and Git LFS content stored outside Git blobs are not cleared by this check. Each repository has a two-minute inspection deadline; candidate blob reads retain the exclusive 100 MB content limit. Known exact sizes avoid reading unrelated blob bodies; every candidate is verified by raw-content SHA-256. Shallow repositories produce informational `scan-limited` notices describing the available-history scope; these are not scan errors and do not change the exit status. Git absence, incompatible Git, broken refs, missing objects and command failures produce `scan-incomplete` warnings and nonzero exit status. When objects are missing, available reachable objects are still inspected, and the repository remains incomplete. Findings identify the repository, blob ID and SHA-256, with a `git log --all --find-object=<blob>` command for investigating paths/commits. Summary counts distinguish found/completed repositories, blobs considered by metadata, and candidate blobs actually hashed. Zero candidate blobs can simply mean no blob matched either known payload size.
+
+Discovery recognizes [uv’s deliberately empty Git cache marker](https://github.com/astral-sh/uv/blob/main/crates/uv-cache/src/lib.rs) only in a versioned sdist bucket with the accompanying empty `.gitignore` and cache signature. It still searches inside that bucket for actual repositories; other invalid gitfiles remain errors.
+
+#### Active payload hashes
+
+The same `KnownRepoPayloadHashes` table drives filesystem and Git checks. Filesystem hash checks currently select by basename; Git checks ignore filenames. A filename or file size alone is not malicious.
+
+| Payload | Raw-file SHA-256 | Exact bytes | Source |
+|---|---|---:|---|
+| keyv `Math_Symbol.js` | `9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc` | 727,680 | [Snyk keyv analysis](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/) |
+| PolinRider Fake Font `fa-solid-400.woff2` | `11570a86f8a19cd20bc5e1df112f43c52bc939f18b51c37e902d312fd62f6d27` | 37,566 | Incident-sourced; verified 2026-09-19 |
+
+The dropper's corresponding SHA-1 Git blob identity is `9b2e3a349e377ba2985c593cb3e619f84a0ea1dc`. Git object IDs include an object header and are distinct from raw-file hashes. The payload is not distributed with Surplies. No independent public report of this exact sample hash was found. This addition is not a new campaign or a claim of public corroboration.
+
 ### Exit codes
 
 | Code | Meaning |
@@ -93,13 +118,14 @@ surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 
 ## Scan phases
 
-The scanner runs five phases sequentially:
+The scanner runs five phases sequentially, followed by Git inspection when requested:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
 2. **Project directory scanning** — walk home and each additional `-root` directory, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The walk stops at dependency directories rather than descending into them unless `-deep` is set
 3. **Python site-packages scanning** — walk home and additional `-root` directories + system Python paths, inspect every `site-packages`
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
 5. **Temp directory artifacts** — check temp dirs for payload remnants
+6. **Git payload hashes (only with `-git` or `-a`)** — inspect blobs reachable from local refs/history against the active payload hash list
 
 ## Checks
 
@@ -501,12 +527,13 @@ Checks for known artifact filenames during the home-directory walk rather than a
 | `router_init.js` | Payload loader | Mini Shai-Hulud |
 | `tanstack_runner.js` | Bun-loaded payload | Mini Shai-Hulud |
 | `Math_Symbol.js` | Second-stage payload, confirmed by SHA-256 `9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc` | keyv npm compromise |
+| `fa-solid-400.woff2` | Exact dropper bytes, confirmed by SHA-256 in the active hash list | PolinRider (incident-sourced hash) |
 
-**How it works:** Exact basename match for the named files except `Math_Symbol.js`; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. A legitimate `build.bat` is not flagged.
+**How it works:** Exact basename match for the named files except the SHA-256-confirmed `Math_Symbol.js` and `fa-solid-400.woff2`; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. A legitimate `build.bat` is not flagged.
 
 `Math_Symbol.js` is also a [legitimate Unicode data filename](https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js). Its name selects it for bounded content inspection; this check only reports it when its bytes match the known malicious SHA-256. The file is also checked for other payload signatures and padding. Neither its path nor its size alone establishes compromise. Read failures follow the normal incomplete-scan reporting. As with other content checks, scanning inside dependency directories requires `-deep`.
 
-The last three filenames also appear in the package-scoped `npm-payload-file` check, which remains unchanged and can flag unexpected payload files in known affected packages. The repository checks additionally cover other carriers encountered during the walk. `setup.mjs` stays package-scoped because it is a plausible legitimate filename.
+`router_init.js`, `tanstack_runner.js` and `Math_Symbol.js` also appear in the package-scoped `npm-payload-file` check, which remains unchanged and can flag unexpected payload files in known affected packages. The repository checks additionally cover other carriers encountered during the walk. `setup.mjs` stays package-scoped because it is a plausible legitimate filename.
 
 **Why this matters:** `temp_auto_push.bat` is the highest-confidence indicator of past compromise in the entire campaign. PolinRider's propagation runs locally, not from a server: the script resets the machine clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes using whatever git credentials are already cached. Nothing leaves the machine that GitHub can distinguish from the real developer — same device, same SSH key, same behavior GitHub sees every day — which is exactly why the artifact left on disk is the evidence. OSM found it still sitting in 101 victim repositories whose owners had already cleaned the payload out of their config files and believed they were done.
 
@@ -548,7 +575,7 @@ Reports general project/persistence traversal errors, failed content reads, the 
 
 A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
 
-Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. The summary counts size-limit failures, permission denials, timeouts, and other errors separately. Use `-cov` to list paths grouped by those categories; JSON retains each exact error or read limit. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
+Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. The summary counts size-limit failures, permission denials, timeouts, Git errors, and other errors separately. Use `-cov` to list paths grouped by category and shared cause: each explanation appears once, followed by sorted affected paths. This rollup rule also applies to informational scope notices. JSON retains each exact error or read limit. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status and an explicit qualification in the final result.
 
 ### 22. `patched-application` (CRITICAL)
 
@@ -582,6 +609,14 @@ Checks `~/.node_modules/node_modules/` and `get-pip.py`, `.pip`, and `.npm` in t
 
 Source attack: PolinRider (DPRK / Contagious Interview).
 
+### 25. `git-payload-hash` (CRITICAL)
+
+With `-git`, matches raw blob SHA-256 against the two entries in the [active hash list](#active-payload-hashes), independent of names and the checked-out branch. Source attacks: keyv npm compromise and PolinRider (incident-sourced hash). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings.
+
+### 26. `scan-limited` (INFO)
+
+Reports expected scope limits, currently shallow Git repositories whose older history is not available locally. These notices are grouped by shared explanation in human output and retained individually in JSON. They are not attack indicators or scan failures and do not change the exit status. Actual inspection failures remain `scan-incomplete` warnings.
+
 ## Acknowledgments
 
 Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from incident analyses published by others. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs so you can sweep a developer machine for them in a few seconds.
@@ -600,7 +635,9 @@ Sources, in rough order of how much of the IOC set they contribute:
 
 - **[Snyk](https://snyk.io/)** — the August 4, 2026 keyv npm compromise writeup: full 11-package malicious release list under maintainer `jaredwray`, `setup.mjs` / `Math_Symbol.js` payload hashes, the `"preinstall": "node setup.mjs"` lifecycle pattern, `.claude/math_init.js` and IDE-hook (SessionStart / folderOpen) persistence path, and trusted-provenance attestation of the malicious build.
 
-Specifically, the following writeups are the basis for every check in this scanner:
+- **Incident-sourced hashes** — the exact Fake Font dropper SHA-256, Git blob identity and size in the [active hash list](#active-payload-hashes); not an independent public campaign source.
+
+The public writeups below support the public indicators; the incident-sourced hashes are documented separately above:
 
 - [axios Compromised on npm: Malicious Versions Drop Remote Access Trojan](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan) (StepSecurity)
 - [LiteLLM Credential Stealer Hidden in PyPI Wheel](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel) (StepSecurity)

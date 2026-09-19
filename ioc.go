@@ -1232,12 +1232,16 @@ var KnownRepoArtifacts = []ProjectArtifact{
 	{Filename: "tanstack_runner.js", Desc: "mini-shai-hulud Bun-loaded payload", Attack: "mini-shai-hulud (May 2026)"},
 }
 
-// RepoPayloadHash requires both a candidate filename and verified file content.
+// RepoPayloadHash identifies raw payload bytes. Filesystem checks use Filename;
+// -git ignores filenames and uses Size as an exact-byte candidate optimization.
+// GitBlobSHA1 is the Git object identity, not a raw-file SHA-1 or SHA-256.
 type RepoPayloadHash struct {
-	Filename string
-	SHA256   string
-	Desc     string
-	Attack   string
+	Filename    string
+	SHA256      string
+	Size        int64
+	GitBlobSHA1 string
+	Desc        string
+	Attack      string
 }
 
 // KnownRepoPayloadHashes disambiguates payload names also used by legitimate
@@ -1250,8 +1254,20 @@ var KnownRepoPayloadHashes = []RepoPayloadHash{
 	{
 		Filename: "Math_Symbol.js",
 		SHA256:   "9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc",
+		Size:     727680,
 		Desc:     "keyv second-stage payload (SHA-256 verified)",
 		Attack:   "keyv npm compromise (August 2026)",
+	},
+	{
+		// Sample bytes verified 2026-09-19.
+		// No independent public report of this exact hash was found; do not
+		// present it as an IOC supplied by the public campaign writeups.
+		Filename:    "fa-solid-400.woff2",
+		SHA256:      "11570a86f8a19cd20bc5e1df112f43c52bc939f18b51c37e902d312fd62f6d27",
+		Size:        37566,
+		GitBlobSHA1: "9b2e3a349e377ba2985c593cb3e619f84a0ea1dc",
+		Desc:        "Fake Font dropper (SHA-256 verified; incident-sourced hash)",
+		Attack:      "polinrider (DPRK)",
 	},
 }
 

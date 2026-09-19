@@ -75,6 +75,7 @@ type Scanner struct {
 	// additionally reads their contents, which is the only way to catch a
 	// compromised package whose version nobody has pinned yet.
 	Deep  bool
+	Git   bool
 	stats ScanStats
 	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
 	// is abandoned after StallThreshold strikes instead of costing
@@ -89,6 +90,12 @@ type Scanner struct {
 
 // ScanStats tracks scan progress.
 type ScanStats struct {
+	Git                     bool
+	GitRepositoriesFound    int
+	GitRepositoriesScanned  int
+	GitBlobsChecked         int
+	GitBlobsConsidered      int
+	GitCacheMarkersSkipped  int
 	NodeModulesFound        int
 	PackagesScanned         int
 	SitePackagesFound       int
@@ -174,7 +181,13 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "[5/5] Checking temp directories for payload remnants...\n")
 	s.checkTempArtifacts()
 
+	if s.Git {
+		fmt.Fprintln(os.Stderr, "[git] Checking locally available refs and history against known payload hashes...")
+		s.scanGitRepositories()
+	}
+
 	s.stats.Deep = s.Deep
+	s.stats.Git = s.Git
 	s.stats.Duration = time.Since(start)
 	fmt.Fprintln(os.Stderr)
 
