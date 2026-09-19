@@ -8,3 +8,6 @@ site-packages/
 
 # Local detection gap analysis
 /GAPS.md
+
+# macOS
+.DS_Store
