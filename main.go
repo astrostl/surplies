@@ -89,9 +89,11 @@ func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(findings)
+		printScanSummary(stats)
 		fmt.Fprintln(os.Stderr, resultSummary(invocation, indicators))
 	} else {
-		printFindings(findings, stats, coverageDetails)
+		printFindings(findings, coverageDetails)
+		printScanSummary(stats)
 		indicators, _ := splitFindings(findings)
 		fmt.Println(resultSummary(invocation, indicators))
 	}
@@ -99,12 +101,6 @@ func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 }
 
 func printScanSummary(stats ScanStats) {
-	fmt.Fprintf(os.Stderr, "Scan complete in %s\n", stats.Duration.Round(time.Millisecond))
-	fmt.Fprintf(os.Stderr, "Stats: %d node_modules (%d pkgs), %d site-packages (%d pkgs), %d composer vendors (%d pkgs), %d files checked\n",
-		stats.NodeModulesFound, stats.PackagesScanned,
-		stats.SitePackagesFound, stats.PythonPackagesScanned,
-		stats.ComposerVendorsFound, stats.ComposerPackagesScanned,
-		stats.FilesChecked)
 
 	// Surfaced rather than swallowed: a scan that walked past a synced folder
 	// without reading any of it must not be mistaken for a scan that read it
@@ -119,9 +115,18 @@ func printScanSummary(stats ScanStats) {
 			"Note: %d file(s) could not be read and were NOT scanned; see scan-incomplete findings for errors or timeouts.\n",
 			stats.FilesUnreadable)
 	}
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintf(os.Stderr, "Scan complete in %s\n", stats.Duration.Round(time.Millisecond))
+	fmt.Fprintf(os.Stderr, "Stats: %d node_modules (%d pkgs), %d site-packages (%d pkgs), %d composer vendors (%d pkgs), %d files checked\n",
+		stats.NodeModulesFound, stats.PackagesScanned,
+		stats.SitePackagesFound, stats.PythonPackagesScanned,
+		stats.ComposerVendorsFound, stats.ComposerPackagesScanned,
+		stats.FilesChecked)
+
+	fmt.Fprintln(os.Stderr)
 }
 
-func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
+func printFindings(findings []Finding, coverageDetails bool) {
 	indicators, coverage := splitFindings(findings)
 	findings = indicators
 	defer printCoverage(coverage, coverageDetails)
@@ -142,12 +147,10 @@ func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
 		}
 		sort.Strings(names)
 		fmt.Printf("Checked for: %s.\n\n", strings.Join(names, ", "))
-		printScanSummary(stats)
 		fmt.Println()
 		return
 	}
 
-	printScanSummary(stats)
 	fmt.Fprintln(os.Stderr)
 
 	for _, f := range findings {
