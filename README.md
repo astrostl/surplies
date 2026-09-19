@@ -194,7 +194,7 @@ Scans every npm package's `package.json` for `preinstall`, `install`, `postinsta
 | `.vbs` | `uses-vbscript` | VBScript dropper (Windows) |
 | `osascript` | `uses-applescript` | AppleScript execution (macOS) |
 
-**How it works:** Reads every `package.json` in every `node_modules` directory (including scoped packages under `@org/`). Checks each lifecycle script against the pattern list. Reports the script content (truncated to 80 chars) and all matched flags.
+**How it works:** Reads every `package.json` in every `node_modules` directory (including scoped packages under `@org/`). Checks each lifecycle script against the pattern list. Reports the script content (truncated to 80 chars) and all matched flags. The exact standard Yarn `preinstall` command is exempt from these string heuristics only when both the package directory name and manifest name are `yarn`; other hooks and modified commands remain checked. Its referenced JavaScript is still inspected for obfuscation. See [Yarn’s release manifest generator](https://github.com/yarnpkg/yarn/blob/v1.22.22/scripts/update-dist-manifest.js).
 
 **Why this matters:** The axios attack used a `postinstall` hook in `plain-crypto-js` to run `node setup.js`, which then used `curl`/`powershell`/`osascript` to download and execute RAT payloads. Legitimate packages rarely need to download executables or run shell commands during install.
 
@@ -489,7 +489,7 @@ The text precondition is load-bearing, not a nicety. Pushing a payload off the r
 
 ### 18. `malicious-repo-artifact` (CRITICAL)
 
-Checks for filenames that are malicious wherever they appear in a project tree, matched on basename during the home-directory walk rather than at a fixed path.
+Checks for known artifact filenames during the home-directory walk rather than at a fixed path. Ambiguous filenames require content verification.
 
 **Known artifacts:**
 
@@ -500,11 +500,13 @@ Checks for filenames that are malicious wherever they appear in a project tree, 
 | `*.inz.cjs`, `*.inz.orig` | Implant module dropped beside a patched Electron or npm entrypoint | PolinRider |
 | `router_init.js` | Payload loader | Mini Shai-Hulud |
 | `tanstack_runner.js` | Bun-loaded payload | Mini Shai-Hulud |
-| `Math_Symbol.js` | Payload blob (727,680 bytes, byte-identical across all affected releases) | keyv npm compromise |
+| `Math_Symbol.js` | Second-stage payload, confirmed by SHA-256 `9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc` | keyv npm compromise |
 
-**How it works:** Exact basename match for the named files; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. Note that matching is on the full filename, not the extension — a legitimate `build.bat` is not flagged.
+**How it works:** Exact basename match for the named files except `Math_Symbol.js`; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. A legitimate `build.bat` is not flagged.
 
-The last three are also listed in the `npm-payload-file` check, but that one is keyed by scope or package name: `router_init.js` is only ever looked for under `@tanstack/*`, `Math_Symbol.js` only under the eight keyv-wave packages. For a worm whose defining behavior is spreading itself into whatever its victims maintain, scoping the search to the packages already known to be hit has it backwards — the next carrier is by definition not on the list. Matching the basename anywhere costs a string comparison during a walk that is already happening. `setup.mjs` is deliberately *not* promoted: it is a plausible filename for a legitimate package to ship and carries no campaign-specific wording, so matching it everywhere would buy very little at a real false-positive cost. It stays scoped.
+`Math_Symbol.js` is also a [legitimate Unicode data filename](https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js). Its name selects it for bounded content inspection; this check only reports it when its bytes match the known malicious SHA-256. The file is also checked for other payload signatures and padding. Neither its path nor its size alone establishes compromise. Read failures follow the normal incomplete-scan reporting. As with other content checks, scanning inside dependency directories requires `-deep`.
+
+The last three filenames also appear in the package-scoped `npm-payload-file` check, which remains unchanged and can flag unexpected payload files in known affected packages. The repository checks additionally cover other carriers encountered during the walk. `setup.mjs` stays package-scoped because it is a plausible legitimate filename.
 
 **Why this matters:** `temp_auto_push.bat` is the highest-confidence indicator of past compromise in the entire campaign. PolinRider's propagation runs locally, not from a server: the script resets the machine clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes using whatever git credentials are already cached. Nothing leaves the machine that GitHub can distinguish from the real developer — same device, same SSH key, same behavior GitHub sees every day — which is exactly why the artifact left on disk is the evidence. OSM found it still sitting in 101 victim repositories whose owners had already cleaned the payload out of their config files and believed they were done.
 

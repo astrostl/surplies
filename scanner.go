@@ -458,6 +458,9 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 			continue
 		}
 		issues := analyzeScript(script)
+		if standardYarnPreinstall(pkgName, pkg.Name, hook, script) {
+			issues = nil
+		}
 		if len(issues) > 0 {
 			s.addFinding(Finding{
 				Check:    "suspicious-install-script",
@@ -480,6 +483,14 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 			}
 		}
 	}
+}
+
+// standardYarnPreinstall exempts only the official Yarn command from lifecycle
+// string heuristics. The referenced JS file is still inspected for obfuscation.
+// https://github.com/yarnpkg/yarn/blob/v1.22.22/scripts/update-dist-manifest.js
+func standardYarnPreinstall(pkgName, manifestName, hook, script string) bool {
+	return pkgName == "yarn" && manifestName == "yarn" && hook == "preinstall" &&
+		script == ":; (node ./preinstall.js > /dev/null 2>&1 || true)"
 }
 
 // analyzeScript checks a lifecycle script string for red flags.
@@ -515,11 +526,12 @@ func analyzeScript(script string) []string {
 	return flags
 }
 
-// extractScriptTarget pulls out a JS filename from a "node foo.js" style script.
+// extractScriptTarget pulls out a JS filename from a "node foo.js" style script,
+// including a shell subshell wrapper such as Yarn's "(node ./preinstall.js …)".
 func extractScriptTarget(script string) string {
 	parts := strings.Fields(script)
 	for i, p := range parts {
-		if p == "node" && i+1 < len(parts) {
+		if strings.TrimLeft(p, "(") == "node" && i+1 < len(parts) {
 			target := parts[i+1]
 			if strings.HasSuffix(target, ".js") {
 				return target

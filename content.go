@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -80,7 +81,7 @@ var injectableSourceNames = []string{
 // JS-family build config, an asset file chosen because reviewers skip it as
 // binary, or one of the specific filenames above.
 func shouldScanForSignatures(name string) bool {
-	if slices.Contains(injectableSourceNames, name) {
+	if slices.Contains(injectableSourceNames, name) || slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == name }) {
 		return true
 	}
 
@@ -437,7 +438,7 @@ func (s *Scanner) checkSourceFile(path, name string) {
 			local.checkFakeFont(path, ext, data)
 		}
 
-		if local.checkPayloadSignatures(path, data) {
+		if local.checkRepoPayloadHash(path, name, data) || local.checkPayloadSignatures(path, data) {
 			return
 		}
 
@@ -446,6 +447,24 @@ func (s *Scanner) checkSourceFile(path, name string) {
 		s.stats.FilesChecked++
 	}
 
+}
+
+// checkRepoPayloadHash confirms candidate artifacts without trusting the name,
+// directory, or file size. Called inside the bounded content inspection.
+func (s *Scanner) checkRepoPayloadHash(path, name string, data []byte) bool {
+	for _, h := range KnownRepoPayloadHashes {
+		if name != h.Filename || fmt.Sprintf("%x", sha256.Sum256(data)) != h.SHA256 {
+			continue
+		}
+		s.addFinding(Finding{
+			Check:    "malicious-repo-artifact",
+			Severity: SevCritical,
+			Path:     path,
+			Detail:   fmt.Sprintf("%s (attack: %s)", h.Desc, h.Attack),
+		})
+		return true
+	}
+	return false
 }
 
 // checkRepoArtifactName reports whether a file is malicious by filename alone,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -684,7 +685,7 @@ func TestDeepScanReadsInsideComposerVendor(t *testing.T) {
 func TestShaiHuludPayloadNamesMatchAnywhere(t *testing.T) {
 	// These were previously only looked for under the scopes already known to
 	// be hit, which is backwards for a self-spreading worm.
-	for _, name := range []string{"router_init.js", "tanstack_runner.js", "Math_Symbol.js"} {
+	for _, name := range []string{"router_init.js", "tanstack_runner.js"} {
 		t.Run(name, func(t *testing.T) {
 			dir := t.TempDir()
 			proj := filepath.Join(dir, "unrelated-project")
@@ -777,5 +778,70 @@ func TestProcessingSharesReadDeadlineAndCannotPublishLateFindings(t *testing.T) 
 	<-finished
 	if len(findingsFor(s, "scan-incomplete")) != 1 || len(findingsFor(s, "late-test-finding")) != 0 {
 		t.Fatalf("late worker changed parent results: %+v", s.Findings)
+	}
+}
+
+func TestMathSymbolContentVerification(t *testing.T) {
+	// Real benign fixture, from regenerate-unicode-properties v10.2.0:
+	// https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js
+	unicodeData, err := os.ReadFile("testdata/regenerate-unicode-properties/General_Category/Math_Symbol.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Exercise the hash detection path with harmless bytes; do not store or
+	// execute malware in the test suite. Keep the production IOC in the list.
+	fixture := []byte("synthetic keyv hash fixture")
+	original := KnownRepoPayloadHashes
+	KnownRepoPayloadHashes = append(append([]RepoPayloadHash(nil), original...), RepoPayloadHash{
+		Filename: "Math_Symbol.js", SHA256: fmt.Sprintf("%x", sha256.Sum256(fixture)),
+		Desc: "synthetic payload (SHA-256 verified)", Attack: "test",
+	})
+	t.Cleanup(func() { KnownRepoPayloadHashes = original })
+
+	for _, tc := range []struct {
+		name  string
+		data  []byte
+		check string
+	}{
+		{"unicode", unicodeData, ""},
+		{"same-size-as-malware", []byte(strings.Repeat("x", 727680)), ""},
+		{"hash-match", fixture, "malicious-repo-artifact"},
+		{"modified-hash", append(append([]byte(nil), fixture...), '\n'), ""},
+		{"signature-injection", append(append([]byte(nil), unicodeData...), []byte(`;var q="Cot%3t=shtP";`)...), "payload-signature"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, rel := range []string{
+				"unrelated-project/Math_Symbol.js",
+				"project/node_modules/regenerate-unicode-properties/General_Category/Math_Symbol.js",
+			} {
+				dir := t.TempDir()
+				path := filepath.Join(dir, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, tc.data, 0644); err != nil {
+					t.Fatal(err)
+				}
+				s := New(dir, false)
+				s.Deep = true
+				s.scanProjectDirs()
+				if tc.check == "" {
+					if len(s.Findings) != 0 {
+						t.Fatalf("benign file %s flagged: %v", rel, s.Findings)
+					}
+				} else if hits := findingsFor(s, tc.check); len(hits) != 1 || hits[0].Path != path || hits[0].Severity != SevCritical {
+					t.Fatalf("expected critical %s for %s: %v", tc.check, rel, s.Findings)
+				}
+			}
+		})
+	}
+}
+
+func TestMathSymbolReadFailure(t *testing.T) {
+	dir := t.TempDir()
+	s := New(dir, false)
+	s.checkSourceFile(filepath.Join(dir, "Math_Symbol.js"), "Math_Symbol.js")
+	if s.stats.FilesUnreadable != 1 || len(findingsFor(s, "malicious-repo-artifact")) != 0 {
+		t.Fatalf("unreadable candidate was not reported correctly: stats=%+v findings=%v", s.stats, s.Findings)
 	}
 }
