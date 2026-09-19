@@ -42,10 +42,11 @@ func (s Severity) MarshalJSON() ([]byte, error) {
 
 // Finding represents a single scan result.
 type Finding struct {
-	Check    string   `json:"check"`
-	Severity Severity `json:"severity"`
-	Path     string   `json:"path"`
-	Detail   string   `json:"detail"`
+	coverageCategory string
+	Check            string   `json:"check"`
+	Severity         Severity `json:"severity"`
+	Path             string   `json:"path"`
+	Detail           string   `json:"detail"`
 }
 
 // ArtifactCheck describes a known malicious file to look for.
@@ -62,7 +63,28 @@ type Scanner struct {
 	Findings []Finding
 	mu       sync.Mutex
 	Verbose  bool
-	stats    ScanStats
+	// Deep lifts the directory boundaries the walk normally stops at —
+	// node_modules, Composer vendor/, and Python site-packages. It does not
+	// add or change a single check: it changes WHERE the checks already
+	// defined here are allowed to run. Any IOC added to ioc.go later gets the
+	// wider surface for free, with no code change.
+	//
+	// Off by default because it roughly triples scan time on a developer home
+	// directory. The default scan identifies dependencies by name and version
+	// (cheap, and correct for anything with a published advisory); deep mode
+	// additionally reads their contents, which is the only way to catch a
+	// compromised package whose version nobody has pinned yet.
+	Deep  bool
+	stats ScanStats
+	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
+	// is abandoned after StallThreshold strikes instead of costing
+	// ReadTimeout on every file beneath it. Guarded by mu.
+	stallCounts map[string]int
+	// Explicit persistence checks bypass dependency boundaries; avoid reporting
+	// those same files again in the home walk.
+	persistenceChecked map[string]bool
+	ExtraRoots         []string
+	persistenceWalked  map[string]bool
 }
 
 // ScanStats tracks scan progress.
@@ -74,7 +96,16 @@ type ScanStats struct {
 	ComposerVendorsFound    int
 	ComposerPackagesScanned int
 	FilesChecked            int
-	Duration                time.Duration
+	// FilesUnreadable counts files selected for content scanning whose read
+	// failed or timed out — a cloud placeholder the provider could not materialize, a
+	// stalled network mount, or similar. Counted, not swallowed: a scan that
+	// gave up on a whole synced folder must not read as a clean one.
+	FilesUnreadable int
+	// Deep records whether the scan read inside dependency directories. Kept
+	// in stats so output can state it plainly: a fast scan that found nothing
+	// must not be reported the same way as a deep one that found nothing.
+	Deep     bool
+	Duration time.Duration
 }
 
 // New creates a scanner targeting the given home directory.
@@ -88,6 +119,13 @@ func New(homeDir string, verbose bool) *Scanner {
 func (s *Scanner) addFinding(f Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if f.Check == "scan-incomplete" {
+		for _, previous := range s.Findings {
+			if previous.Check == f.Check && previous.Path == f.Path {
+				return
+			}
+		}
+	}
 	s.Findings = append(s.Findings, f)
 }
 
@@ -102,14 +140,26 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	start := time.Now()
 
 	fmt.Fprintf(os.Stderr, "Scanning home directory: %s\n", s.HomeDir)
+	for _, root := range s.ExtraRoots {
+		fmt.Fprintf(os.Stderr, "Additional scan root: %s\n", root)
+	}
 	fmt.Fprintf(os.Stderr, "Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 
-	// Phase 1: Check known malicious artifacts (fast, fixed paths)
+	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
+	// global npm CLI entrypoint, which lives outside the home directory.
 	fmt.Fprintf(os.Stderr, "[1/5] Checking known malicious artifacts...\n")
 	s.checkArtifacts()
+	s.checkNpmCLI()
+	s.checkApplicationPersistence()
+	s.checkPersistenceRoots()
+	s.checkRuntimeStaging()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
-	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
+	mode := "names and versions only"
+	if s.Deep {
+		mode = "deep: reading file contents inside dependency directories"
+	}
+	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — %s...\n", mode)
 	s.scanProjectDirs()
 
 	// Phase 3: Find and scan Python site-packages directories
@@ -124,6 +174,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "[5/5] Checking temp directories for payload remnants...\n")
 	s.checkTempArtifacts()
 
+	s.stats.Deep = s.Deep
 	s.stats.Duration = time.Since(start)
 	fmt.Fprintln(os.Stderr)
 
@@ -163,35 +214,49 @@ func (s *Scanner) checkArtifacts() {
 	}
 }
 
-// scanProjectDirs walks the home directory once, looking for node_modules to inspect
+// scanProjectDirs walks home and each additional scan root, looking for node_modules to inspect
 // for compromised npm packages AND for project-local config directories (.claude, .vscode)
 // that supply chain attacks are known to drop payload files into.
 func (s *Scanner) scanProjectDirs() {
-	filepath.WalkDir(s.HomeDir, func(path string, d os.DirEntry, err error) error {
+	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip inaccessible dirs
-		}
-
-		if !d.IsDir() {
+			s.scanError(path, err)
 			return nil
 		}
 
+		if !d.IsDir() {
+			s.checkSourceFile(path, d.Name())
+			return nil
+		}
+
+		if d.Name() == "site-packages" {
+			return s.persistenceOrDescend(path)
+		}
 		if d.Name() == "node_modules" {
-			// Skip nested node_modules (node_modules inside node_modules)
-			parent := filepath.Dir(path)
-			if strings.Contains(parent, "node_modules") {
-				return filepath.SkipDir
+			// Nested node_modules (node_modules inside node_modules) get no
+			// second round of package-level checks, but in deep mode the walk
+			// still descends so their file contents are read.
+			if strings.Contains(filepath.Dir(path), "node_modules") {
+				return s.persistenceOrDescend(path)
 			}
 			s.stats.NodeModulesFound++
 			s.log("found node_modules: %s", path)
 			s.checkNodeModulesDir(path)
-			return filepath.SkipDir
+			return s.persistenceOrDescend(path)
 		}
 
 		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
 			s.log("checking project config dir: %s", path)
 			s.checkProjectArtifactDir(path, files)
-			return filepath.SkipDir
+			if s.Deep {
+				// Descend instead, so nested files are read too.
+				return nil
+			}
+			// The walk stops here, so inspect this directory's own files
+			// before returning — `.vscode/tasks.json` is the PolinRider
+			// loader and would otherwise never be read.
+			s.scanDirFiles(path)
+			return s.persistenceOrDescend(path)
 		}
 
 		// A composer vendor/ directory is identified by the presence of
@@ -201,19 +266,28 @@ func (s *Scanner) scanProjectDirs() {
 		if d.Name() == "vendor" {
 			installedJSON := filepath.Join(path, "composer", "installed.json")
 			if _, err := os.Stat(installedJSON); err == nil {
-				parent := filepath.Dir(path)
-				if strings.Contains(parent, "vendor") {
-					return filepath.SkipDir
+				if strings.Contains(filepath.Dir(path), "vendor") {
+					return s.persistenceOrDescend(path)
 				}
 				s.stats.ComposerVendorsFound++
 				s.log("found composer vendor: %s", path)
 				s.checkComposerVendor(path)
-				return filepath.SkipDir
+				return s.persistenceOrDescend(path)
 			}
 		}
 
 		return nil
 	})
+}
+
+// descendOrSkip returns the walk verdict for a dependency directory whose
+// package-level checks have just run: stop here normally, or keep walking in
+// deep mode so the content checks reach the files inside.
+func (s *Scanner) descendOrSkip() error {
+	if s.Deep {
+		return nil
+	}
+	return filepath.SkipDir
 }
 
 // checkNpmPayloadFiles looks for known malicious filenames inside a single npm
@@ -287,7 +361,16 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 		}
 	}
 
-	// Check 3: Scan all packages for suspicious postinstall scripts
+	// Check 3: Lifecycle scripts + npm payload files for every package
+	s.scanNodeModulesPackages(nmDir)
+}
+
+// scanNodeModulesPackages walks each package directory under nmDir and runs
+// lifecycle-script and npm-payload-file checks. Scoped packages (@org/*) and
+// unscoped packages are both supported; KnownNpmPayloadFiles keys may be a
+// scope name (checked against every package under that scope) or an exact
+// unscoped package name.
+func (s *Scanner) scanNodeModulesPackages(nmDir string) {
 	entries, err := os.ReadDir(nmDir)
 	if err != nil {
 		return
@@ -298,7 +381,7 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 			continue
 		}
 
-		// Handle scoped packages (@org/pkg)
+		// Scoped packages (@org/pkg)
 		if strings.HasPrefix(entry.Name(), "@") {
 			scopeDir := filepath.Join(nmDir, entry.Name())
 			scopedEntries, err := os.ReadDir(scopeDir)
@@ -307,17 +390,24 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 			}
 			payloadFiles := KnownNpmPayloadFiles[entry.Name()]
 			for _, se := range scopedEntries {
-				if se.IsDir() {
-					pkgDir := filepath.Join(scopeDir, se.Name())
-					pkgName := entry.Name() + "/" + se.Name()
-					s.checkPackage(pkgDir, pkgName)
-					s.checkNpmPayloadFiles(pkgDir, pkgName, payloadFiles)
+				if !se.IsDir() {
+					continue
 				}
+				pkgDir := filepath.Join(scopeDir, se.Name())
+				pkgName := entry.Name() + "/" + se.Name()
+				s.checkPackage(pkgDir, pkgName)
+				s.checkNpmPayloadFiles(pkgDir, pkgName, payloadFiles)
 			}
 			continue
 		}
 
-		s.checkPackage(filepath.Join(nmDir, entry.Name()), entry.Name())
+		// Unscoped packages: lifecycle-script checks, then any package-name
+		// payload-file entries (e.g. keyv → setup.mjs / Math_Symbol.js).
+		pkgDir := filepath.Join(nmDir, entry.Name())
+		s.checkPackage(pkgDir, entry.Name())
+		if payloadFiles := KnownNpmPayloadFiles[entry.Name()]; len(payloadFiles) > 0 {
+			s.checkNpmPayloadFiles(pkgDir, entry.Name(), payloadFiles)
+		}
 	}
 }
 
@@ -368,6 +458,9 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 			continue
 		}
 		issues := analyzeScript(script)
+		if standardYarnPreinstall(pkgName, pkg.Name, hook, script) {
+			issues = nil
+		}
 		if len(issues) > 0 {
 			s.addFinding(Finding{
 				Check:    "suspicious-install-script",
@@ -390,6 +483,14 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 			}
 		}
 	}
+}
+
+// standardYarnPreinstall exempts only the official Yarn command from lifecycle
+// string heuristics. The referenced JS file is still inspected for obfuscation.
+// https://github.com/yarnpkg/yarn/blob/v1.22.22/scripts/update-dist-manifest.js
+func standardYarnPreinstall(pkgName, manifestName, hook, script string) bool {
+	return pkgName == "yarn" && manifestName == "yarn" && hook == "preinstall" &&
+		script == ":; (node ./preinstall.js > /dev/null 2>&1 || true)"
 }
 
 // analyzeScript checks a lifecycle script string for red flags.
@@ -425,11 +526,12 @@ func analyzeScript(script string) []string {
 	return flags
 }
 
-// extractScriptTarget pulls out a JS filename from a "node foo.js" style script.
+// extractScriptTarget pulls out a JS filename from a "node foo.js" style script,
+// including a shell subshell wrapper such as Yarn's "(node ./preinstall.js …)".
 func extractScriptTarget(script string) string {
 	parts := strings.Fields(script)
 	for i, p := range parts {
-		if p == "node" && i+1 < len(parts) {
+		if strings.TrimLeft(p, "(") == "node" && i+1 < len(parts) {
 			target := parts[i+1]
 			if strings.HasSuffix(target, ".js") {
 				return target
@@ -619,4 +721,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// Reuse the project walk for persistence discovery. Only pruned dependency or
+// config trees need a separate names/entrypoints-only walk in default mode.
+func (s *Scanner) persistenceOrDescend(path string) error {
+	if s.Deep {
+		return nil
+	}
+	s.walkPersistenceRoot(path)
+	return filepath.SkipDir
 }

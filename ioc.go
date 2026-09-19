@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 )
 
 // IOCs in this file come from public incident analyses — primarily
@@ -77,6 +78,25 @@ var KnownPhantomPackages = []string{
 	"wallet-security-checker",
 	"web3-secrets-detector",
 	"workspace-config-loader",
+
+	// PolinRider (DPRK / Contagious Interview cluster). Attacker-published
+	// typosquats impersonating Tailwind / PostCSS plugins, used as the
+	// direct-install vector alongside the repo-poisoning worm. Published by
+	// the now-deleted npm accounts `allavin` and `blackedward`; installing one
+	// injects the PolinRider JS loader into the project's build configs. npm
+	// has scrubbed some of these, but victim repos still carry the dependency
+	// reference and the injected payload. Only the packages OSM's dossier
+	// names as attacker-published are listed as phantoms — compromised
+	// legitimate packages from the same campaign are version-pinned in
+	// KnownBadNpmVersions instead.
+	// https://github.com/OpenSourceMalware/PolinRider
+	"tailwind-animationbased",
+	"tailwind-autoanimation",
+	"tailwind-mainanimation",
+	"tailwindcss-animate-style",
+	"tailwindcss-style-animate",
+	"tailwindcss-style-modify",
+	"tailwindcss-typography-style",
 }
 
 // KnownBadNpmVersions maps legitimate npm package names to known-compromised versions.
@@ -642,6 +662,167 @@ var KnownBadNpmVersions = map[string][]string{
 	"uri-parse":              {"1.1.0", "1.2.0"},
 	"word-width":             {"1.1.1", "1.2.1"},
 	"xmorse":                 {"1.1.0", "1.2.0"},
+
+	// Mini Shai-Hulud — Red Hat Cloud Services wave (June 1, 2026). 31
+	// packages across the @redhat-cloud-services scope, published after an
+	// attacker minted an npm token from a GitHub Actions OIDC credential
+	// stolen from the RedHatInsights/javascript-clients repo. Same campaign
+	// payload family: a preinstall hook (`node index.js`) stages an encrypted
+	// Bun loader that harvests GitHub Actions secrets, npm tokens, cloud
+	// (AWS/GCP/Azure) and Kubernetes/Vault credentials, SSH and Git
+	// credentials, then exfiltrates over an encrypted channel with a GitHub
+	// API fallback. The exfil abuses a legitimate endpoint (api.anthropic.com,
+	// /v1/api) rather than actor-owned infrastructure, so no new C2 domain is
+	// added. Compromised package/index.js SHA-256:
+	// 21b6409a7b84446310daca5409ad6112ac60a1e4bef97736e53fff5f63bfdef4.
+	// Full 31-package version list from StepSecurity; Mini Shai-Hulud
+	// attribution, chrome@2.3.1 confirmation, and payload hashes from Socket.
+	// https://www.stepsecurity.io/blog/multiple-redhat-cloud-services-npm-packages-compromised
+	// https://socket.dev/blog/mini-shai-hulud-campaign-hits-red-hat-cloud-services-npm-packages
+	"@redhat-cloud-services/chrome":                                 {"2.3.1"},
+	"@redhat-cloud-services/compliance-client":                      {"4.0.3"},
+	"@redhat-cloud-services/config-manager-client":                  {"5.0.4"},
+	"@redhat-cloud-services/entitlements-client":                    {"4.0.11"},
+	"@redhat-cloud-services/eslint-config-redhat-cloud-services":    {"3.2.1"},
+	"@redhat-cloud-services/frontend-components":                    {"7.7.2"},
+	"@redhat-cloud-services/frontend-components-advisor-components": {"3.8.2"},
+	"@redhat-cloud-services/frontend-components-config":             {"6.11.3"},
+	"@redhat-cloud-services/frontend-components-config-utilities":   {"4.11.2"},
+	"@redhat-cloud-services/frontend-components-notifications":      {"6.9.2"},
+	"@redhat-cloud-services/frontend-components-remediations":       {"4.9.2"},
+	"@redhat-cloud-services/frontend-components-testing":            {"1.2.1"},
+	"@redhat-cloud-services/frontend-components-translations":       {"4.4.1"},
+	"@redhat-cloud-services/frontend-components-utilities":          {"7.4.1"},
+	"@redhat-cloud-services/hcc-feo-mcp":                            {"0.3.1"},
+	"@redhat-cloud-services/hcc-kessel-mcp":                         {"0.3.1"},
+	"@redhat-cloud-services/hcc-pf-mcp":                             {"0.6.1"},
+	"@redhat-cloud-services/host-inventory-client":                  {"5.0.3"},
+	"@redhat-cloud-services/insights-client":                        {"4.0.4"},
+	"@redhat-cloud-services/integrations-client":                    {"6.0.4"},
+	"@redhat-cloud-services/javascript-clients-shared":              {"2.0.8"},
+	"@redhat-cloud-services/notifications-client":                   {"6.1.4"},
+	"@redhat-cloud-services/patch-client":                           {"4.0.4"},
+	"@redhat-cloud-services/quickstarts-client":                     {"4.0.11"},
+	"@redhat-cloud-services/rbac-client":                            {"9.0.3"},
+	"@redhat-cloud-services/remediations-client":                    {"4.0.4"},
+	"@redhat-cloud-services/rule-components":                        {"4.7.2"},
+	"@redhat-cloud-services/sources-client":                         {"3.0.10"},
+	"@redhat-cloud-services/topological-inventory-client":           {"3.0.10"},
+	"@redhat-cloud-services/tsc-transform-imports":                  {"1.2.2"},
+	"@redhat-cloud-services/types":                                  {"3.6.1"},
+
+	// keyv npm compromise (August 4, 2026). Compromised release path for
+	// maintainer jaredwray published 11 malicious releases across keyv,
+	// cacheable-family packages, and ecto. Each tarball adds a preinstall
+	// hook (`node setup.mjs`) plus two payload files (setup.mjs at 29,918
+	// bytes; Math_Symbol.js at 727,680 bytes) that are byte-identical across
+	// all affected releases. Snyk independently confirmed every package under
+	// maintainer jaredwray; other packages under the @keyv scope were not
+	// compromised. Three of the eleven releases (flat-cache@6.1.24,
+	// cacheable-request@13.0.20, cache-manager@7.2.10) were later removed
+	// from the registry, but lockfiles and private mirrors can retain them.
+	// A second execution path injected .claude/ and .vscode/ hooks
+	// (SessionStart / folderOpen) into the keyv repository. Second-stage
+	// analysis (not independently re-executed by Snyk) reports credential
+	// theft and gh-token-monitor persistence.
+	// Payload hashes (identical across all nine tarballs available at analysis):
+	//   setup.mjs     SHA-256 54dc7ea54a1317cca0e890a2770630cf7fa6c97813e0cb9d2caa93012b350668
+	//   Math_Symbol.js SHA-256 9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc
+	// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+	"keyv":                  {"6.0.0"},
+	"@cacheable/net":        {"2.1.1"},
+	"@cacheable/node-cache": {"3.1.2"},
+	"cacheable":             {"2.5.1"},
+	"flat-cache":            {"6.1.24"},
+	"@cacheable/memory":     {"2.2.1"},
+	"cacheable-request":     {"13.0.20"},
+	"file-entry-cache":      {"11.1.6"},
+	"@cacheable/utils":      {"2.5.1"},
+	"cache-manager":         {"7.2.10"},
+	"ecto":                  {"5.0.1"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). Compromised legitimate
+	// packages — maintainers whose machines were infected and whose npm
+	// publishing access the worm then reused. Distinct from the attacker-
+	// published typosquats in KnownPhantomPackages above.
+	//
+	// npm's `0.0.1-security` placeholder versions are deliberately NOT listed:
+	// that version is the clean stub npm publishes after a takedown, so
+	// flagging it would report the remediation as the compromise.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"@bcryptln/becryptjs":               {"3.0.9", "3.0.10", "3.0.11"},
+	"@im_ahsan/chatbot-widget":          {"0.0.77", "0.0.78", "0.0.79", "0.0.80", "0.0.81", "0.0.82"},
+	"@joyfill/components":               {"4.0.0-rc24-2773-beta.4"},
+	"@joyfill/layouts":                  {"0.1.2-2773.beta.0"},
+	"@lambda-platform/lambda-vue":       {"3.3.24"},
+	"@modhamanish/rn-mm-template":       {"1.1.3"},
+	"@muhammadahsan100d/chatbot-widget": {"0.0.82", "0.0.83", "0.0.84", "0.0.85"},
+	"@testrelic/appium-analytics":       {"1.1.1-next.88"},
+	"@testrelic/playwright-analytics":   {"2.12.1-next.88", "2.13.0"},
+	"@usemosaik/template-react-js":      {"1.0.0", "1.0.1"},
+	"@uw010010/vite-tree":               {"3.4.2", "3.4.3", "3.6.1"},
+	"@vite-ln/build-ts":                 {"5.15.10", "5.17.0"},
+	"@vite-mcp/vite-type":               {"6.44.1"},
+	"@vite-pro/vite-ui":                 {"2.5.10"},
+	"@vite-tab/tab":                     {"3.15.10", "5.7.0"},
+	"@vite-ts/vite-ui":                  {"6.44.1"},
+	"@vitets/vite-ts":                   {"1.5.10"},
+	"html-to-gutenberg":                 {"4.2.11", "4.2.19", "4.2.20", "4.2.21", "4.2.22"},
+	"itsa-react-docviewer":              {"16.1.2"},
+	"tailwind-animationbasis":           {"2.3.3"},
+	"tailwind-container-queries":        {"0.1.1"},
+	"tailwind-scrollbar-hider":          {"0.0.1", "5.0.1", "5.0.2"},
+	"tailwind-scrollbar-styles":         {"4.0.3"},
+	"tailwind-style-typography":         {"0.5.8"},
+	"tailwind-stylecss-typography":      {"0.8.3"},
+	"tailwind-typography-cssstyle":      {"0.8.3"},
+	"tailwind-typography-style":         {"0.5.8"},
+	"tailwind-typography-stylecss":      {"0.8.3"},
+	"tailwindcss-animate-styles":        {"1.0.9"},
+	"tailwindcss-contact-forms":         {"0.5.6"},
+	"tailwindcss-fluid-styles":          {"2.0.7"},
+	"tailwindcss-style-typography":      {"0.5.6", "0.5.8"},
+	"tailwindthml-flips":                {"1.0.3", "1.0.4", "1.0.5"},
+	"viteplugiin":                       {"1.0.28"},
+
+	// @common-stack/generate-plugin — the campaign republished the malicious
+	// loader across an entire alpha line rather than a single release.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"@common-stack/generate-plugin": {
+		"9.0.2-alpha.21", "9.0.2-alpha.22", "9.0.2-alpha.23", "9.0.2-alpha.24",
+		"9.0.4-alpha.0", "9.0.4-alpha.1",
+		"9.0.5-alpha.0", "9.0.5-alpha.1", "9.0.5-alpha.2", "9.0.5-alpha.3",
+		"9.0.5-alpha.4", "9.0.5-alpha.5",
+		"9.0.6-alpha.0", "9.0.6-alpha.1",
+		"10.0.1-alpha.0",
+	},
+
+	// PolinRider — fetch-page-assets. Socket's tracker carries 1.2.9 and
+	// 1.2.10; OSM's case study documents 1.2.11 through 1.2.14 as still live
+	// and unflagged on npm at publication, with 1.2.12 adding a
+	// babel.config.cjs payload (marker A8-3292-1) and 1.2.13 refreshing it
+	// (A8-3292-2). Only 1.2.9 was ever pulled (GHSA-vxq2-vhm7-7mhq), so the
+	// registry's own advisory data under-reports this package by five
+	// versions. Pin to <= 1.2.8.
+	// https://opensourcemalware.com/blog/polinrider-npm-case-study-dprk-attack
+	"fetch-page-assets": {"1.2.9", "1.2.10", "1.2.11", "1.2.12", "1.2.13", "1.2.14"},
+
+	// PolinRider / NullReceiver — trojanized Tailwind-plugin impersonators
+	// that resolve their C2 off the Ethereum chain (same publisher wallet
+	// 0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a as the rest of the campaign).
+	//
+	// fluid-type-ui shipped the payload in TWO versions. OSM's writeup names
+	// only 2.0.8, which is the version the analysis was done against; the OSV
+	// record references both 2.0.8 and 2.0.9 as affected, so a 2.0.8-only pin
+	// misses the later one — and "the fixed version" is a reasonable thing for
+	// a victim to have upgraded into. Registry advisory data is the
+	// authoritative source for the version RANGE even when a blog is the
+	// authoritative source for the behavior.
+	//   https://opensourcemalware.com/blog/nullreceiver-dprk-c2-technique
+	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
+	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
+	"bianira-ui":    {"1.27.0"},
+	"fluid-type-ui": {"2.0.8", "2.0.9"},
 }
 
 // --- Composer/Packagist ---
@@ -654,6 +835,72 @@ var KnownBadComposerVersions = map[string][]string{
 	// Mini Shai-Hulud worm — Composer artifact tracked alongside the npm campaign
 	// https://socket.dev/supply-chain-attacks/mini-shai-hulud
 	"intercom/intercom-php": {"5.0.2"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). Packagist is hit
+	// harder than npm here because the campaign propagates through maintainer
+	// machines rather than the registry: the worm finds local git repos,
+	// injects its loader into a JS config file, amends the last commit and
+	// force-pushes. Packagist then picks the poisoned commit up on every
+	// tracked branch, which is why most entries are `dev-*` branch refs
+	// rather than tagged releases — the version string in installed.json is
+	// literally `dev-main`, so exact matching works without normalization.
+	//
+	// `olc/olc-php dev-fix/remove-malware` is not a mistake: the branch a
+	// maintainer opened to clean up was itself re-poisoned before Packagist
+	// indexed it.
+	// https://socket.dev/blog/polinrider-github-packagist
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"adxio/twig-hmvc":                  {"dev-master"},
+	"arsl/optima-class":                {"dev-auction-added"},
+	"henrique-borba/php-sieve-manager": {"dev-master"},
+	"imfaisii/twitter-api-v2-php":      {"dev-master"},
+	"lambda-platform/moqup":            {"dev-master"},
+	"mahbub/laravel-saas-kit":          {"dev-main"},
+	"mahbubur508/api-auth":             {"dev-main"},
+	"olc/olc-php":                      {"dev-fix/remove-malware"},
+	"thiio/kubernetes-php-sdk":         {"dev-main"},
+	"visanduma/laravel-auth-switch":    {"dev-main"},
+	"visanduma/laravel-hrm":            {"dev-main"},
+	"visanduma/laravel-invoice":        {"dev-main"},
+	"visanduma/nova-back-navigation":   {"dev-master"},
+	"visanduma/nova-two-factor":        {"dev-main", "dev-nova4support", "dev-nova5", "dev-using-inertia"},
+	"plusinfolab/logstation": {
+		"dev-master",
+		"dev-dependabot/github_actions/actions/checkout-6",
+		"dev-dependabot/github_actions/dependabot/fetch-metadata-3.1.0",
+		"dev-dependabot/github_actions/ramsey/composer-install-4",
+	},
+	"roberts/leads": {
+		"2.0.0", "2.0.1", "2.0.2", "2.0.3",
+		"2.1.0", "2.1.1", "2.1.2", "2.1.3", "2.1.4",
+		"dev-main", "dev-drewroberts/feature/test-case",
+	},
+	"sevenspan/code-generator": {
+		"dev-master",
+		"dev-feat/livewire-version-update",
+		"dev-feat/migration-message",
+		"dev-feat/notification-blade-file-support",
+		"dev-feat/resource-collection-changes",
+		"dev-fix/data-type-mapping",
+		"dev-fix/feedback",
+		"dev-fix/generator-path-and-migration-table-name",
+		"dev-hotfix/vitepress-setup",
+		"dev-update/notification-modal",
+	},
+	"sevenspan/laravel-chat": {
+		"1.4.0", "1.4.1", "1.4.2", "1.5.0", "1.5.1", "1.5.2",
+		"dev-main",
+		"dev-ability-to-encrypt-body",
+		"dev-feat/doc",
+		"dev-feat/message-variables",
+		"dev-feat/php-version-upgrade",
+		"dev-imp/message-type",
+	},
+	"sevenspan/laravel-whatsapp": {
+		"dev-master", "dev-dev", "dev-feat/doc",
+		"dev-imp-message-template-api",
+		"dev-upgrade/laravel-9-to-10",
+	},
 }
 
 // --- Python/PyPI ---
@@ -670,6 +917,13 @@ var KnownBadPythonVersions = map[string][]string{
 	"guardrails-ai": {"0.10.1"},
 	"lightning":     {"2.6.2", "2.6.3"},
 	"mistralai":     {"2.4.6"},
+
+	// PolinRider (DPRK / Contagious Interview cluster). PyPI is the campaign's
+	// smallest footprint — the worm reaches it only when an infected
+	// maintainer also publishes Python packages.
+	// https://socket.dev/supply-chain-attacks/polinrider
+	"pybitjs":       {"0.1.0"},
+	"pyservercheck": {"0.1.1"},
 }
 
 // KnownPhantomPythonPackages are PyPI distribution names that exist solely
@@ -722,36 +976,423 @@ type ProjectArtifact struct {
 //     https://socket.dev/supply-chain-attacks/mini-shai-hulud
 //   - SafeDep @antv-wave writeup (.claude/index.js as the May 19, 2026 payload-copy name committed into repos)
 //     https://safedep.io/mini-shai-hulud-strikes-again-314-npm-packages-compromised/
+//   - Snyk keyv writeup (.claude/math_init.js + .claude/.vscode setup.mjs IDE hooks)
+//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
 var KnownProjectArtifacts = map[string][]ProjectArtifact{
 	".claude": {
 		{Filename: "router_runtime.js", Desc: "mini-shai-hulud Bun payload dropped via Claude Code SessionStart hook", Attack: "mini-shai-hulud (May 2026)"},
 		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
-		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "setup.mjs", Desc: "shared setup module (mini-shai-hulud; also keyv npm compromise SessionStart / folderOpen hooks)", Attack: "mini-shai-hulud (May 2026); keyv npm compromise (Aug 2026)"},
 		{Filename: "index.js", Desc: "mini-shai-hulud Bun payload copy committed to repos (@antv wave)", Attack: "mini-shai-hulud (@antv wave, May 19 2026)"},
+		// keyv npm compromise (Aug 4, 2026) — less-obfuscated second-stage name
+		// committed into the keyv repo alongside .claude/setup.mjs. The npm
+		// tarballs ship the same stage as Math_Symbol.js (727,680 bytes).
+		// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+		{Filename: "math_init.js", Desc: "keyv npm compromise second-stage payload dropped via Claude Code SessionStart hook", Attack: "keyv npm compromise (Aug 2026)"},
 	},
 	".vscode": {
 		{Filename: "execution.js", Desc: "mini-shai-hulud Bun payload (alternate filename for the same campaign)", Attack: "mini-shai-hulud (May 2026)"},
-		{Filename: "setup.mjs", Desc: "mini-shai-hulud shared setup module dropped via VS Code folderOpen task", Attack: "mini-shai-hulud (May 2026)"},
+		{Filename: "setup.mjs", Desc: "shared setup module dropped via VS Code folderOpen task (mini-shai-hulud; also keyv npm compromise)", Attack: "mini-shai-hulud (May 2026); keyv npm compromise (Aug 2026)"},
 	},
 }
 
-// KnownNpmPayloadFiles maps an npm scope (e.g., "@tanstack") to filenames a
-// documented supply chain attack is known to drop inside packages of that
-// scope. Each package in node_modules/<scope>/* is checked for these files
-// during the node_modules walk, independent of the version check.
+// KnownNpmPayloadFiles maps an npm scope (e.g., "@tanstack") or an unscoped
+// package name (e.g., "keyv") to filenames a documented supply chain attack
+// is known to drop inside packages of that key. During the node_modules walk,
+// scoped packages are checked under node_modules/<scope>/*, and unscoped
+// packages under node_modules/<name>, independent of the version check.
 // Sources:
 //   - TanStack postmortem (router_init.js)
 //     https://tanstack.com/blog/npm-supply-chain-compromise-postmortem
 //   - Aikido writeup (tanstack_runner.js + SHA-256)
 //     https://www.aikido.dev/blog/mini-shai-hulud-is-back-tanstack-compromised
+//   - Snyk keyv writeup (setup.mjs + Math_Symbol.js; identical across all
+//     11 malicious releases under maintainer jaredwray)
+//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
 //
 // tanstack_runner.js SHA-256: 2ec78d556d696e208927cc503d48e4b5eb56b31abc2870c2ed2e98d6be27fc96
+// keyv setup.mjs SHA-256:     54dc7ea54a1317cca0e890a2770630cf7fa6c97813e0cb9d2caa93012b350668
+// keyv Math_Symbol.js SHA-256: 9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc
 var KnownNpmPayloadFiles = map[string][]ProjectArtifact{
 	"@tanstack": {
 		{Filename: "router_init.js", Desc: "Mini Shai-Hulud TanStack sub-incident payload (~2.3 MB obfuscated JS)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
 		{Filename: "tanstack_runner.js", Desc: "Mini Shai-Hulud TanStack sub-incident runner (Bun-loaded via prepare hook)", Attack: "mini-shai-hulud (TanStack sub-incident, May 2026)"},
 	},
+	// keyv npm compromise (Aug 4, 2026) — scoped @cacheable/* packages. The
+	// same two payload files appear in every affected tarball; matching on
+	// filename catches leftovers after a version downgrade or partial cleanup.
+	"@cacheable": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	// keyv npm compromise — unscoped packages that received the same payloads.
+	// Keys are exact package directory names under node_modules/.
+	"keyv": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cacheable": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"flat-cache": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cacheable-request": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"file-entry-cache": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"cache-manager": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
+	"ecto": {
+		{Filename: "setup.mjs", Desc: "keyv npm compromise preinstall loader (29,918 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+		{Filename: "Math_Symbol.js", Desc: "keyv npm compromise second-stage payload (727,680 bytes)", Attack: "keyv npm compromise (Aug 2026)"},
+	},
 }
+
+// --- Source-file payload signatures ---
+
+// PayloadSignature is a fixed string that appears verbatim inside a file a
+// documented supply chain attack has injected code into. Matching is on exact
+// bytes, never a regex — these are constants lifted from published analyses,
+// not heuristics.
+type PayloadSignature struct {
+	Signature string
+	Desc      string
+	Attack    string
+	// Requires adds context for short strings that are not distinctive alone.
+	Requires string
+}
+
+// KnownPayloadSignatures are byte sequences that identify an injected payload
+// inside an otherwise-legitimate source or config file.
+//
+// PolinRider appends its loader to the end of a real build config after ~280
+// spaces of padding, so the file still opens, still builds, and still looks
+// untouched in a diff unless you scroll right. Filename matching cannot find
+// that — the file is `tailwind.config.js` and it is supposed to be there — so
+// content matching is the only option.
+//
+// The campaign has rotated its constants once already (the original March
+// `rmcej%otb%` / `_$_1e42` pair became `Cot%3t=shtP` / `MDy` in April, an
+// evasion response to OSM's published YARA rule), so every generation's
+// markers are listed and a clean result is not proof of anything. The
+// `global['!']=` and `global['_V']=` forms are included because assigning to a
+// property literally named `!` or `_V` on the global object is not something
+// any legitimate build config does, which makes them durable across rotations
+// of the surrounding constants.
+//
+// Sources:
+//   - OSM PolinRider dossier (signature constants, both variants, YARA rules)
+//     https://github.com/OpenSourceMalware/PolinRider
+//   - OSM npm case study (the `global.i="A8-…"` campaign-tag markers)
+//     https://opensourcemalware.com/blog/polinrider-npm-case-study-dprk-attack
+var KnownPayloadSignatures = []PayloadSignature{
+	{Signature: `rmcej%otb%`, Desc: "PolinRider loader signature (original March 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `_$_1e42`, Desc: "PolinRider decoder function (original March 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `Cot%3t=shtP`, Desc: "PolinRider loader signature (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `global['!']=`, Desc: "PolinRider global injection marker", Attack: "polinrider (DPRK)"},
+	{Signature: `global['_V']=`, Desc: "PolinRider global injection marker (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
+	{Signature: `global.i="A8-`, Desc: "PolinRider campaign-tag marker (fake-font and babel.config.cjs variants)", Attack: "polinrider (DPRK)"},
+
+	// The NullReceiver loader's own constants, from the OSV records for the two
+	// trojanized npm carriers. These are a different class of indicator from the
+	// markers above: those identify a generation of the obfuscator, these
+	// identify the C2 resolver itself, so they survive a rotation of the
+	// obfuscator and hold across carriers the campaign has not published yet.
+	//
+	// The wallet is the durable one. Every host in KnownC2IPs rotates for the
+	// price of one Ethereum transaction, because the loader reads the next
+	// address off-chain — but the address it reads FROM is compiled into the
+	// payload, and changing that means republishing to every victim rather than
+	// sending a transaction. Both spellings are listed because matching is exact
+	// bytes: OSV renders the address lowercase, the campaign writeups render it
+	// EIP-55 checksummed, and a sample can carry either.
+	//
+	// Sources — both records independently document the same wallet, the same
+	// Ethereum JSON-RPC endpoint set, the same `/0x/cls` + `/0x/ls` fetch paths,
+	// the same XOR-then-eval decode, and the same `node -e` spawn:
+	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
+	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
+	//
+	// Known blind spot: bianira-ui's own plugin.js writes every one of these
+	// identifiers as \uXXXX escapes specifically to defeat a literal scan, so
+	// these signatures do not match that sample. It is covered by version pin
+	// instead (KnownBadNpmVersions). No escaped form is listed here, because the
+	// exact escaping is not documented in either record and guessing at it would
+	// be inventing an IOC.
+	{Signature: `0xa322e5f3d311d3080e6f0121063e9adc2490ef1a`, Desc: "NullReceiver C2-resolver wallet address (lowercase form)", Attack: "polinrider (DPRK)"},
+	{Signature: `0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a`, Desc: "NullReceiver C2-resolver wallet address (EIP-55 checksummed form)", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/ls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+
+	// Application persistence markers and additional stage paths recovered in
+	// the Joyfill analysis. Match published literals, not arbitrary date tags.
+	// https://socket.dev/blog/joyfill-npm-beta-releases-compromised
+	// https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
+	{Signature: `/*RS260605*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250617A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250618A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250619A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250620A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C260511A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C260512A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/js`, Desc: "PolinRider additional JavaScript fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `ThZG+0jfXE6VAGOJ`, Desc: "DEV#POPPER boot-stage XOR key", Attack: "polinrider (DPRK)"},
+
+	// Community corroboration of the exact markers, including the backup suffix.
+	// Do not copy ByteGuard's broad date-marker regex or unrelated family labels.
+	// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
+	{Signature: `__inzCR`, Desc: "PolinRider application loader identifier", Attack: "polinrider (DPRK)"},
+	{Signature: `/*M260630A*/`, Desc: "PolinRider application build marker", Attack: "polinrider (DPRK)"},
+
+	// Exact XOR keys and payload-header name independently published by Amazon
+	// Inspector. The lowercase header is matched case-insensitively below.
+	// https://osv.dev/vulnerability/MAL-2026-15636
+	// https://osv.dev/vulnerability/MAL-2026-12324
+	{Signature: `q4FZkxX{!h,Sr3=@`, Desc: "NullReceiver cls-stage XOR key", Attack: "polinrider (DPRK)"},
+	{Signature: `y-p_>d$0B&@^1aQk`, Desc: "NullReceiver ls-stage XOR key", Attack: "polinrider (DPRK)"},
+	{Signature: `x-payload-b64`, Desc: "NullReceiver payload response header", Attack: "polinrider (DPRK)"},
+
+	// https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/iocs/iocs.csv
+	{Signature: `/0x/clb`, Desc: "NullReceiver RAT fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `/$/boot`, Desc: "NullReceiver boot-stage fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `/verify-human/`, Desc: "NullReceiver status beacon path", Attack: "polinrider (DPRK)"},
+	{Signature: `helloipbot!!`, Desc: "NullReceiver dead-drop recipient marker", Attack: "polinrider (DPRK)"},
+	{Signature: `68656c6c6f6970626f742121`, Desc: "NullReceiver hex-encoded dead-drop recipient marker", Attack: "polinrider (DPRK)"},
+	// The upload path alone is too short for a meaningful content finding.
+	// Both the endpoint and Socket.IO client are documented in this RAT:
+	// https://socket.dev/blog/joyfill-npm-beta-releases-compromised
+	{Signature: `/u/f`, Requires: `socket.io-client`, Desc: "PolinRider multipart upload path alongside its Socket.IO client", Attack: "polinrider (DPRK)"},
+}
+
+// SignatureScannedExtensions are file extensions worth reading for
+// KnownPayloadSignatures during the project walk. Kept deliberately narrow:
+// the campaign injects into JS-family build configs and into asset files it
+// expects reviewers to skip as binary.
+var SignatureScannedExtensions = []string{
+	".js", ".mjs", ".cjs", ".ts", ".mts", ".cts",
+	".woff2", ".woff", ".dict", ".json",
+}
+
+// SignatureScanMaxBytes is the exclusive whole-file content limit (100 MB).
+// Reading and inspection together must finish within ReadTimeout.
+const SignatureScanMaxBytes = 100_000_000
+
+// ConfigPaddingRunLength is the number of consecutive spaces that marks a
+// whitespace-padded injection. PolinRider pads with roughly 280 spaces to push
+// the payload off the right edge of an editor viewport. Only runs between
+// non-whitespace text on the same line qualify; indentation is ignored.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+const ConfigPaddingRunLength = 200
+
+// --- Repo-local propagation artifacts ---
+
+// KnownRepoArtifacts are filenames treated as malicious wherever they appear in
+// a project tree, matched on basename during the home-directory walk rather
+// than at a fixed path.
+//
+// PolinRider's propagation runs locally: `temp_auto_push.bat` resets the
+// machine clock, amends the last commit so the timestamp matches the one it
+// replaced, and force-pushes with whatever git credentials are already cached.
+// Nothing leaves the machine that GitHub can distinguish from the real
+// developer, which is why the artifact left on disk is the evidence. OSM
+// found it still present in 101 victim repos whose owners had already cleaned
+// the payload out of their config files, making it the single
+// highest-confidence indicator of past compromise in the campaign.
+//
+// Sources:
+//   - OSM PolinRider remediation guide (temp_auto_push.bat, config.bat, and
+//     the `config.bat` line injected into .gitignore to hide it)
+//     https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+//   - OSM PolinRider dossier (polinrider-scanner.sh checks the same three)
+//     https://github.com/OpenSourceMalware/PolinRider
+var KnownRepoArtifacts = []ProjectArtifact{
+	{Filename: "temp_auto_push.bat", Desc: "PolinRider propagation script (clock reset + commit amend + force-push)", Attack: "polinrider (DPRK)"},
+	{Filename: "config.bat", Desc: "PolinRider hidden orchestrator (added to .gitignore to hide it from git status)", Attack: "polinrider (DPRK)"},
+
+	// Mini Shai-Hulud payload filenames are also checked outside known npm
+	// scopes to catch additional carriers. Generic names such as setup.mjs
+	// remain package-scoped. Math_Symbol.js requires content verification
+	// below because regenerate-unicode-properties legitimately ships it.
+	//
+	// Sources:
+	//   - TanStack postmortem (router_init.js)
+	//     https://tanstack.com/blog/tanstack-router-compromise-postmortem
+	//   - Aikido (tanstack_runner.js + SHA-256)
+	//     https://www.aikido.dev/blog/tanstack-npm-supply-chain-attack
+	{Filename: "router_init.js", Desc: "mini-shai-hulud payload loader", Attack: "mini-shai-hulud (May 2026)"},
+	{Filename: "tanstack_runner.js", Desc: "mini-shai-hulud Bun-loaded payload", Attack: "mini-shai-hulud (May 2026)"},
+}
+
+// RepoPayloadHash requires both a candidate filename and verified file content.
+type RepoPayloadHash struct {
+	Filename string
+	SHA256   string
+	Desc     string
+	Attack   string
+}
+
+// KnownRepoPayloadHashes disambiguates payload names also used by legitimate
+// packages. No directory is exempted: a replaced Unicode file is still checked.
+// Source: Snyk's independently computed second-stage hash:
+// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+// Legitimate filename collision:
+// https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js
+var KnownRepoPayloadHashes = []RepoPayloadHash{
+	{
+		Filename: "Math_Symbol.js",
+		SHA256:   "9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc",
+		Desc:     "keyv second-stage payload (SHA-256 verified)",
+		Attack:   "keyv npm compromise (August 2026)",
+	},
+}
+
+// GitignoreInjectedLines are exact .gitignore entries a documented attack adds
+// to conceal a file it dropped. Matched as a whole line.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+var GitignoreInjectedLines = []PayloadSignature{
+	{Signature: "config.bat", Desc: "PolinRider hid its orchestrator from git status by adding it to .gitignore", Attack: "polinrider (DPRK)"},
+}
+
+// --- Patched package-manager entrypoints ---
+
+// NpmCLIGlobs are glob patterns for the global npm CLI entrypoint across the
+// install layouts surplies supports. Globs rather than `npm root -g` on
+// purpose: multiple node installs routinely coexist (system, Homebrew, nvm,
+// fnm, Volta, n) and asking one of them where it lives reports on that one
+// only. Paths are resolved against the home directory where relative.
+//
+// PolinRider overwrites this file with a ~1 MB malicious npm CLI. It matters
+// more than a poisoned project config because every `npm`, `npx`, or
+// `npm exec` call then re-spawns the malware, and it survives a reboot — one
+// developer traced their reinfection to an editor silently running
+// `npm exec <package>@latest` in the background.
+// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+func NpmCLIGlobs(homeDir string) []string {
+	rel := []string{
+		filepath.Join(".nvm", "versions", "node", "*", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".volta", "tools", "image", "npm", "*", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".local", "share", "fnm", "node-versions", "*", "installation", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join("n", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join(".npm-global", "lib", "node_modules", "npm", "lib", "cli.js"),
+		filepath.Join("node_modules", "npm", "lib", "cli.js"),
+	}
+
+	globs := make([]string, 0, len(rel)+6)
+	for _, r := range rel {
+		globs = append(globs, filepath.Join(homeDir, r))
+	}
+
+	if runtime.GOOS == "windows" {
+		if appData := os.Getenv("APPDATA"); appData != "" {
+			globs = append(globs, filepath.Join(appData, "npm", "node_modules", "npm", "lib", "cli.js"))
+		}
+		if pf := os.Getenv("ProgramFiles"); pf != "" {
+			globs = append(globs, filepath.Join(pf, "nodejs", "node_modules", "npm", "lib", "cli.js"))
+		}
+		return globs
+	}
+
+	return append(globs,
+		"/usr/lib/node_modules/npm/lib/cli.js",
+		"/usr/local/lib/node_modules/npm/lib/cli.js",
+		"/opt/homebrew/lib/node_modules/npm/lib/cli.js",
+		"/opt/local/lib/node_modules/npm/lib/cli.js",
+	)
+}
+
+// NpmCLIMaxNormalBytes is the size above which a global npm CLI entrypoint is
+// treated as overwritten. The real file is a few hundred bytes across every
+// npm major version — four lines that require the implementation — while the
+// PolinRider replacement is roughly 1 MB with the payload appended after a
+// long whitespace run starting on line 5. The threshold sits two orders of
+// magnitude above normal and three below the malicious size, so it does not
+// depend on either number staying exact.
+const NpmCLIMaxNormalBytes = 100 << 10 // 100 KiB
+
+// ApplicationEntrypointGlobs locates the documented injection targets in
+// conventional installation layouts. Layouts are discovery paths, not IOCs:
+// presence alone never flags an application. Recursive discovery supplements
+// these patterns for custom installs; ASAR archives are not unpacked. No installed executable is invoked.
+// Targets: https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
+// Roots: https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh
+// VS Code out/main.js and exact __inzCR / M260630A markers:
+// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts
+func ApplicationEntrypointGlobs(home, goos string, getenv func(string) string) []string {
+	var roots, discord []string
+	switch goos {
+	case "darwin":
+		for _, base := range []string{"/Applications", filepath.Join(home, "Applications")} {
+			for _, app := range []string{"Visual Studio Code", "Visual Studio Code - Insiders", "Cursor", "Antigravity", "GitHub Desktop"} {
+				roots = append(roots, filepath.Join(base, app+".app", "Contents", "Resources", "app"))
+			}
+		}
+		discord = append(discord, filepath.Join(home, "Library", "Application Support", "discord*"))
+	case "windows":
+		roots, discord = windowsApplicationRoots(home, getenv)
+	default:
+		for _, base := range []string{"/usr/share", "/usr/lib", "/opt", filepath.Join(home, ".local", "share")} {
+			for _, app := range []string{"code", "code-insiders", "cursor", "Cursor", "antigravity", "github-desktop"} {
+				roots = append(roots, filepath.Join(base, app, "resources", "app"))
+			}
+		}
+		config := getenv("XDG_CONFIG_HOME")
+		if config == "" {
+			config = filepath.Join(home, ".config")
+		}
+		discord = append(discord, filepath.Join(config, "discord*"))
+	}
+	var paths []string
+	for _, root := range roots {
+		for _, target := range []string{"out/main.js", "main.js", "node_modules/@vscode/deviceid/dist/index.js"} {
+			paths = append(paths, filepath.Join(root, filepath.FromSlash(target)))
+		}
+	}
+	for _, root := range discord {
+		paths = append(paths,
+			filepath.Join(root, "*", "modules", "discord_desktop_core*", "discord_desktop_core", "index.js"),
+			filepath.Join(root, "modules", "discord_desktop_core*", "discord_desktop_core", "index.js"))
+	}
+	return paths
+}
+
+func windowsApplicationRoots(home string, getenv func(string) string) (roots, discord []string) {
+	for _, base := range []string{getenv("ProgramFiles"), getenv("ProgramFiles(x86)"), filepath.Join(home, "AppData", "Local", "Programs")} {
+		if base == "" {
+			continue
+		}
+		for _, app := range []string{"Microsoft VS Code", "Microsoft VS Code Insiders", "cursor", "Antigravity"} {
+			roots = append(roots, filepath.Join(base, app, "resources", "app"))
+		}
+	}
+	local := getenv("LOCALAPPDATA")
+	if local == "" {
+		local = filepath.Join(home, "AppData", "Local")
+	}
+	for _, app := range []string{"Microsoft VS Code", "cursor", "Antigravity"} {
+		roots = append(roots, filepath.Join(local, "Programs", app, "resources", "app"))
+	}
+	roots = append(roots, filepath.Join(local, "GitHubDesktop", "app-*", "resources", "app"))
+	roaming := getenv("APPDATA")
+	if roaming == "" {
+		roaming = filepath.Join(home, "AppData", "Roaming")
+	}
+	discord = append(discord, filepath.Join(roaming, "discord*"), filepath.Join(local, "Discord*", "app-*"))
+	return roots, discord
+}
+
+// Public staging paths, warnings only because these names also have benign uses.
+// https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/iocs/iocs.csv
+// The same source identifies ~/.node_modules/node_modules as runtime storage.
+var NullReceiverStagingNames = []string{"get-pip.py", ".pip", ".npm"}
 
 // --- Network IOCs ---
 
@@ -772,8 +1413,50 @@ var KnownC2Domains = []string{
 }
 
 // KnownC2IPs are command-and-control IP addresses from documented supply chain attacks.
+//
+// The PolinRider entries are a snapshot, not a fixed list. That campaign
+// resolves its C2 off the Ethereum blockchain (the NullReceiver technique:
+// the IPv4 address is encoded in the destination address bytes of a zero-value
+// transaction from wallet 0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a, tailed
+// with ASCII `helloipbot!!`). There is no domain, registrar or host to seize,
+// and republishing the next address costs the operator one transaction, so
+// these rotate on their whim and a miss here means nothing.
+//
+// The Ethereum JSON-RPC endpoints the loader queries (1rpc.io, eth.drpc.org,
+// ethereum-rpc.publicnode.com, eth-mainnet.public.blastapi.io,
+// eth.blockscout.com — the first, second and last of those confirmed again in
+// https://osv.dev/vulnerability/MAL-2026-11136 and
+// https://osv.dev/vulnerability/MAL-2026-11132) are deliberately NOT listed as
+// C2 domains: they are
+// legitimate public infrastructure, and flagging them would report every web3
+// developer as compromised. Egress to them from a machine that has no business
+// speaking JSON-RPC is a real signal, but it is one for network monitoring,
+// not for a filesystem scanner's connection check.
 var KnownC2IPs = []string{
 	"142.11.206.73", // axios
+
+	// PolinRider — C2 hosts observed in the Packagist wave. All AS149440
+	// (Evoxt), the provider the operator rotates hosts within.
+	// https://socket.dev/blog/polinrider-github-packagist
+	"193.247.144.38",
+	"166.88.73.46",
+	"166.88.134.62",
+	"23.27.13.135",
+
+	// PolinRider — the interim firewall-block list from OSM's remediation
+	// guide, published as a snapshot of then-live infrastructure.
+	// https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
+	"166.88.54.158",
+	"198.105.127.210",
+	"23.27.202.27",
+	"154.91.0.103",
+	"136.0.9.8",
+	"166.88.4.2",
+	"23.27.120.142",
+	"202.155.8.173",
+	"166.88.134.82",
+	"188.43.33.249",
+	"23.27.13.43",
 }
 
 // --- Filesystem artifacts ---
@@ -834,4 +1517,7 @@ var ArtifactsTmp = []struct {
 	{".pg_state", "litellm C2 state tracking file"},
 	{"pglog", "litellm downloaded payload staging"},
 	{"tpcp.tar.gz", "litellm credential exfiltration archive"},
+	// mini-shai-hulud (Red Hat Cloud Services wave, June 1 2026)
+	{"tmp.0987654321.lock", "mini-shai-hulud Bun loader execution lock file (Red Hat Cloud Services wave)"},
+	{"b-*/b.zip", "mini-shai-hulud Bun loader staged payload archive, extracted under /tmp/b-* (Red Hat Cloud Services wave)"},
 }
