@@ -54,7 +54,8 @@ func TestResultSummaryIsLast(t *testing.T) {
 					t.Fatal(err)
 				}
 				indicators, _ := splitFindings(findings)
-				if !strings.HasSuffix(string(data), resultSummary("surplies 0.9.2 -deep", indicators)+"\n") {
+				footer := "Scan complete in 0s\nStats: 0 node_modules (0 pkgs), 0 site-packages (0 pkgs), 0 composer vendors (0 pkgs), 0 files checked\n\n" + resultSummary("surplies 0.9.2 -deep", indicators) + "\n"
+				if !strings.HasSuffix(string(data), footer) {
 					t.Fatalf("summary not last: json=%v cov=%v detected=%v: %s", jsonOutput, details, detected, data)
 				}
 			}
