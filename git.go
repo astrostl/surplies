@@ -44,10 +44,12 @@ func gitCommand(ctx context.Context, repo string, args ...string) *exec.Cmd {
 type gitDiagnostic struct {
 	text      []byte
 	truncated bool
+	bytes     int64
 }
 
 func (d *gitDiagnostic) Write(p []byte) (int, error) {
 	n := len(p)
+	d.bytes += int64(n)
 	remaining := 8192 - len(d.text)
 	if len(p) > remaining {
 		d.truncated = true
@@ -60,7 +62,7 @@ func (d *gitDiagnostic) Write(p []byte) (int, error) {
 
 func (s *Scanner) scanGitRepositories() {
 	if _, err := exec.LookPath("git"); err != nil {
-		s.gitScanError("git", fmt.Errorf("-git requires Git: %w", err))
+		s.gitScanError("git", fmt.Errorf("Git history inspection requires Git: %w", err))
 		return
 	}
 	seen := make(map[string]bool)
@@ -104,7 +106,14 @@ func gitSmallOutput(ctx context.Context, repo string, args ...string) (string, e
 	cmd := gitCommand(ctx, repo, args...)
 	var out, diagnostic gitDiagnostic
 	cmd.Stdout, cmd.Stderr = &out, &diagnostic
-	if err := cmd.Run(); err != nil {
+	start := time.Now()
+	runErr := cmd.Start()
+	var disk DebugDiskIO
+	if runErr == nil {
+		runErr, disk = waitDebugGit(ctx, cmd)
+	}
+	recordGit(ctx, repo, args, start, out.bytes, diagnostic.bytes, runErr, disk)
+	if err := runErr; err != nil {
 		return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(string(diagnostic.text)))
 	}
 	if out.truncated {
@@ -116,6 +125,7 @@ func gitSmallOutput(ctx context.Context, repo string, args ...string) (string, e
 func (s *Scanner) checkGitRepository(repo string, seen map[string]bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), GitScanTimeout)
 	defer cancel()
+	ctx = context.WithValue(ctx, debugContextKey{}, s.debug)
 	common, err := gitSmallOutput(ctx, repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
 	if err == nil {
 		common, err = filepath.EvalSymlinks(common)
@@ -150,6 +160,10 @@ func (s *Scanner) checkGitRepository(repo string, seen map[string]bool) {
 }
 
 type gitBatch struct {
+	ctx        context.Context
+	repo, mode string
+	started    time.Time
+	measured   *debugGitRead
 	cmd        *exec.Cmd
 	input      io.WriteCloser
 	output     *bufio.Reader
@@ -157,7 +171,7 @@ type gitBatch struct {
 }
 
 func startGitBatch(ctx context.Context, repo, mode string) (*gitBatch, error) {
-	b := &gitBatch{cmd: gitCommand(ctx, repo, "cat-file", mode)}
+	b := &gitBatch{cmd: gitCommand(ctx, repo, "cat-file", mode), ctx: ctx, repo: repo, mode: mode, started: time.Now()}
 	var err error
 	b.input, err = b.cmd.StdinPipe()
 	if err != nil {
@@ -168,7 +182,8 @@ func startGitBatch(ctx context.Context, repo, mode string) (*gitBatch, error) {
 		b.input.Close()
 		return nil, err
 	}
-	b.output = bufio.NewReader(output)
+	b.measured = &debugGitRead{Reader: output}
+	b.output = bufio.NewReader(b.measured)
 	b.cmd.Stderr = &b.diagnostic
 	if err := b.cmd.Start(); err != nil {
 		b.input.Close()
@@ -180,7 +195,9 @@ func startGitBatch(ctx context.Context, repo, mode string) (*gitBatch, error) {
 
 func (b *gitBatch) close() error {
 	b.input.Close()
-	if err := b.cmd.Wait(); err != nil {
+	waitErr, disk := waitDebugGit(b.ctx, b.cmd)
+	recordGit(b.ctx, b.repo, []string{"cat-file", b.mode}, b.started, b.measured.bytes.Load(), b.diagnostic.bytes, waitErr, disk)
+	if err := waitErr; err != nil {
 		return fmt.Errorf("git cat-file: %w: %s", err, strings.TrimSpace(string(b.diagnostic.text)))
 	}
 	return nil
@@ -252,7 +269,9 @@ func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, con
 		output.Close()
 		return err
 	}
-	lines := bufio.NewScanner(output)
+	started := time.Now()
+	measured := &debugGitRead{Reader: output}
+	lines := bufio.NewScanner(measured)
 	// Only object IDs are emitted. Avoid path/newline ambiguity entirely.
 	lines.Buffer(make([]byte, 128), 1024)
 	var scanErr error
@@ -281,7 +300,8 @@ func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, con
 	if scanErr != nil {
 		_ = cmd.Process.Kill()
 	}
-	waitErr := cmd.Wait()
+	waitErr, disk := waitDebugGit(ctx, cmd)
+	recordGit(ctx, repo, []string{"rev-list", "--objects", "--all", "--no-object-names", "--missing=print"}, started, measured.bytes.Load(), diagnostic.bytes, waitErr, disk)
 	if scanErr != nil {
 		return fmt.Errorf("Git object inspection failed: %w", scanErr)
 	}

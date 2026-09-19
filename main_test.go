@@ -82,8 +82,8 @@ func TestCoverageIsNotAnIndicator(t *testing.T) {
 }
 
 func TestResultIncludesVersionAndFlags(t *testing.T) {
-	label := invocationLabel("v0.9.2", []string{"-deep"})
-	if got := resultSummary(label, nil); got != "surplies 0.9.2 -deep : No supply chain attack indicators found." {
+	label := invocationLabel("v0.9.2", []string{"-q"})
+	if got := resultSummary(label, nil); got != "surplies 0.9.2 -q : No supply chain attack indicators found." {
 		t.Fatal(got)
 	}
 	label = invocationLabel("v0.9.2", []string{"-root", "/custom apps", "-q"})
@@ -95,7 +95,7 @@ func TestResultIncludesVersionAndFlags(t *testing.T) {
 	}
 }
 
-func TestResultSummaryIsLast(t *testing.T) {
+func TestResultSummaryEndsHumanReport(t *testing.T) {
 	for _, jsonOutput := range []bool{false, true} {
 		for _, details := range []bool{false, true} {
 			for _, detected := range []bool{false, true} {
@@ -109,17 +109,21 @@ func TestResultSummaryIsLast(t *testing.T) {
 				}
 				stdout, stderr := os.Stdout, os.Stderr
 				os.Stdout, os.Stderr = output, output
-				printResults(findings, ScanStats{}, jsonOutput, details, "surplies 0.9.2 -deep")
+				printResults(findings, ScanStats{}, jsonOutput, details, "surplies 0.9.2 -q")
 				os.Stdout, os.Stderr = stdout, stderr
 				output.Close()
 				data, err := os.ReadFile(output.Name())
 				if err != nil {
 					t.Fatal(err)
 				}
-				footer := "Scan complete in 0s\nStats: 0 node_modules (0 pkgs), 0 site-packages (0 pkgs), 0 composer vendors (0 pkgs), 0 files checked\n\n" + resultSummary("surplies 0.9.2 -deep", findings) + "\n"
-				if !strings.HasSuffix(string(data), footer) {
-					t.Fatalf("summary not last: json=%v cov=%v detected=%v: %s", jsonOutput, details, detected, data)
+				text := string(data)
+				if strings.Count(text, "Result:") != 1 || !strings.Contains(text, "Coverage incomplete:") {
+					t.Fatalf("missing/duplicate verdict: %s", text)
 				}
+				if !jsonOutput && strings.Index(text, "Result:") < strings.Index(text, "CHECKS THAT COULD NOT COMPLETE") {
+					t.Fatalf("verdict did not end report: %s", text)
+				}
+
 			}
 		}
 	}
@@ -143,40 +147,29 @@ func TestCoverageCategoriesAndCounts(t *testing.T) {
 	}
 }
 
-func TestScanModeFlags(t *testing.T) {
-	for _, args := range [][]string{{"-a"}, {"-all"}, {"-cov", "-deep", "-git"}, {"-a", "-git=false"}} {
-		fs := flag.NewFlagSet("test", flag.ContinueOnError)
-		m := registerScanModes(fs)
-		if err := fs.Parse(args); err != nil {
-			t.Fatal(err)
-		}
-		m.expand()
-		if !m.Deep || !m.Git || !m.Coverage {
-			t.Fatalf("%v: %+v", args, m)
-		}
-	}
+func TestScanModeDefaults(t *testing.T) {
 	fs := flag.NewFlagSet("test", flag.ContinueOnError)
 	m := registerScanModes(fs)
-	if err := fs.Parse([]string{"-deep"}); err != nil {
+	if err := fs.Parse(nil); err != nil {
 		t.Fatal(err)
 	}
-	m.expand()
-	if m.Git || m.Coverage {
-		t.Fatalf("deep unexpectedly enables git/coverage: %+v", m)
+	if !m.Deep || !m.Git || !m.Coverage || m.NpmCache || m.Broad || m.BrowserCache || m.Debug {
+		t.Fatalf("unexpected defaults: %+v", m)
 	}
 }
 
-func TestAllAliasHiddenFromUsage(t *testing.T) {
-	previous := flag.CommandLine
-	defer func() { flag.CommandLine = previous }()
-	flag.CommandLine = flag.NewFlagSet("test", flag.ContinueOnError)
-	registerScanModes(flag.CommandLine)
-	var output strings.Builder
-	flag.CommandLine.SetOutput(&output)
-	printUsage()
-	text := output.String()
-	if strings.Contains(text, "  -all\n") || !strings.Contains(text, "  -a\n") || !strings.Contains(text, "  -git\n") {
-		t.Fatal(text)
+func TestRemovedScanFlags(t *testing.T) {
+	for _, name := range []string{"a", "all", "cov", "deep", "git", "all-content", "raw", "raw-cache"} {
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		var output strings.Builder
+		fs.SetOutput(&output)
+		registerScanModes(fs)
+		if fs.Lookup(name) != nil {
+			t.Fatalf("removed flag %s still registered", name)
+		}
+		if err := fs.Parse([]string{"-" + name}); err == nil {
+			t.Fatalf("removed flag %s accepted", name)
+		}
 	}
 }
 

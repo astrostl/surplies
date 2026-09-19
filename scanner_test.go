@@ -36,7 +36,9 @@ func TestCheckFileObfuscation(t *testing.T) {
 	// Clean file
 	clean := filepath.Join(dir, "clean.js")
 	os.WriteFile(clean, []byte(`console.log("hello world");`), 0644)
-	if flags := checkFileObfuscation(clean); len(flags) != 0 {
+	s := New(dir, false)
+	s.checkScriptFile(clean, "test")
+	if flags := findingsFor(s, "obfuscated-install-script"); len(flags) != 0 {
 		t.Errorf("clean file flagged: %v", flags)
 	}
 
@@ -45,7 +47,8 @@ func TestCheckFileObfuscation(t *testing.T) {
 	content := `var a = eval(atob("` + repeatStr("\\x41", 25) + `"));`
 	content += "\nvar b = Buffer.from(x, 'base64'); Buffer.from(y, 'base64'); Buffer.from(z, 'base64'); Buffer.from(w, 'base64');"
 	os.WriteFile(obf, []byte(content), 0644)
-	flags := checkFileObfuscation(obf)
+	s.checkScriptFile(obf, "test")
+	flags := findingsFor(s, "obfuscated-install-script")
 	if len(flags) == 0 {
 		t.Error("obfuscated file not flagged")
 	}

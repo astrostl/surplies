@@ -1122,12 +1122,9 @@ var KnownPayloadSignatures = []PayloadSignature{
 	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
 	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
 	//
-	// Known blind spot: bianira-ui's own plugin.js writes every one of these
-	// identifiers as \uXXXX escapes specifically to defeat a literal scan, so
-	// these signatures do not match that sample. It is covered by version pin
-	// instead (KnownBadNpmVersions). No escaped form is listed here, because the
-	// exact escaping is not documented in either record and guessing at it would
-	// be inventing an IOC.
+	// General source inspection normalizes fixed-width ASCII escapes before
+	// matching these existing literals; it never evaluates or unpacks code.
+
 	{Signature: `0xa322e5f3d311d3080e6f0121063e9adc2490ef1a`, Desc: "NullReceiver C2-resolver wallet address (lowercase form)", Attack: "polinrider (DPRK)"},
 	{Signature: `0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a`, Desc: "NullReceiver C2-resolver wallet address (EIP-55 checksummed form)", Attack: "polinrider (DPRK)"},
 	{Signature: `/0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
@@ -1174,12 +1171,14 @@ var KnownPayloadSignatures = []PayloadSignature{
 }
 
 // SignatureScannedExtensions are file extensions worth reading for
-// KnownPayloadSignatures during the project walk. Kept deliberately narrow:
-// the campaign injects into JS-family build configs and into asset files it
-// expects reviewers to skip as binary.
+// KnownPayloadSignatures during the project walk. Traversal boundaries remain
+// separate. Additional contextual rules and their citations live in heuristics.go:
+// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
+// Unicode coverage: https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode
 var SignatureScannedExtensions = []string{
 	".js", ".mjs", ".cjs", ".ts", ".mts", ".cts",
-	".woff2", ".woff", ".dict", ".json",
+	".woff2", ".woff", ".dict", ".json", ".jsonc",
+	".jsx", ".tsx", ".py", ".sh", ".bash", ".zsh", ".ps1", ".cmd", ".bat", ".yaml", ".yml", ".toml", ".ini", ".conf", ".xml", ".plist", ".service", ".txt", ".md", ".html", ".vue", ".svelte", ".php", ".rb", ".dart",
 }
 
 // SignatureScanMaxBytes is the exclusive whole-file content limit (100 MB).
@@ -1233,7 +1232,7 @@ var KnownRepoArtifacts = []ProjectArtifact{
 }
 
 // RepoPayloadHash identifies raw payload bytes. Filesystem checks use Filename;
-// -git ignores filenames and uses Size as an exact-byte candidate optimization.
+// Git history inspection ignores filenames and uses Size as an exact-byte candidate optimization.
 // GitBlobSHA1 is the Git object identity, not a raw-file SHA-1 or SHA-256.
 type RepoPayloadHash struct {
 	Filename    string

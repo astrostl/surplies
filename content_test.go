@@ -631,15 +631,16 @@ func TestStallInOneSubtreeDoesNotBlockAnother(t *testing.T) {
 	}
 }
 
-func TestDeepScanReadsInsideNodeModules(t *testing.T) {
+func TestDeepScanReadsDeclaredNodeEntrypoint(t *testing.T) {
 	// The default scan identifies dependencies by name and version and never
 	// opens their files. A package carrying the loader in a version nobody has
-	// pinned is therefore invisible until -deep is set.
+	// pinned is therefore only visible with deep dependency inspection enabled.
 	dir := t.TempDir()
 	pkg := filepath.Join(dir, "proj", "node_modules", "some-ui-kit", "src")
 	if err := os.MkdirAll(pkg, 0755); err != nil {
 		t.Fatal(err)
 	}
+	writeFixture(t, filepath.Join(filepath.Dir(pkg), "package.json"), `{"name":"some-ui-kit","main":"src/index.js"}`)
 	os.WriteFile(filepath.Join(pkg, "index.js"),
 		[]byte(`module.exports={};var w="0xa322e5f3d311d3080e6f0121063e9adc2490ef1a";`), 0644)
 
@@ -657,13 +658,13 @@ func TestDeepScanReadsInsideNodeModules(t *testing.T) {
 	}
 }
 
-func TestDeepScanReadsInsideComposerVendor(t *testing.T) {
+func TestDeepScanReadsComposerAutoload(t *testing.T) {
 	dir := t.TempDir()
 	vendor := filepath.Join(dir, "proj", "vendor")
 	if err := os.MkdirAll(filepath.Join(vendor, "composer"), 0755); err != nil {
 		t.Fatal(err)
 	}
-	os.WriteFile(filepath.Join(vendor, "composer", "installed.json"), []byte(`{"packages":[]}`), 0644)
+	os.WriteFile(filepath.Join(vendor, "composer", "installed.json"), []byte(`{"packages":[{"name":"acme/pkg","autoload":{"files":["index.js"]}}]}`), 0644)
 	os.MkdirAll(filepath.Join(vendor, "acme", "pkg"), 0755)
 	os.WriteFile(filepath.Join(vendor, "acme", "pkg", "index.js"),
 		[]byte(`x;var q="Cot%3t=shtP";`), 0644)

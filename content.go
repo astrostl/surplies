@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 )
 
 // Content-based checks. Every other check in surplies matches on a path, a
@@ -58,13 +59,9 @@ var paddingRun = strings.Repeat(" ", ConfigPaddingRunLength)
 // package poses as a Tailwind plugin.
 // https://osv.dev/vulnerability/MAL-2026-11132
 //
-// Read what this does and does not buy. The walk SkipDirs node_modules, so
-// content scanning never reaches an INSTALLED bianira-ui; that package is
-// caught by version pin instead (KnownBadNpmVersions). This entry only covers
-// a plugin.js in the developer's own tree, which is the force-pushed-repo
-// vector rather than the npm-delivery vector the OSV records describe. It is a
-// common filename, so it only ever earns a read — a finding still requires a
-// signature match.
+// These historical entrypoint names remain eligible alongside the broader
+// extension policy. Default dependency boundaries still apply to ordinary
+// content; installed package scripts and targeted persistence are exceptions.
 var injectableSourceNames = []string{
 	"App.js",
 	"index.js",
@@ -74,44 +71,17 @@ var injectableSourceNames = []string{
 	"plugin.js",
 }
 
-// shouldScanForSignatures reports whether a file is worth reading for payload
-// signatures. Kept narrow on purpose: an unbounded content scan of a developer
-// home directory is both slow and a false-positive generator, and every
-// documented injection target for the campaigns tracked here is either a
-// JS-family build config, an asset file chosen because reviewers skip it as
-// binary, or one of the specific filenames above.
+// Eligibility is independent of traversal. Sources, text/config, extensionless
+// files and supported disguised assets are inspected with the shared bounds.
+// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts
 func shouldScanForSignatures(name string) bool {
-	if slices.Contains(injectableSourceNames, name) || slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == name }) {
-		return true
-	}
-
 	ext := strings.ToLower(filepath.Ext(name))
-	if !slices.Contains(SignatureScannedExtensions, ext) {
-		return false
-	}
-
-	// `.json` is only interesting for the specific filenames above — scanning
-	// every JSON file in a home directory reads caches, lockfiles and package
-	// manifests for no benefit.
-	if ext == ".json" {
-		return false
-	}
-
-	// JS-family: only build configs (`vite.config.ts`, `postcss.config.mjs`,
-	// `babel.config.cjs`, …). Other source files are excluded to keep the
-	// scan bounded.
-	if isJSFamily(ext) {
-		return strings.Contains(name, ".config.")
-	}
-
-	// Asset extensions (.woff2, .woff, .dict) are always read: hiding the
-	// loader in one is the campaign's defining technique.
-	return true
+	return ext == "" || slices.Contains(SignatureScannedExtensions, ext) || assetExtension(ext) || slices.Contains(injectableSourceNames, name) || slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == name })
 }
 
 func isJSFamily(ext string) bool {
 	switch ext {
-	case ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts":
+	case ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".jsx", ".tsx":
 		return true
 	}
 	return false
@@ -220,14 +190,33 @@ func (s *Scanner) readCapped(path string) []byte {
 var errFileTooLarge = errors.New("file size limit exceeded")
 
 type fileResult struct {
-	data     []byte
-	findings []Finding
-	err      error
+	data          []byte
+	findings      []Finding
+	stats         ScanStats
+	scriptChecked map[string]bool
+	err           error
 }
 
 // Reading and inspection share one deadline. A private scanner collects results
 // so a timed-out worker can never append findings after the parent has moved on.
 func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*Scanner, []byte)) []byte {
+	return s.processFileMode(path, timeout, inspect, false)
+}
+
+// Optional absent package manifests are not failures. The open still happens
+// inside the same deadline; selected project manifests use optional=false.
+func (s *Scanner) processFileMode(path string, timeout time.Duration, inspect func(*Scanner, []byte), optional bool) []byte {
+	return s.processFilePolicy(path, timeout, inspect, optional, false)
+}
+
+// General source checks can reject binary prefixes. Targeted entrypoints,
+// package metadata, lifecycle targets and exact-hash candidates retain full reads.
+func (s *Scanner) processSourceFile(path string, inspect func(*Scanner, []byte)) []byte {
+	source := !slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == filepath.Base(path) })
+	return s.processFilePolicy(path, ReadTimeout, inspect, false, source)
+}
+func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect func(*Scanner, []byte), optional, source bool) []byte {
+	s.debug.selection(path)
 	key := s.stallKey(path)
 	if s.stalled(key) {
 		s.mu.Lock()
@@ -243,9 +232,21 @@ func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*
 	var opened atomic.Pointer[os.File]
 	done := make(chan fileResult, 1)
 	go func() {
+		fileStats := s.contentIO
+		if s.debug != nil {
+			fileStats = &contentReadStats{parent: s.contentIO}
+		}
+		started := time.Now()
+		s.debug.event("open", path, 0, 0)
+		var readTime, inspectTime time.Duration
+		var result fileResult
+		defer func() {
+			s.debug.fileDone(path, fileStats, readTime, inspectTime, time.Since(started))
+			done <- result
+		}()
 		f, err := os.Open(path)
 		if err != nil {
-			done <- fileResult{err: err}
+			result = fileResult{err: err}
 			return
 		}
 		opened.Store(f)
@@ -255,9 +256,15 @@ func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*
 			return
 		default:
 		}
-		data, err := readScanContent(f, slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(path))))
+		s.debug.event("read", path, 0, 0)
+		readStart := time.Now()
+		data, binary, err := readScanContent(f, strings.ToLower(filepath.Ext(path)), source, fileStats, slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == filepath.Base(path) }))
+		readTime = time.Since(readStart)
+		if binary {
+			s.contentIO.binary.Add(1)
+		}
 		if err != nil {
-			done <- fileResult{err: err}
+			result = fileResult{err: err}
 			return
 		}
 		select {
@@ -266,10 +273,16 @@ func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*
 		default:
 		}
 		local := New(s.HomeDir, false)
+		local.contentIO = s.contentIO
+		local.Deep = s.Deep
+		local.debug = s.debug
+		s.debug.event("inspect", path, fileStats.bytes.Load(), readTime)
+		inspectStart := time.Now()
 		if inspect != nil {
 			inspect(local, data)
 		}
-		done <- fileResult{data: data, findings: local.Findings}
+		inspectTime = time.Since(inspectStart)
+		result = fileResult{data: data, findings: local.Findings, stats: local.stats, scriptChecked: local.scriptChecked}
 	}()
 	select {
 	case result := <-done:
@@ -278,17 +291,18 @@ func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*
 			return nil
 		}
 		if result.err != nil {
+			if optionalFileMissing(optional, result.err) {
+				return nil
+			}
 			s.mu.Lock()
 			s.stats.FilesUnreadable++
 			s.mu.Unlock()
 			s.scanError(path, result.err)
 			return nil
 		}
-		for _, finding := range result.findings {
-			s.addFinding(finding)
-		}
-		return result.data
+		return s.mergeFileResult(path, result)
 	case <-timer.C:
+		s.debug.event("timeout", path, 0, timeout)
 		if f := opened.Load(); f != nil {
 			go f.Close()
 		}
@@ -297,35 +311,83 @@ func (s *Scanner) processFile(path string, timeout time.Duration, inspect func(*
 	}
 }
 
-// Recognized fonts need only their header. Everything else is read in full
-// below 100 MB; stat avoids allocating for an already oversized regular file.
-// The reader limit also handles growing files and streams with no known size.
-func readScanContent(f *os.File, sniffFont bool) ([]byte, error) {
-	var r io.Reader = f
-	if sniffFont {
-		prefix := make([]byte, 32)
-		n, err := io.ReadFull(f, prefix)
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return nil, err
-		}
-		prefix = prefix[:n]
-		if hasFontMagic(prefix) {
-			return prefix, nil
-		}
-		r = io.MultiReader(bytes.NewReader(prefix), f)
+// Content accounting measures bytes returned by file reads, including rejected
+// prefixes and failed reads. It excludes metadata, OS read-ahead and Git child I/O.
+type contentReadStats struct {
+	parent *contentReadStats
+	bytes  atomic.Int64
+	binary atomic.Int64
+}
+type measuredReader struct {
+	reader io.Reader
+	stats  *contentReadStats
+}
+
+func (r measuredReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
+	for stats := r.stats; stats != nil; stats = stats.parent {
+		stats.bytes.Add(int64(n))
 	}
+	return n, err
+}
+
+const SourceSniffBytes = 8 * 1024
+
+// Read a prefix before allocating/reading the body of general-source candidates.
+// This preserves whole-file inspection for text (including middle/tail markers).
+// Selected metadata, lifecycle targets, exact hashes and persistence entrypoints
+// deliberately retain their existing full-read policy.
+func readScanContent(f *os.File, ext string, source bool, stats *contentReadStats, preserveNative ...bool) ([]byte, bool, error) {
+	measured := measuredReader{f, stats}
+	prefix := make([]byte, 32)
+	n, err := io.ReadFull(measured, prefix)
+	if failedPrefixRead(err) {
+		return nil, false, err
+	}
+	prefix = prefix[:n]
+	if nativeExecutableHeader(prefix) && !(len(preserveNative) > 0 && preserveNative[0]) {
+		return prefix, true, nil
+	}
+	if assetExtension(ext) && validAsset(ext, prefix) {
+		return prefix, false, nil
+	}
+
 	info, err := f.Stat()
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if info.Size() >= SignatureScanMaxBytes {
-		return nil, fileSizeError()
+		return nil, false, fileSizeError()
 	}
+	if source {
+		var binary bool
+		prefix, binary, err = sniffSourcePrefix(measured, prefix, ext)
+		if err != nil || binary {
+			return prefix, binary, err
+		}
+	}
+	r := io.MultiReader(bytes.NewReader(prefix), measured)
 	data, err := io.ReadAll(io.LimitReader(r, SignatureScanMaxBytes))
 	if err == nil && len(data) >= SignatureScanMaxBytes {
-		return nil, fileSizeError()
+		err = fileSizeError()
 	}
-	return data, err
+	return data, false, err
+}
+func binarySourcePrefix(data []byte) bool {
+	if bytes.IndexByte(data, 0) >= 0 {
+		return true
+	}
+	for len(data) > 0 {
+		if !utf8.FullRune(data) {
+			return false
+		}
+		r, size := utf8.DecodeRune(data)
+		if r == utf8.RuneError && size == 1 {
+			return true
+		}
+		data = data[size:]
+	}
+	return false
 }
 
 func fileSizeError() error {
@@ -406,7 +468,19 @@ func hasFontMagic(data []byte) bool {
 // Name-based checks run first and short-circuit: a file that is malicious by
 // name alone never needs reading.
 func (s *Scanner) checkSourceFile(path, name string) {
-	if s.persistenceChecked[path] {
+	if startupPath(path) {
+		s.checkStartupFile(path, false)
+		return
+	}
+	if extraToolchainPath(path) {
+		s.checkApplicationFile(path)
+		return
+	}
+	if name == "package.json" {
+		s.checkPackageManifest(filepath.Dir(path), filepath.Base(filepath.Dir(path)), false)
+		return
+	}
+	if s.persistenceChecked[path] || s.scriptChecked[path] {
 		return
 	}
 	if persistenceEntrypointName(name) && discoveredPersistenceEntrypoint(path) {
@@ -429,20 +503,8 @@ func (s *Scanner) checkSourceFile(path, name string) {
 		return
 	}
 
-	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
-		if name == "tasks.json" && filepath.Base(filepath.Dir(path)) == ".vscode" {
-			local.checkFontTask(path, data)
-		}
-
-		if isFont {
-			local.checkFakeFont(path, ext, data)
-		}
-
-		if local.checkRepoPayloadHash(path, name, data) || local.checkPayloadSignatures(path, data) {
-			return
-		}
-
-		local.checkPadding(path, ext, isFont, data)
+	if s.processSourceFile(path, func(local *Scanner, data []byte) {
+		local.inspectSourceContent(path, name, ext, isFont, data)
 	}) != nil {
 		s.stats.FilesChecked++
 	}
@@ -518,6 +580,10 @@ func (s *Scanner) checkRepoArtifactName(path, name string) bool {
 // This holds regardless of which payload generation is inside, so it fires
 // even when every string constant has rotated.
 func (s *Scanner) checkFakeFont(path, ext string, data []byte) {
+	if hasFontMagic(data) {
+		return
+	}
+	data = trimAssetPadding(data)
 	if hasFontMagic(data) || !looksLikeText(data) || looksLikeHTML(data) {
 		return
 	}
@@ -546,12 +612,22 @@ func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
 
 func payloadSignature(data []byte) (PayloadSignature, bool) {
 	content := string(data)
+	var lower string
+	lowerReady := false
+	caseInsensitiveContains := func(needle string) bool {
+		if !lowerReady {
+			lower = strings.ToLower(content)
+			lowerReady = true
+		}
+		return strings.Contains(lower, strings.ToLower(needle))
+	}
 	for _, sig := range KnownPayloadSignatures {
 		if sig.Requires != "" && !strings.Contains(content, sig.Requires) {
 			continue
 		}
 		if strings.Contains(content, sig.Signature) ||
-			(sig.Signature == "x-payload-b64" && strings.Contains(strings.ToLower(content), sig.Signature)) {
+			(strings.HasPrefix(sig.Signature, "0xa322") && caseInsensitiveContains(sig.Signature)) ||
+			(sig.Signature == "x-payload-b64" && caseInsensitiveContains(sig.Signature)) {
 			return sig, true
 		}
 	}
@@ -633,7 +709,7 @@ func (s *Scanner) checkGitignore(path string) {
 // (`.vscode`, `.claude`) that the walk stops descending into once it has
 // matched them, so that `.vscode/tasks.json` is still inspected.
 func (s *Scanner) scanDirFiles(dir string) {
-	entries, err := os.ReadDir(dir)
+	entries, err := s.readDir(dir)
 	if err != nil {
 		s.scanError(dir, err)
 		return
@@ -642,7 +718,10 @@ func (s *Scanner) scanDirFiles(dir string) {
 		if e.IsDir() {
 			continue
 		}
-		s.checkSourceFile(filepath.Join(dir, e.Name()), e.Name())
+		path := filepath.Join(dir, e.Name())
+		if s.routineContentFile(path, e.Name()) {
+			s.checkSourceFile(path, e.Name())
+		}
 	}
 }
 
@@ -704,4 +783,110 @@ func (s *Scanner) checkNpmCLI() {
 			})
 		}
 	}
+}
+
+func hasIncomplete(findings []Finding) bool {
+	for _, f := range findings {
+		if f.Check == "scan-incomplete" {
+			return true
+		}
+	}
+	return false
+}
+
+// Source-signature checks do not analyze native executable code. Recognize
+// native headers before the text size limit; a script renamed .node still scans.
+func nativeExecutableHeader(data []byte) bool {
+	if len(data) < 16 {
+		return false
+	}
+	if bytes.Equal(data[:4], []byte{0x7f, 'E', 'L', 'F'}) {
+		return (data[4] == 1 || data[4] == 2) && (data[5] == 1 || data[5] == 2) && data[6] == 1
+	}
+	for _, magic := range [][]byte{{0xcf, 0xfa, 0xed, 0xfe}, {0xce, 0xfa, 0xed, 0xfe}, {0xfe, 0xed, 0xfa, 0xcf}, {0xfe, 0xed, 0xfa, 0xce}, {0xca, 0xfe, 0xba, 0xbe}, {0xbe, 0xba, 0xfe, 0xca}} {
+		if bytes.Equal(data[:4], magic) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Scanner) inspectSourceContent(path, name, ext string, isFont bool, data []byte) {
+	if name == "tasks.json" && filepath.Base(filepath.Dir(path)) == ".vscode" {
+		s.checkFontTask(path, data)
+	}
+
+	if isFont {
+		s.checkFakeFont(path, ext, data)
+	}
+
+	if !isFont {
+		s.checkDisguisedAsset(path, ext, data)
+	}
+	if assetExtension(ext) && validAsset(ext, data) {
+		return
+	}
+	if s.checkRepoPayloadHash(path, name, data) {
+		return
+	}
+	s.inspectGeneralContent(path, data)
+	matched := false
+	for _, f := range s.Findings {
+		if f.Check == "payload-signature" {
+			matched = true
+		}
+	}
+	if !matched {
+		s.checkPadding(path, ext, isFont, data)
+	}
+}
+
+func (s *Scanner) mergeFileResult(path string, result fileResult) []byte {
+	if s.scriptChecked == nil {
+		s.scriptChecked = make(map[string]bool)
+	}
+	for path := range result.scriptChecked {
+		s.scriptChecked[path] = true
+	}
+	s.stats.PackagesScanned += result.stats.PackagesScanned
+	s.stats.ComposerPackagesScanned += result.stats.ComposerPackagesScanned
+	s.stats.FilesChecked += result.stats.FilesChecked
+	s.stats.FilesUnreadable += result.stats.FilesUnreadable
+	for _, finding := range result.findings {
+		s.addFinding(finding)
+	}
+	if hasIncomplete(result.findings) {
+		if result.stats.FilesUnreadable == 0 {
+			s.stats.FilesUnreadable++
+		}
+		return nil
+	}
+	s.stats.ContentBytesRead = s.contentIO.bytes.Load()
+	s.stats.BinaryPrefixesSkipped = s.contentIO.binary.Load()
+	if s.Verbose && s.stats.ContentBytesRead >= s.nextReadReport+(1<<30) {
+		s.nextReadReport = s.stats.ContentBytesRead
+		s.log("content reads: %.2f GiB so far; current file: %s", float64(s.stats.ContentBytesRead)/(1<<30), path)
+	}
+	return result.data
+}
+
+func sniffSourcePrefix(measured measuredReader, prefix []byte, ext string) ([]byte, bool, error) {
+	rest := make([]byte, SourceSniffBytes-len(prefix))
+	n, err := io.ReadFull(measured, rest)
+	if failedPrefixRead(err) {
+		return nil, false, err
+	}
+	prefix = append(prefix, rest[:n]...)
+	sample := prefix
+	if assetExtension(ext) {
+		sample = trimAssetPadding(sample)
+	}
+	// A partial UTF-8 rune at the sniff boundary is not binary. All-padding
+	// assets also remain candidates: script text can occur after the padding.
+	return prefix, binarySourcePrefix(sample), nil
+}
+
+func optionalFileMissing(optional bool, err error) bool { return optional && os.IsNotExist(err) }
+func failedPrefixRead(err error) bool {
+	return err != nil && err != io.EOF && err != io.ErrUnexpectedEOF
 }

@@ -4,24 +4,25 @@
 
 > **Disclaimer:** This tool is vibe coded and provided as-is, without warranty or guarantee of any kind. It may produce false positives, miss indicators, or behave unexpectedly. Use it as one signal among many, not as a definitive security verdict. Testing has only been performed on macOS — Linux and Windows behavior is untested.
 
-A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Optional Git-history checks require Git.
+A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Git-history checks require Git.
 
-**Currently detects indicators from six documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)). The [active hash list](#active-payload-hashes) also includes an incident-sourced sample within the existing PolinRider campaign; its exact hash is not independently publicly corroborated:
+**Currently detects indicators from seven documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [Endor Labs](https://www.endorlabs.com/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)). The [active hash list](#active-payload-hashes) also includes an incident-sourced sample within the existing PolinRider campaign; its exact hash is not independently publicly corroborated:
 
+- **[GlassWorm Unicode concealment](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode)** — contextual source warnings for long variation-selector sequences and related Unicode concealment. These warnings do not attribute a file to GlassWorm or PolinRider.
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
 - **[TrapDoor crypto-stealer campaign](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates)** (attributed to GitHub actor `ddjidd564`, campaign marker `P-2024-001`, May 2026) — 34 purpose-built phantom packages across npm (21), PyPI (7), and Crates.io (6) impersonating crypto / DeFi / AI developer tooling. npm packages drop `trap-core.js` (48 KB, XOR-encrypted with key `cargo-build-helper-2026`) via `postinstall`, which writes `.cursorrules` and `CLAUDE.md` into the project directory for AI-assistant-driven persistence and pulls runtime config from `ddjidd564.github.io/defi-security-best-practices/`. surplies covers the npm and PyPI phantoms; Crates.io is out of scope (no Cargo scanner today).
 - **[Mini Shai-Hulud campaign](https://www.stepsecurity.io/blog/mini-shai-hulud-is-back-a-self-spreading-supply-chain-attack-hits-the-npm-ecosystem)** (attributed to TeamPCP, April–May 2026) — an ongoing self-spreading credential-theft worm across npm, PyPI, and Composer. The bulk of the campaign uses compromised maintainer accounts with "double-tap" publishing across `@uipath/*`, `@squawk/*`, `@tallyui/*`, `@mistralai/*`, `safe-action`, `@cap-js/*`, `intercom-client`, PyPI `lightning`/`guardrails-ai`/`mistralai`, Composer `intercom/intercom-php`, and many more. On May 11 a distinct sub-incident hit 42 `@tanstack/*` packages (84 versions) via a different initial-access vector: a fork PR poisoned a GitHub Actions cache, then an attacker-controlled binary extracted an OIDC token from runner memory and published directly to npm — same campaign payload family (`router_init.js`, Session-network exfil via `filev2.getsession.org` / `seed{1,2,3}.getsession.org`, self-propagation), different door in. On May 19 the campaign struck again with the AntV maintainer compromise: 317 packages across `@antv/*`, `@lint-md/*`, and AntV-adjacent unscoped (`echarts-for-react`, `timeago.js`, `size-sensor`, and the rest of the visualization-ecosystem surface) published with the same "double-tap" pattern, a new `@antv/setup` phantom pulled from `github:antvis/G2#<imposter-commit-sha>`, a new C2 endpoint (`t.m-kosche.com`, disguised as OpenTelemetry traces), and a new kitty-monitor persistence variant (`~/.local/share/kitty/cat.py` + `kitty-monitor.{service,plist}`) — same Mini Shai-Hulud toolkit (Bun runtime, hex obfuscation, `firedalazer` GitHub dead-drop trigger, Dune-themed exfil repo naming) per SafeDep's writeup. On June 1 the campaign hit 31 `@redhat-cloud-services/*` packages, published after an attacker minted an npm token from a GitHub Actions OIDC credential stolen from the `RedHatInsights/javascript-clients` repo — same payload family (`preinstall` → `node index.js` → encrypted Bun loader harvesting GitHub Actions secrets, npm tokens, cloud/Kubernetes/Vault material, and SSH/Git credentials). Notably, this wave exfiltrates over a legitimate, non-actor-owned endpoint rather than dedicated C2 infrastructure, so no new network IOC is added; per Socket's writeup.
 - **[keyv npm compromise](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/)** (August 4, 2026) — compromised release path for maintainer `jaredwray` published 11 malicious releases across `keyv@6.0.0`, `@cacheable/*`, `cacheable`, `flat-cache`, `cacheable-request`, `file-entry-cache`, `cache-manager`, and `ecto@5.0.1`. Each tarball adds `"preinstall": "node setup.mjs"` plus two payload files (`setup.mjs` 29,918 bytes; `Math_Symbol.js` 727,680 bytes, byte-identical across all affected releases). A second execution path injected Claude Code `SessionStart` and VS Code `folderOpen` hooks (`.claude/setup.mjs`, `.claude/math_init.js`, `.vscode/setup.mjs`) into the keyv repository. The malicious `keyv@6.0.0` release carried valid npm trusted provenance signed by GitHub Actions.
-- **[PolinRider campaign](https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands)** (North Korea / DPRK, part of the Contagious Interview cluster; ongoing since December 2025) — a worm that spreads through developers rather than through a registry. It appends an obfuscated JavaScript loader to a real build config after ~280 spaces of padding, so the file still builds and still looks untouched in a diff; hides the same loader inside files named like web fonts, most often `public/fonts/fa-solid-400.woff2`, which reviewers and scanners skip as binary; and auto-executes via a `.vscode/tasks.json` task with `"runOn": "folderOpen"` the moment the project is opened in VS Code or Cursor. Once resident it harvests credentials, then propagates locally — `temp_auto_push.bat` resets the clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes with cached git credentials, so GitHub sees the real developer. That reaches npm, Packagist, Go, and PyPI through whatever the victim maintains. Confirmed footprint is 4,367 repositories across 2,152 owners. The loader resolves its C2 off the Ethereum blockchain (the NullReceiver technique: the IP is encoded in the destination address bytes of a zero-value transaction), so there is no domain or host to seize. It also overwrites the global `npm/lib/cli.js` with a ~1 MB malicious CLI, which re-spawns the payload on every `npm` invocation and survives reboots and credential rotation, and patches Electron editors themselves — `@vscode/deviceid/dist/index.js` under VS Code, Cursor, and Antigravity, and GitHub Desktop's `main.js`, each rewritten to load a `*.inz.cjs` sidecar. Surplies checks documented application entrypoints and adjacent sidecars in conventional system and user installations, including `/Applications` on macOS, without requiring `-deep`. It also checks Discord desktop core and small npm loader stubs. Custom installations and archived application code are not exhaustively covered; a clean scan is not proof that a host was never compromised.
+- **[PolinRider campaign](https://socket.dev/blog/polinrider-north-korea-linked-supply-chain-campaign-expands)** (North Korea / DPRK, part of the Contagious Interview cluster; ongoing since December 2025) — a worm that spreads through developers rather than through a registry. It appends an obfuscated JavaScript loader to a real build config after ~280 spaces of padding, so the file still builds and still looks untouched in a diff; hides the same loader inside files named like web fonts, most often `public/fonts/fa-solid-400.woff2`, which reviewers and scanners skip as binary; and auto-executes via a `.vscode/tasks.json` task with `"runOn": "folderOpen"` the moment the project is opened in VS Code or Cursor. Once resident it harvests credentials, then propagates locally — `temp_auto_push.bat` resets the clock, amends the last commit so the timestamp matches the one it replaced, and force-pushes with cached git credentials, so GitHub sees the real developer. That reaches npm, Packagist, Go, and PyPI through whatever the victim maintains. Confirmed footprint is 4,367 repositories across 2,152 owners. The loader resolves its C2 off the Ethereum blockchain (the NullReceiver technique: the IP is encoded in the destination address bytes of a zero-value transaction), so there is no domain or host to seize. It also overwrites the global `npm/lib/cli.js` with a ~1 MB malicious CLI, which re-spawns the payload on every `npm` invocation and survives reboots and credential rotation, and patches Electron editors themselves — `@vscode/deviceid/dist/index.js` under VS Code, Cursor, and Antigravity, and GitHub Desktop's `main.js`, each rewritten to load a `*.inz.cjs` sidecar. Surplies checks documented application entrypoints and adjacent sidecars in conventional system and user installations, including `/Applications` on macOS, by default. It also checks Discord desktop core and small npm loader stubs. Custom installations and archived application code are not exhaustively covered; a clean scan is not proof that a host was never compromised.
 
 ## Design principles
 
-- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and opt-in `-git` scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
+- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
 - **Report only, never remediate.** Read-only scanner. Never deletes files, uninstalls packages, modifies configs, or takes any corrective action. Findings are reported; the user decides what to do.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
-- **Zero Go dependencies.** stdlib only. No third-party Go modules. Optional `-git` mode requires Git with support for `--no-lazy-fetch`.
+- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
 
 ## Install
 
@@ -50,46 +51,57 @@ make all         # all platforms: darwin/linux/windows x amd64/arm64
 
 ```
 surplies              # scan with verbose output (default)
-surplies -deep        # also read file contents inside dependency directories
-surplies -git         # check known payload hashes in local Git refs/history
-surplies -a           # enable -cov -deep -git
+surplies -broad        # include unrelated text/data (slow)
+surplies -browser-cache # include browser cache contents (slow)
+surplies -npm-cache    # include raw npm cache contents (slow)
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
-surplies -cov  # list paths with incomplete coverage
-surplies -root /custom/path  # additional normal scan root; repeatable
+surplies -root /custom/path  # additional full scan root; repeatable
 ```
 
-### `-deep`
+`-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
 
-By default the scanner identifies dependencies the way a package manager does — by name and version. It walks up to every `node_modules`, Composer `vendor/`, and Python `site-packages`, checks what is installed against the known-bad lists, and turns around. Targeted application and npm persistence checks are an exception: they inspect documented entrypoints and sidecars even inside dependency directories.
+### Default dependency checks
 
-That is the right default and it is cheap, but it has one blind spot, and it is the blind spot that matters most: **a compromised package whose version nobody has published an advisory for yet is invisible.** Version pins can only ever describe attacks someone has already finished analyzing. PolinRider's entire propagation model is victim maintainers force-pushing and then publishing to npm, Packagist, Go, and PyPI — a confirmed 4,367 repositories across 2,152 owners. The handful of versions anyone has written up is not that number.
+Every full scan checks installed package names and versions, declared execution targets, known payload candidates, and targeted persistence files. Dependency content inspection selects:
 
-`-deep` lifts the directory boundaries so every content check already defined here runs inside those trees too: all payload signatures, the fake-font check, the padding check, and the malicious-filename checks. It does not add or change a single indicator — it changes where the existing ones are allowed to look. Any IOC added in the future inherits the wider surface with no code change.
+- npm: declared `main`, `module`, `bin`, and root `exports` execution targets (including common runtime conditions), with `index.js` as the default main when present.
+- Python: modules declared by `console_scripts` / `gui_scripts` in installed `entry_points.txt`, plus signature inspection of startup `.pth` files.
+- Composer: explicitly listed `autoload.files` from installed package metadata.
+- Known artifact/hash candidate names, nested package metadata, project hooks and targeted persistence checks remain discoverable.
 
-Measured on a developer home directory with 99 `node_modules` (9,497 packages) and 44 `site-packages` (1,648 packages):
+It does not recursively read transitive imports, wildcard/subpath exports,
+TypeScript type exports, unreferenced dependency source, datasets or documentation.
+Extracted uv caches and application bundles are also treated as installed code,
+not general source trees. This selects evidence for the supported checks; it is
+not an arbitrary-malware search through every installed byte. `-broad`
+does not bypass dependency selection. No aggregate byte cutoff is used.
 
-| | files read | wall time |
-|---|---|---|
-| default | 4,623 | 21s |
-| `-deep` | 24,789 | 28s |
+Git history checks also run by default and select candidates
+by the known payload sizes before reading blob contents. Metadata traversal and
+large declared entrypoints still cost work; no whole-home runtime is promised.
 
-Expect `padded-source-file` warnings in deep mode that you do not see otherwise. Vendored and generated files in `node_modules` legitimately contain long runs of spaces — widely spaced text on the same line can do it. Leading indentation and trailing spaces are excluded. That check is a WARN, not a finding of fact, precisely because it describes the *shape* of an injection rather than any known payload.
-
-A scan without `-deep` says so in its summary, so a fast clean scan is never mistaken for a thorough one.
-
-The final output block shows timing, statistics, then the version, supplied flags, and result, after all findings, coverage details, and notes, for example `surplies 0.9.2 -deep : No supply chain attack indicators found.` Progress and stats go to stderr. Findings go to stdout. In JSON mode the final summary is written to stderr after the JSON, leaving the stdout findings array unchanged. This means `-json` output is clean for piping:
+The human report ends with one verdict, coverage status, elapsed time and
+content-read totals. Critical indicators, warnings requiring review, and
+informational context appear separately. Related warnings share one explanation
+with their paths underneath. The report includes grouped coverage failures with affected paths and scope-limit
+counts after the findings. Routine excluded-path lists are kept out of terminal
+output. Each human-mode run saves all findings, exact paths and scan statistics
+to a private `surplies-report-*.json` file in the system temporary directory and
+prints its path; no repeat scan is needed to retrieve details. Informational observations are not presented as attack
+indicators. JSON retains all original records on stdout; a concise human summary
+goes to stderr. Progress stays on stderr. For example:
 
 ```sh
 surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 ```
 
-### `-git` and `-a`
+### Default Git history checks
 
-`-git` discovers repositories under home and additional `-root` directories, including nested repositories, bare repositories and linked worktrees. It checks blobs reachable from all locally available refs (branches, remote-tracking branches, tags and HEADs) and their history against the shared [active payload hashes](#active-payload-hashes), regardless of filename. Loose and packed objects and SHA-1/SHA-256 Git repositories are supported. A matching historical blob is reported even when the checked-out branch is clean; it does not by itself prove execution or current infection.
+The scanner discovers repositories under home and additional `-root` directories, including nested repositories, bare repositories and linked worktrees. It checks blobs reachable from all locally available refs (branches, remote-tracking branches, tags and HEADs) and their history against the shared [active payload hashes](#active-payload-hashes), regardless of filename. Loose and packed objects and SHA-1/SHA-256 Git repositories are supported. A matching historical blob is reported even when the checked-out branch is clean; it does not by itself prove execution or current infection.
 
-Git inspection is independent of `-deep`. `-a` enables `-cov -deep -git` together.
+Dependency checks, Git history checks, and coverage details are enabled by default; no mode flags are required.
 
 The scanner uses [Git object enumeration](https://git-scm.com/docs/git-rev-list) and [raw blob reads](https://git-scm.com/docs/git-cat-file), with replacement objects and lazy fetching disabled. It does not fetch remote refs, check out branches, run hooks, apply text conversion or content filters, or modify repositories. Repo discovery follows the normal root symlink policy; internal directory symlinks are not traversed. Repositories outside the selected roots need `-root`.
 
@@ -193,7 +205,7 @@ Checks installed npm packages against a database of known-compromised versions.
 | 11 packages: `keyv`, `@cacheable/net`, `@cacheable/node-cache`, `@cacheable/memory`, `@cacheable/utils`, `cacheable`, `flat-cache`, `cacheable-request`, `file-entry-cache`, `cache-manager`, `ecto` | 11 versions — one per package (`keyv@6.0.0`, `@cacheable/net@2.1.1`, `@cacheable/node-cache@3.1.2`, `@cacheable/memory@2.2.1`, `@cacheable/utils@2.5.1`, `cacheable@2.5.1`, `flat-cache@6.1.24`, `cacheable-request@13.0.20`, `file-entry-cache@11.1.6`, `cache-manager@7.2.10`, `ecto@5.0.1`) | keyv npm compromise — compromised release path for maintainer `jaredwray` (August 4, 2026) |
 | 38 compromised legitimate packages whose maintainers were infected, including `fetch-page-assets`, `html-to-gutenberg`, `itsa-react-docviewer`, `@joyfill/*`, `@testrelic/*`, `@common-stack/generate-plugin`, `@vite-*/*`, `@im_ahsan/chatbot-widget`, `bianira-ui`, `fluid-type-ui`, and the `tailwind-*` / `tailwindcss-*` plugin family | 100+ versions. `fetch-page-assets` is the notable one: only `1.2.9` was ever pulled (GHSA-vxq2-vhm7-7mhq), while `1.2.10`–`1.2.14` remained live and unflagged as `latest`. Pin to `<= 1.2.8`. npm's `0.0.1-security` takedown placeholders are deliberately excluded | PolinRider (DPRK / Contagious Interview) |
 
-**How it works:** For each `node_modules` directory, reads `package.json` for every package in the known-bad list and compares the installed version string.
+**How it works:** For each installed package, reads its manifest once for both known-version matching and lifecycle analysis. Selected read/parse failures report incomplete coverage.
 
 **Why this matters:** These versions were published to npm by either compromised maintainer accounts or maintainers acting maliciously. Lock files and caches can pin you to a bad version long after it's been unpublished from the registry.
 
@@ -201,7 +213,7 @@ Checks installed npm packages against a database of known-compromised versions.
 
 ### 4. `suspicious-install-script` (WARN)
 
-Scans every npm package's `package.json` for `preinstall`, `install`, `postinstall`, and `prepare` lifecycle scripts that contain patterns commonly used by malware. (`prepare` is included because the Mini Shai-Hulud TanStack sub-incident used `"prepare": "bun run tanstack_runner.js && exit 1"`; npm runs `prepare` on local installs and on `npm pack`, so it's a viable malware vehicle.)
+Scans project and installed-package `package.json` files for `preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, `prepack`, and `postpack` lifecycle scripts that contain patterns commonly used by malware. (`prepare` is included because the Mini Shai-Hulud TanStack sub-incident used `"prepare": "bun run tanstack_runner.js && exit 1"`; npm runs `prepare` on local installs and on `npm pack`, so it's a viable malware vehicle.)
 
 **Flagged patterns:**
 
@@ -220,13 +232,13 @@ Scans every npm package's `package.json` for `preinstall`, `install`, `postinsta
 | `.vbs` | `uses-vbscript` | VBScript dropper (Windows) |
 | `osascript` | `uses-applescript` | AppleScript execution (macOS) |
 
-**How it works:** Reads every `package.json` in every `node_modules` directory (including scoped packages under `@org/`). Checks each lifecycle script against the pattern list. Reports the script content (truncated to 80 chars) and all matched flags. The exact standard Yarn `preinstall` command is exempt from these string heuristics only when both the package directory name and manifest name are `yarn`; other hooks and modified commands remain checked. Its referenced JavaScript is still inspected for obfuscation. See [Yarn’s release manifest generator](https://github.com/yarnpkg/yarn/blob/v1.22.22/scripts/update-dist-manifest.js).
+**How it works:** Reads encountered project manifests and installed package manifests (including scoped packages under `@org/`) with shared size/time limits and parse-error reporting. Checks each lifecycle script against the pattern list. Reports the script content (truncated to 80 chars) and all matched flags. The exact standard Yarn `preinstall` command is exempt from these string heuristics only when both the package directory name and manifest name are `yarn`; other hooks and modified commands remain checked. Its referenced JavaScript is still inspected for obfuscation. See [Yarn’s release manifest generator](https://github.com/yarnpkg/yarn/blob/v1.22.22/scripts/update-dist-manifest.js).
 
 **Why this matters:** The axios attack used a `postinstall` hook in `plain-crypto-js` to run `node setup.js`, which then used `curl`/`powershell`/`osascript` to download and execute RAT payloads. Legitimate packages rarely need to download executables or run shell commands during install.
 
 ---
 
-### 5. `obfuscated-install-script` (CRITICAL)
+### 5. `obfuscated-install-script` (WARN)
 
 When a lifecycle script references a JavaScript file (e.g., `node setup.js`), reads that file and checks for obfuscation techniques used to hide malicious intent from code review and static analysis.
 
@@ -241,7 +253,7 @@ When a lifecycle script references a JavaScript file (e.g., `node setup.js`), re
 | `excessive-string-concat` | > 15 `'+'` or `"+"` patterns | Building up module names or URLs char-by-char to avoid static detection |
 | `self-deletion` | any `unlink(__filename` or `unlink(__dirname` | File deletes itself after execution to destroy evidence |
 
-**How it works:** Only inspects JS files that are directly referenced by lifecycle scripts (not every JS file in the package). Reads the file content and counts occurrences of each pattern.
+**How it works:** Inspects supported JS/CJS/MJS-family targets directly referenced by lifecycle scripts with bounded reads. Reports these generic patterns as warnings; known payload signatures are checked independently. General source inspection runs separately over eligible traversed files.
 
 **Why this matters:** The axios dropper `setup.js` was 4.2 KB of obfuscated JavaScript using XOR cipher with the key `"OrDeR_7077"` plus base64 decoding to hide C2 URLs, module names, and shell commands. It also deleted itself via `fs.unlink(__filename)` after execution. These patterns are unusual in legitimate install scripts.
 
@@ -381,7 +393,7 @@ Checks active network connections for known command-and-control domains and IP a
 
 The Ethereum JSON-RPC endpoints the loader queries (`1rpc.io`, `eth.drpc.org`, `ethereum-rpc.publicnode.com`, `eth-mainnet.public.blastapi.io`, `eth.blockscout.com`) are deliberately **not** listed as C2 domains. They are legitimate public infrastructure, and flagging them would report every web3 developer on the machine as compromised. Egress to them from a host that has no business speaking JSON-RPC is the durable signal in this campaign, but it is one for network monitoring to act on, not for a filesystem scanner's connection check.
 
-**How it works:** Runs `netstat -n` (numeric output, no reverse DNS) in parallel with forward DNS lookups (5s timeout) for each known C2 domain. Each known C2 IP — both the hardcoded entries and the IPs resolved from C2 domains — is then substring-matched against the netstat output. Forward DNS on the small known-bad list takes well under a second, whereas reverse DNS on every active connection (the prior approach) can take minutes on a busy machine. Attackers control forward DNS for their domains but not reverse DNS for the IPs they're hosted on, so forward resolution is also more reliable. Unspecified addresses (`0.0.0.0`, `::`) and loopback addresses are dropped from the resolved-IP set before matching, so DNS-sinkholed domains can't false-positive against every listener line in netstat output.
+**How it works:** Runs `netstat -n` and resolves the existing C2 domain list under a five-second deadline. Parses established TCP remote endpoints in macOS, Linux and Windows formats; IP matching is exact, including IPv4-mapped IPv6 normalization. Collection failures, timeouts and malformed TCP rows report incomplete coverage. DNS NXDOMAIN and successful-but-filtered/empty answers produce distinct scope notices. No C2 service is contacted.
 
 **Why this matters:** The axios RAT and litellm C2 backdoor both beacon out programmatically — these connections won't appear in shell history. Catching an active connection to `sfrclak.com:8000` or `checkmarx.zone` at scan time is a direct indicator of a running implant.
 
@@ -471,7 +483,7 @@ Checks whether a file named like a web font actually contains font data. A `.wof
 
 ### 16. `payload-signature` (CRITICAL)
 
-Checks build configs, web fonts, dictionary files, and `.vscode/tasks.json` for byte sequences published as identifying an injected payload.
+Checks selected metadata, execution targets and documented injection candidates for published payload indicators. Project membership and source extensions alone do not select file contents. `-broad` expands general content inspection outside projects; `-browser-cache` separately includes browser caches; it is not enabled by default. Dependency content inspection uses the default selection policy described above.
 
 **Known signatures:**
 
@@ -493,11 +505,11 @@ Checks build configs, web fonts, dictionary files, and `.vscode/tasks.json` for 
 | `/0x/clb`, `/0x/js`, `/$/boot`, `/verify-human/`, `helloipbot!!` (also hex `68656c6c6f6970626f742121`) | Published stage paths and dead-drop recipient marker | PolinRider (DPRK / Contagious Interview) |
 | `/u/f` together with `socket.io-client` | Upload endpoint with RAT client context; neither string alone triggers this rule | PolinRider (DPRK / Contagious Interview) |
 
-**How it works:** Matching uses published literal strings; only the HTTP header name is case-insensitive. The file set is deliberately narrow (JS-family `*.config.*` files, `App.js`, `index.js`, `truffle.js`, `tasks.json`, `cli.js`, `plugin.js`, and `.woff2` / `.woff` / `.dict` assets), because an unbounded content scan of a developer home directory is both slow and a false-positive generator. Files smaller than 100 MB (100,000,000 bytes) are read in full. Reading and inspection share a five-second total deadline per file. Files at or above the limit produce a size-limit coverage error rather than a partial-prefix scan.
+**How it works:** Published literal signatures also match fixed-width ASCII `\xNN` / `\uNNNN` escapes without evaluating code. Header names and the existing resolver wallet are case-insensitive. For selected candidates (or with `-broad` outside dependencies), supported formats include ordinary JS/CJS/MJS/TS/JSX/TSX, Python, shell, JSON/JSONC settings, YAML/TOML/INI/conf, XML/plist/service, HTML/Vue/Svelte, PHP/Ruby/Dart, text/Markdown, extensionless files, and supported assets; the exact list is `SignatureScannedExtensions` in `ioc.go`. Other extensions remain excluded. General source candidates receive an 8 KiB prefix check before their bodies are read; a NUL or invalid UTF-8 prefix excludes the binary body from text inspection. A UTF-8 character split by the prefix boundary is allowed. Binary/non-UTF-8 content is not searched as general source. Known markers in documentation/test paths produce warnings rather than confirmed-compromise claims; this is not a repository-controlled suppression mechanism. Text candidates below 100 MB are still read in full within a shared five-second read/inspection deadline. Larger inputs and failures produce coverage diagnostics. Recognized asset headers only receive header inspection; archives are not unpacked.
 
 **Why this matters:** PolinRider appends its loader to the end of a real build config after roughly 280 spaces of padding. The file still opens, still builds, and still looks untouched in a diff unless you scroll right — a `tailwind.config.js` that is normally 80–200 bytes becomes ~5,000. Filename matching cannot find this, because the file is supposed to exist and is supposed to have that name. Content matching is the only option. Note that the campaign has already rotated its constants once (the March `rmcej%otb%` / `_$_1e42` pair became `Cot%3t=shtP` / `MDy` in April, an evasion response to OSM's published YARA rule), which is why every generation is listed and why a clean result here is not proof of anything — see the next check.
 
-The wallet and initial fetch-path signatures identify the resolver rather than an obfuscator generation. The markers above identify a *generation of the obfuscator*; the wallet address and the `/0x/…` fetch paths identify the *C2 resolver itself*, which is the part the campaign cannot cheaply change. Every address in the C2 IP list rotates for the price of one Ethereum transaction, because the loader reads the next host off-chain — but the wallet it reads **from** is compiled into the payload, so moving it means republishing to every victim. That makes it the one constant that pins a sample to this campaign rather than to a guess. Two caveats, both real: `bianira-ui` writes every one of these identifiers as `\uXXXX` escapes precisely to defeat a literal scan (it is covered by version pin instead), and the OSV records that document these constants describe delivery through trojanized npm packages, not the force-pushed repositories the rest of the PolinRider coverage targets. Same resolver and same C2 family, different distribution.
+The wallet and initial fetch-path signatures identify the resolver rather than an obfuscator generation. The markers above identify a *generation of the obfuscator*; the wallet address and the `/0x/…` fetch paths identify the *C2 resolver itself*, which is the part the campaign cannot cheaply change. Every address in the C2 IP list rotates for the price of one Ethereum transaction, because the loader reads the next host off-chain — but the wallet it reads **from** is compiled into the payload, so moving it means republishing to every victim. That makes it the one constant that pins a sample to this campaign rather than to a guess. Two caveats, both real: `bianira-ui` writes identifiers as `\uXXXX` escapes; the scanner now normalizes fixed-width ASCII escapes as well as checking its version pin, and the OSV records that document these constants describe delivery through trojanized npm packages, not the force-pushed repositories the rest of the PolinRider coverage targets. Same resolver and same C2 family, different distribution.
 
 ---
 
@@ -531,7 +543,7 @@ Checks for known artifact filenames during the home-directory walk rather than a
 
 **How it works:** Exact basename match for the named files except the SHA-256-confirmed `Math_Symbol.js` and `fa-solid-400.woff2`; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. A legitimate `build.bat` is not flagged.
 
-`Math_Symbol.js` is also a [legitimate Unicode data filename](https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js). Its name selects it for bounded content inspection; this check only reports it when its bytes match the known malicious SHA-256. The file is also checked for other payload signatures and padding. Neither its path nor its size alone establishes compromise. Read failures follow the normal incomplete-scan reporting. As with other content checks, scanning inside dependency directories requires `-deep`.
+`Math_Symbol.js` is also a [legitimate Unicode data filename](https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js). Its name selects it for bounded content inspection; this check only reports it when its bytes match the known malicious SHA-256. The file is also checked for other payload signatures and padding. Neither its path nor its size alone establishes compromise. Read failures follow the normal incomplete-scan reporting. This check also runs inside dependency directories by default.
 
 `router_init.js`, `tanstack_runner.js` and `Math_Symbol.js` also appear in the package-scoped `npm-payload-file` check, which remains unchanged and can flag unexpected payload files in known affected packages. The repository checks additionally cover other carriers encountered during the walk. `setup.mjs` stays package-scoped because it is a plausible legitimate filename.
 
@@ -569,13 +581,13 @@ Checks the global npm CLI entrypoint (`npm/lib/cli.js`) for signs of having been
 
 Reports general project/persistence traversal errors, failed content reads, the first read/inspection timeout in each subtree, and files rejected by the 100 MB content limit. Missing explicit persistence roots also warn; absent optional default installation paths do not.
 
-**How it works:** Reading and inspecting a selected file together are bounded at 5 seconds. Recognized font containers are checked from their first 32 bytes for the fake-font test; their glyph data is not scanned for JavaScript signatures and their size does not produce a coverage warning. Text disguised as a font still receives content checks. Other selected files, including application entrypoints, are read in full below 100 MB (100,000,000 bytes); files at or above that limit are not content-checked and report `size limit exceeded`. Processing timeouts are tracked per subtree — keyed on the first three path components below the home directory, which resolves the cloud-provider layouts that matter (`Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`) without lumping all of `~/Library` together. The first timeout emits a finding naming the subtree. After three timeouts in that subtree, further content reads there are abandoned for the rest of the scan.
+**How it works:** Reading and inspecting a selected file together are bounded at 5 seconds. Recognized font and supported asset containers are checked from their first 32 bytes; their bodies are not searched for embedded scripts and their size does not produce a coverage warning. Text disguised as a font still receives content checks. General-source candidates with binary prefixes stop after at most 8 KiB, before full-file allocation or reading. Other selected files, including text candidates and targeted application entrypoints, are read in full below 100 MB (100,000,000 bytes); files at or above that limit are not content-checked and report `size limit exceeded`. Processing timeouts are tracked per subtree — keyed on the first three path components below the home directory, which resolves the cloud-provider layouts that matter (`Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`) without lumping all of `~/Library` together. The first timeout emits a finding naming the subtree. After three timeouts in that subtree, further content reads there are abandoned for the rest of the scan.
 
 **Why this matters:** Files under Dropbox, OneDrive, iCloud Drive, or Google Drive often exist only as placeholders whose contents live on the provider's servers. Opening one asks the provider to fetch it. Usually that works, and it *should* — cloud-synced folders hold real repositories, and skipping them outright would be a blind spot in exactly the kind of place this campaign spreads. But when the provider is offline, the account is unlinked, or the file is gone server-side, the read blocks indefinitely and then fails. The same happens on a stalled NFS or SMB mount.
 
 A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
 
-Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. The summary counts size-limit failures, permission denials, timeouts, Git errors, and other errors separately. Use `-cov` to list paths grouped by category and shared cause: each explanation appears once, followed by sorted affected paths. This rollup rule also applies to informational scope notices. JSON retains each exact error or read limit. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status and an explicit qualification in the final result.
+Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. The summary counts size-limit failures, permission denials, timeouts, Git errors, network collection errors, and other errors separately. Coverage failures list paths grouped by category and shared cause: each explanation appears once, followed by sorted affected paths. Routine scope notices are summarized by category, with exact paths retained in JSON. JSON retains each exact error or read limit. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status and an explicit qualification in the final result.
 
 ### 22. `patched-application` (CRITICAL)
 
@@ -591,9 +603,9 @@ The default scan checks these paths independently of the home walk and dependenc
 
 Adjacent `*.inz.cjs` / `*.inz.orig` files produce `malicious-repo-artifact` findings even if the entrypoint is absent. Duplicate discovery of the same path is suppressed. Entry files below 100 MB are fully inspected, including their middle and tail. Files at or above that limit receive a `scan-incomplete` size-limit warning. Reading and inspection share one five-second deadline. Access/read failures also produce `scan-incomplete` warnings. No application or package manager is executed.
 
-Persistence discovery shares the project walk under home and recursively searches `/usr/local/lib`, `/opt`, `/usr/lib`, and `/usr/share` on Unix, plus `/Applications` on macOS; Windows searches home and Program Files. Discovery crosses dependency directories even without `-deep` and recognizes renamed app bundles and custom npm prefixes. It reads selected entrypoints, not every file's contents. The public [NullReceiver scanner](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh) supplies the recursive sidecar/entrypoint approach; [StepSecurity](https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise) documents the application targets. Search roots are coverage choices, not additional IOCs.
+Persistence discovery shares the project walk under home and recursively searches `/usr/local/lib`, `/opt`, `/usr/lib`, and `/usr/share` on Unix, plus `/Applications` on macOS; Windows searches home and Program Files. Discovery crosses dependency directories by default and recognizes renamed app bundles and custom npm prefixes. It reads selected entrypoints, not every file's contents. The public [NullReceiver scanner](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh) supplies the recursive sidecar/entrypoint approach; [StepSecurity](https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise) documents the application targets. Search roots are coverage choices, not additional IOCs.
 
-Use `-root /custom/path` (repeatable) to add locations to the normal project and Python package scans, including existing content, artifact, and persistence checks. Home and system checks still run. On Windows, home is the user profile and the help text lists the configured Program Files paths for system persistence searches; Unix help uses `~` and its platform-specific system roots. `-deep` controls dependency content traversal in all roots; targeted persistence checks remain active in either mode. Existing filename filters still apply: this is not an every-file content scan. Root symlinks are resolved; directory symlinks encountered within a tree are not traversed. Supply their destination as another root when needed. Overlapping recursive roots are deduplicated. ASAR archives are not unpacked. Signature matching does not unpack obfuscated code, and absence of a marker does not establish that the host was never compromised.
+Use `-root /custom/path` (repeatable) to add locations to the full project and Python package scans, including existing content, artifact, and persistence checks. Home and system checks still run. On Windows, home is the user profile and the help text lists the configured Program Files paths for system persistence searches; Unix help uses `~` and its platform-specific system roots. Dependency content selection and targeted persistence checks apply in all roots. Explicit roots expand discovery locations, not permission to read every source/text file. Recognized browser caches still require `-browser-cache` and raw npm stores require `-npm-cache`; this is not an every-file content scan. `.git` directories are excluded from ordinary content traversal; Git history receives the separately documented exact-hash checks by default. Root symlinks are resolved; directory symlinks encountered within a tree are not traversed. Supply their destination as another root when needed. Overlapping recursive roots are deduplicated. ASAR archives are not unpacked. Signature matching normalizes fixed-width ASCII escapes but does not unpack or execute obfuscated code, and absence of a marker does not establish that the host was never compromised.
 
 ### 23. `font-execution-task` (CRITICAL)
 
@@ -611,7 +623,7 @@ Source attack: PolinRider (DPRK / Contagious Interview).
 
 ### 25. `git-payload-hash` (CRITICAL)
 
-With `-git`, matches raw blob SHA-256 against the two entries in the [active hash list](#active-payload-hashes), independent of names and the checked-out branch. Source attacks: keyv npm compromise and PolinRider (incident-sourced hash). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings.
+Matches raw blob SHA-256 against the two entries in the [active hash list](#active-payload-hashes), independent of names and the checked-out branch. Source attacks: keyv npm compromise and PolinRider (incident-sourced hash). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings.
 
 ### 26. `scan-limited` (INFO)
 
@@ -619,7 +631,7 @@ Reports expected scope limits, currently shallow Git repositories whose older hi
 
 ## Acknowledgments
 
-Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from incident analyses published by others. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs so you can sweep a developer machine for them in a few seconds.
+Checks draw on public incident analyses, community scanner implementations, and incident-sourced hashes. Broader heuristics are review warnings, with their provenance and limits documented separately. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs for local inspection of a developer machine.
 
 Sources, in rough order of how much of the IOC set they contribute:
 
@@ -627,11 +639,12 @@ Sources, in rough order of how much of the IOC set they contribute:
 - **[Socket](https://socket.dev/)** — Joyfill RAT persistence markers, targets, stage paths and boot key; the PolinRider campaign framing, DPRK / Contagious Interview attribution, and the cross-ecosystem affected-package list with versions (npm, Packagist, PyPI) that the version checks are built from, plus the Packagist-wave payload hashes and C2 IPs; broader package coverage for the Mini Shai-Hulud campaign across npm, PyPI, and Composer ecosystems, the campaign-level attribution to TeamPCP, the Mini Shai-Hulud attribution and payload hashes for the June 1, 2026 Red Hat Cloud Services wave (plus the `tmp.0987654321.lock` / `/tmp/b-*/b.zip` Bun-loader artifacts), and the full IOC set for the TrapDoor crypto-stealer campaign (npm, PyPI, and Crates.io phantoms; `ddjidd564` actor attribution; `trap-core.js` payload; `.cursorrules` / `CLAUDE.md` AI-persistence vector).
 - **[OpenSourceMalware](https://opensourcemalware.com/)** ([blog](https://opensourcemalware.com/blog), [PolinRider dossier](https://github.com/OpenSourceMalware/PolinRider)) — the original PolinRider filesystem IOC set: both generations of loader signature constants (`("rmcej%otb%",2857687)` / `_$_1e42`, rotated to `Cot%3t=shtP` / `MDy`) and the `global['!']` / `global['_V']` injection markers, the infected-file-type list and the ~280-space padding pattern, the `temp_auto_push.bat` and `config.bat` propagation artifacts plus the `config.bat` line injected into `.gitignore`, the `fa-solid-400.woff2` and `spellright.dict` loader hiding places, the `npm/lib/cli.js` overwrite, the attacker-published Tailwind typosquat list, the interim C2 IP block list, and the `fetch-page-assets` case study (five versions live and unflagged on npm, plus the `global.i="A8-3292-*"` campaign-tag markers and the NullReceiver wallet linking PolinRider to the Ethereum dead-drop C2).
 - **[TanStack](https://tanstack.com/)** — postmortem and IOCs for the Mini Shai-Hulud sub-incident that hit 42 `@tanstack/*` packages on May 11, 2026 (`@tanstack/setup` phantom, `router_init.js` payload filename, `seed{2,3}.getsession.org` / `litter.catbox.moe`, the pwn-request → Actions cache poisoning → OIDC token vector).
-- **[Aikido](https://www.aikido.dev/)** — `tanstack_runner.js` payload filename (with SHA-256 hash) and `execution.js` as the alternate Bun-loaded payload name across the Mini Shai-Hulud campaign, plus the `"prepare": "bun run tanstack_runner.js && exit 1"` lifecycle pattern.
+- **[Endor Labs](https://www.endorlabs.com/)** — GlassWorm variation-selector ranges and invisible-payload behavior; used for contextual Unicode warnings.
+- **[Aikido](https://www.aikido.dev/)** — GlassWorm Unicode-concealment research; also `tanstack_runner.js` payload filename (with SHA-256 hash) and `execution.js` as the alternate Bun-loaded payload name across the Mini Shai-Hulud campaign, plus the `"prepare": "bun run tanstack_runner.js && exit 1"` lifecycle pattern.
 - **[SafeDep](https://safedep.io/)** — the May 19, 2026 @antv-wave writeup: full 317-package compromise list, `@antv/setup` phantom + `github:antvis/G2#<imposter-commit-sha>` `optionalDependencies` vector, the `t.m-kosche.com` C2 endpoint (disguised as OpenTelemetry traces), the kitty-monitor persistence variant (`~/.local/share/kitty/cat.py`, `kitty-monitor.{service,plist}`, `/var/tmp/.gh_update_state`), and `.claude/index.js` as the payload-copy committed into repos.
 - **[OSV](https://osv.dev/)** / the [GitHub Advisory Database](https://github.com/advisories) — the NullReceiver loader's own constants (the C2-resolver wallet `0xa322e5f3…`, the `/0x/cls` and `/0x/ls` fetch paths, `plugin.js` as a carrier name, exact cls/ls XOR keys, and the payload response-header name), and the authoritative affected-version *ranges* behind several package pins, which incident writeups routinely under-state because they name only the version the analysis ran against. `fluid-type-ui` is the case in point: OSM documents `2.0.8`, while [MAL-2026-11136](https://osv.dev/vulnerability/MAL-2026-11136) / [GHSA-4w4v-pw3v-q85q](https://github.com/advisories/GHSA-4w4v-pw3v-q85q) mark `2.0.9` affected too — the version a victim would plausibly have upgraded into. Machine-readable and versioned, so unlike a blog post it cannot be edited out from under a citation.
 - **[NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit)** (Osama Ehsaan) — `*.inz.cjs` sidecars, macOS application roots, patched deviceid/GitHub Desktop entrypoints, additional stage paths, recipient marker, and runtime/staging paths. This community source is corroborated by matching campaign constants and registry advisories; the application targets are also documented by Socket and StepSecurity.
-- **[ByteGuard](https://github.com/n0m4dz/ByteGuard)** — community corroboration of `__inzCR`, `/*M260630A*/`, `.inz.orig`, VS Code `out/main.js`, and Node-to-font task detection. Surplies uses exact published markers rather than ByteGuard's broader date-marker and generic obfuscation regexes.
+- **[ByteGuard](https://github.com/n0m4dz/ByteGuard)** — community corroboration of `__inzCR`, `/*M260630A*/`, `.inz.orig`, VS Code `out/main.js`, and Node-to-font task detection. Also informs contextual loader, task/settings, toolchain-discovery, asset-header and source heuristics; upstream severities are not inherited.
 
 - **[Snyk](https://snyk.io/)** — the August 4, 2026 keyv npm compromise writeup: full 11-package malicious release list under maintainer `jaredwray`, `setup.mjs` / `Math_Symbol.js` payload hashes, the `"preinstall": "node setup.mjs"` lifecycle pattern, `.claude/math_init.js` and IDE-hook (SessionStart / folderOpen) persistence path, and trusted-provenance attestation of the malicious build.
 
@@ -671,3 +684,103 @@ If surplies is useful to you, the credit belongs to them. Go read their writeups
 ## License
 
 MIT
+
+
+- [Endor Labs GlassWorm report](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode) — Unicode technique and both variation-selector ranges.
+- [Aikido GlassWorm research](https://www.aikido.dev/blog/glassworm-returns-unicode-attack-github-npm-vscode) — additional public research on invisible source payloads.
+
+## Expanded checks and scope decisions
+
+| Check / coverage | Behavior | Evidence |
+|---|---|---|
+| Network collection | Five-second collector/resolver deadline; errors and timeouts are `scan-incomplete`. NXDOMAIN and successful but filtered/empty DNS answers have distinct `scan-limited` notices. Only established TCP **remote** endpoints match; listeners, local addresses, other connection states and UDP are outside this snapshot check. IPv4-mapped IPv6 normalizes to IPv4. | Local correctness fixes; existing C2 indicators unchanged. |
+| Package metadata and lifecycle targets | Project and installed manifests are parsed with bounded reads. Invalid/unreadable manifests and selected missing scripts report incomplete coverage. Hooks: `preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, `prepack`, `postpack`. Quoted JS/CJS/MJS targets are supported; arbitrary shell syntax and options are not interpreted. Generic obfuscation is WARN, not proof of infection. | [npm lifecycle semantics](https://docs.npmjs.com/cli/v11/using-npm/scripts/), [OSM task/lifecycle analysis](https://opensourcemalware.com/blog/how-malware-abuses-npm-lifecycle-scripts-and-vs-code-tasks), [NIK CI source](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/ci/scan_repo.sh). |
+| `loader-variant`, `loader-structure`, `correlated-loader-markers` | Quote/spacing variants, immediate local-CJS loader calls, and markers correlated with loader/decode structure produce WARN. Generic `createRequire`, dates, and extra marker names alone do not. | [ByteGuard rules](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json); community-pattern evidence. |
+| Additional toolchains | Targeted npm `bin/npm-cli.js`, Yarn `lib/cli.js`, Corepack `dist/pnpm.js`, pnpm `bin/pnpm.cjs`, npx-cached `pnpm.cjs`, and Claude version files are inspected by default, within home, added roots, and existing system persistence roots. Presence/size alone is not a finding for these added targets. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts); defensive discovery, not independent infection confirmation for every product. |
+| `disguised-file-execution-task`, `workspace-setting-context` | Broader interpreters and binary-named targets warn, including manual tasks and platform overrides. Automatic Node-to-font remains CRITICAL. Ordinary automatic builds and hidden output alone are not flagged. Settings are context; invalid values are INFO. Multiple risky/contextual preferences warn without claiming a trust bypass. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts), [Microsoft task semantics](https://code.visualstudio.com/docs/debugtest/tasks#_run-behavior). |
+| `startup-content`, `hosts-c2-entry` | Inspect shell startup files, macOS launch directories, Linux systemd/cron locations, and the system hosts file for contextual known indicators. Comments are ignored. Binary plists produce an explicit scope notice; no plist decoder or external command is invoked. Windows startup APIs/registry enumeration remain outside scope. | [NIK macOS](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_macos.sh), [NIK Linux](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_linux.sh); community hunts, not campaign attribution. |
+| `asset-format-mismatch` | WARN for unsupported/truncated headers or text in PNG/JPEG/GIF/WebP/ICO/WASM/PDF/ZIP/MP3/MP4. Headers are format hints, not full validators. Bounded whitespace/NUL padding is removed for script inspection. Existing font magics and HTML/XML download-error exclusions remain. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts). |
+| `unicode-concealment`, `escaped-execution`, `suspicious-source-execution` | WARN for unbalanced bidi controls, ASCII-identifier joiners, runs of at least eight variation selectors in either Unicode range, correlated escaped execution, decode/execute, download-to-shell, or hidden detached spawn structure. No long-line cutoff. Ordinary emoji, balanced RTL, international joiners, private-use glyphs, `eval` alone and public RPC URLs alone do not trigger these general-source checks. | [Endor Labs](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode), [Aikido](https://www.aikido.dev/blog/glassworm-returns-unicode-attack-github-npm-vscode), [ByteGuard rules](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json). |
+
+Live telemetry decision (G15): retain the bounded network snapshot. Process command lines/ancestry, registry and scheduled-task APIs, memory, protocol capture, and dynamic blockchain queries are deferred to complementary endpoint/network investigation. No additional runtime collectors, C2 connections, remediation, or account actions are added. Static findings do not establish execution; a clean scan cannot rule out a running or historical implant.
+
+Explicit package checks follow package-directory symlinks (including pnpm layouts). The scanner resolves requested root symlinks and follows selected file symlinks, but does not recursively follow internal directory symlinks. Supply their destinations with `-root`. Directory traversal itself is not subject to the per-file processing deadline. Package-target checks can inspect a lifecycle target separately from an earlier ordinary source read; repeated identical findings are deduplicated.
+
+
+### Content I/O reporting
+
+Default scans include dependency inspection, Git history checks, and coverage details, with dependency reads selected by manifests and known candidates rather than every eligible dependency file. Selected general source checks exclude binary bodies after an 8 KiB prefix rather than reading an entire extensionless cache object before discovering that it is binary. Text candidates retain whole-file checks within the existing size/time limits. Known exact-hash filenames, lifecycle targets, selected package metadata and targeted persistence entrypoints keep their existing inspection policy. Recognized assets still need only their headers; leading NUL/whitespace padding does not prevent inspection of disguised script assets.
+
+The summary reports bytes returned by content-file reads and the number of binary-prefix exclusions. The count includes prefix and failed reads, but excludes filesystem metadata, OS read-ahead and Git subprocess I/O; it is not a replacement for Activity Monitor's process I/O counter. Verbose output also reports cumulative content reads and the current path approximately every GiB. Binary exclusions appear as one aggregate scope notice rather than one finding per cache object.
+
+
+### Raw npm cache policy
+
+Full scans skip directories named `_cacache` **before enumerating their contents**, across project, Python, persistence and Git discovery. This avoids reading npm's opaque content-addressed HTTP/package storage as though every object were installed source. The distinction from npx's executable installation cache follows [npm's cache documentation](https://docs.npmjs.com/cli/v11/commands/npm-cache/).
+
+Each excluded store is logged immediately and appears once as an informational `scan-limited` record in text/JSON output. This is an explicit coverage exclusion, not a claim that cached data is safe. An explicitly added `-root` does not override it. Use `-npm-cache` to opt into raw cache inspection; full scans do not enable this expensive option. Archives still are not unpacked.
+
+Installed `node_modules` and `.npm/_npx` installations retain metadata/lifecycle checks and deep declared-entrypoint inspection. Executable plugin caches retain source checks outside dependency boundaries. Extracted uv package bodies are not broadly read; known candidate names and nested installed-package metadata remain discoverable.
+
+### Performance diagnostics
+
+Run `./surplies -q -debug` for a quiet terminal and a detailed debug log.
+The private log path is printed alongside the saved report. Without `-q`, debug
+output is also echoed to stderr.
+`-debug` does not change scan coverage and is not enabled by default. It writes
+paths and measurements to the log, leaving JSON findings on stdout unchanged.
+The log records directory traversal, each file's open/read/inspect steps,
+bytes read, read and inspection durations, timeouts, stage timings, and the
+20 directories with the greatest processing time and bytes read. Directory
+rows count direct files; nested lifecycle inspection times can overlap.
+Live entries remain available if a scan is interrupted; totals print at normal
+completion. Logging adds overhead, so diagnostic timings are approximate.
+Bytes exclude filesystem metadata, OS read-ahead, and Git subprocess I/O.
+No file contents are logged.
+
+Saved human-run reports also include `stats.debug`: per-file bytes, read counts,
+check selection reasons, directory/package byte totals, stage durations, directory
+enumeration calls/entries/errors and elapsed time, and Git command durations and
+stdout/stderr byte counts. Selection reasons record explicit dependency selection
+or the scanner check call chain. Git pipe bytes are not disk-read bytes.
+On macOS, debug reports include OS-accounted disk read/write bytes from
+[`proc_pid_rusage`](https://github.com/apple-oss-distributions/xnu/blob/main/libsyscall/wrappers/libproc/libproc.c).
+Scanner totals are deltas during scanning, with separate deltas for each stage.
+Git commands have final lifetime measurements collected after exit but before
+reaping, including short-lived commands. Scanner and child counters remain
+separate; unavailable measurements carry an error and are not reported as zero.
+These OS disk counters differ from logical file-content reads and pipe traffic.
+They exclude final report serialization and may differ from Activity Monitor's
+sampling window. Other platforms currently report disk-byte counters unavailable.
+No cache purge, privileged helper, or additional content reading is performed
+for these measurements.
+
+### Routine content scope
+
+Routine scans select files for specific checks:
+
+- package manifests, lifecycle targets and declared deep entrypoints;
+- startup/toolchain/application persistence targets and known artifact/hash candidates;
+- documented injection filenames (`App.js`, `index.js`, `truffle.js`, `tasks.json`, `cli.js`, `plugin.js`), JavaScript/TypeScript `*.config.*`, and direct `.claude`/`.vscode` settings;
+- project font files for the fake-font check (recognized headers do not require body reads).
+
+Project membership, `-root`, a source extension, or an executable bit **does not**
+make arbitrary file contents eligible. A home-level manifest cannot turn the
+home directory into a content sweep. Directory metadata is still traversed to
+find packages and candidates. Broad generic source/text inspection is available
+only through the separately explicit `-broad` option. Browser caches require
+`-browser-cache`; raw npm stores require `-npm-cache`. All three options are off
+by default. Dependency selection stays
+targeted even with `-broad`.
+
+Coverage details, dependency inspection, and Git history checks are the default. No aggregate byte cutoff is used. Selection limits
+are reported as scope notices; this does not promise to detect arbitrary malware
+in unselected files. No whole-home runtime is claimed from fixture measurements.
+
+Native Mach-O/ELF headers are recognized before applying the text-file size limit;
+the binary bodies are outside source-signature inspection, rather than oversized
+source failures. Known exact-hash candidates still receive full candidate reads.
+Absent build/pack hook targets in installed npm packages are scope notices;
+missing install/postinstall targets and other actual read failures remain coverage
+errors. Non-npm update manifests are not parsed as npm versions merely because
+they are named `package.json`.
