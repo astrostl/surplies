@@ -71,8 +71,7 @@ func (s *Scanner) persistenceError(path string, err error) {
 	if os.IsNotExist(err) {
 		return // an application or optional entrypoint is not installed
 	}
-	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path,
-		Detail: fmt.Sprintf("Application persistence check could not inspect this path: %v", err)})
+	s.scanError(path, err)
 }
 
 func (s *Scanner) checkPersistenceSiblings(dir string) {
@@ -151,7 +150,7 @@ func (s *Scanner) checkApplicationFile(path string) {
 			Detail: fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack)})
 	}
 	if info.Size() > 2*SignatureScanMaxBytes {
-		s.persistenceError(path, fmt.Errorf("entrypoint exceeds %d bytes; only the first and last %d bytes were checked", 2*SignatureScanMaxBytes, SignatureScanMaxBytes))
+		s.partialScan(path, fmt.Sprintf("entrypoint exceeds %d bytes; only the first and last %d bytes were checked", 2*SignatureScanMaxBytes, SignatureScanMaxBytes))
 	}
 }
 
@@ -189,8 +188,12 @@ func (s *Scanner) checkStagingPaths(paths []string) {
 
 // scanError reports incomplete coverage; it never classifies the path as malware.
 func (s *Scanner) scanError(path string, err error) {
+	category := "other errors"
+	if os.IsPermission(err) {
+		category = "permission denied"
+	}
 	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path,
-		Detail: fmt.Sprintf("Could not fully inspect this path: %v", err)})
+		Detail: fmt.Sprintf("Could not fully inspect this path: %v", err), coverageCategory: category})
 }
 
 // Recursive discovery uses published sidecars and entrypoint shapes, without
@@ -292,4 +295,9 @@ func discoveredPersistenceEntrypoint(path string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Scanner) partialScan(path, detail string) {
+	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path,
+		Detail: detail, coverageCategory: "partially checked"})
 }

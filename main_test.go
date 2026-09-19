@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -58,5 +59,23 @@ func TestResultSummaryIsLast(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestCoverageCategoriesAndCounts(t *testing.T) {
+	s := New(t.TempDir(), false)
+	for i := range 13 {
+		s.partialScan(fmt.Sprintf("/large/%d.js", i), "content exceeds read limit")
+	}
+	s.scanError("/protected", &os.PathError{Op: "open", Path: "/protected", Err: os.ErrPermission})
+	groups := groupCoverage(s.Findings)
+	if got := coverageSummary(groups); got != "Coverage incomplete: 13 partially checked, 1 permission denied." {
+		t.Fatal(got)
+	}
+	s.recordStall("/cloud", "/cloud/file.js")
+	s.scanError("/missing", os.ErrNotExist)
+	groups = groupCoverage(s.Findings)
+	if len(groups["timed out"]) != 1 || len(groups["other errors"]) != 1 {
+		t.Fatalf("missing failure categories: %+v", groups)
 	}
 }

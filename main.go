@@ -84,7 +84,7 @@ func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 	if jsonOutput {
 		indicators, coverage := splitFindings(findings)
 		if len(coverage) > 0 {
-			fmt.Fprintf(os.Stderr, "Coverage incomplete: %d path(s); see scan-incomplete JSON records.\n", len(coverage))
+			fmt.Fprintln(os.Stderr, coverageSummary(groupCoverage(coverage))+" See scan-incomplete JSON records.")
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -175,18 +175,59 @@ func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	return
 }
 
+var coverageCategories = []string{"partially checked", "permission denied", "timed out", "other errors"}
+
+func groupCoverage(coverage []Finding) map[string][]Finding {
+	groups := make(map[string][]Finding)
+	for _, f := range coverage {
+		category := f.coverageCategory
+		if category == "" {
+			category = "other errors"
+		}
+		groups[category] = append(groups[category], f)
+	}
+	return groups
+}
+
+func coverageSummary(groups map[string][]Finding) string {
+	var counts []string
+	for _, category := range coverageCategories {
+		if n := len(groups[category]); n > 0 {
+			counts = append(counts, fmt.Sprintf("%d %s", n, category))
+		}
+	}
+	return "Coverage incomplete: " + strings.Join(counts, ", ") + "."
+}
+
 func printCoverage(coverage []Finding, details bool) {
 	if len(coverage) == 0 {
 		return
 	}
-	fmt.Printf("\nCoverage incomplete: %d path(s) could not be fully checked. These are not attack indicators.\n", len(coverage))
+	groups := groupCoverage(coverage)
+	fmt.Printf("\n%s These are not attack indicators.\n", coverageSummary(groups))
 	if !details {
 		fmt.Println("Use -cov or -json to inspect the affected paths.")
 		return
 	}
-	for _, f := range coverage {
-		fmt.Printf("    %s\n    %s\n\n", f.Path, f.Detail)
+	for _, category := range coverageCategories {
+		group := groups[category]
+		if len(group) == 0 {
+			continue
+		}
+		label := category
+		if category == "partially checked" {
+			label += " (content exceeds read limit)"
+		}
+		fmt.Printf("\n  %s — %d path(s):\n", label, len(group))
+		sort.Slice(group, func(i, j int) bool { return group[i].Path < group[j].Path })
+		for _, f := range group {
+			fmt.Printf("    %s\n", f.Path)
+			if category == "other errors" {
+				fmt.Printf("      %s\n", f.Detail)
+			}
+		}
 	}
+	fmt.Println()
 }
 
 func invocationLabel(buildVersion string, args []string) string {

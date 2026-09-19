@@ -42,10 +42,11 @@ func (s Severity) MarshalJSON() ([]byte, error) {
 
 // Finding represents a single scan result.
 type Finding struct {
-	Check    string   `json:"check"`
-	Severity Severity `json:"severity"`
-	Path     string   `json:"path"`
-	Detail   string   `json:"detail"`
+	coverageCategory string
+	Check            string   `json:"check"`
+	Severity         Severity `json:"severity"`
+	Path             string   `json:"path"`
+	Detail           string   `json:"detail"`
 }
 
 // ArtifactCheck describes a known malicious file to look for.

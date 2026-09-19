@@ -546,7 +546,7 @@ Reports general project/persistence traversal errors, failed content reads, the 
 
 A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
 
-Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. Use `-cov` to list affected paths. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
+Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. The summary counts partially checked paths, permission denials, timeouts, and other errors separately. Use `-cov` to list paths grouped by those categories; JSON retains each exact error or read limit. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
 
 ### 22. `patched-application` (CRITICAL)
 
