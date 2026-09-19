@@ -739,3 +739,22 @@ func TestTextFontStillScansBeyondHeader(t *testing.T) {
 		t.Fatalf("fake font missed: %+v", s.Findings)
 	}
 }
+
+func TestPaddingIgnoresIndentedLicenseAndTrailingWhitespace(t *testing.T) {
+	spaces := strings.Repeat(" ", 244)
+	for _, content := range []string{
+		"/*\n" + spaces + "Copyright (C) Example\n" + spaces + "Redistribution permitted\n" + spaces + "*/\n",
+		"export default {};" + spaces + "\n",
+		spaces + "const deeplyIndented = true;\n",
+		"// comment\r\n" + spaces + "// another comment\r\n",
+	} {
+		s := New(t.TempDir(), false)
+		s.checkPadding("index.js", ".js", false, []byte(content))
+		if len(s.Findings) != 0 {
+			t.Fatalf("formatting flagged: %+v", s.Findings)
+		}
+	}
+	if !hasInlinePadding([]byte("export default {};" + spaces + "unknownLoader();")) {
+		t.Fatal("off-screen appended code missed")
+	}
+}

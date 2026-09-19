@@ -526,15 +526,29 @@ func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
 	if !looksLikeText(data) {
 		return
 	}
-	if !strings.Contains(string(data), paddingRun) {
+	if !hasInlinePadding(data) {
 		return
 	}
 	s.addFinding(Finding{
 		Check:    "padded-source-file",
 		Severity: SevWarn,
 		Path:     path,
-		Detail:   fmt.Sprintf("file contains a run of %d+ spaces, the padding pattern used to hide an appended payload off-screen", ConfigPaddingRunLength),
+		Detail:   fmt.Sprintf("line contains %d+ spaces between text, which can hide appended code off-screen", ConfigPaddingRunLength),
 	})
+}
+
+// Ignore leading indentation and trailing whitespace: the documented pattern
+// separates existing source and appended content on the same line.
+func hasInlinePadding(data []byte) bool {
+	if !bytes.Contains(data, []byte(paddingRun)) {
+		return false
+	}
+	for line := range bytes.Lines(data) {
+		if bytes.Contains(bytes.TrimSpace(line), []byte(paddingRun)) {
+			return true
+		}
+	}
+	return false
 }
 
 // checkGitignore looks for entries an attack added to conceal a file it
