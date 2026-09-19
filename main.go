@@ -36,7 +36,7 @@ func main() {
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
 	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
-	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower)")
+	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor, and site-packages (slower)")
 	flag.Func("root", "additional directory to search recursively for documented persistence (repeatable)", func(path string) error {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("persistence root must not be empty")
