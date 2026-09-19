@@ -175,8 +175,8 @@ func (s installer) installLaunchAgent(script string, hour, minute int) error {
 	if err := writeFile(path, plist, 0644); err != nil {
 		return err
 	}
-	domain := "gui/" + strconv.Itoa(s.uid)
-	service := domain + "/com.surplies.notify"
+	domain := s.domain()
+	service := s.service()
 	if err := s.run("launchctl", "print", service); err == nil {
 		if err := s.run("launchctl", "bootout", service); err != nil {
 			return err
@@ -187,6 +187,10 @@ func (s installer) installLaunchAgent(script string, hour, minute int) error {
 	}
 	return s.run("launchctl", "bootstrap", domain, path)
 }
+
+// domain and service name the launchd GUI domain and the job within it.
+func (s installer) domain() string  { return "gui/" + strconv.Itoa(s.uid) }
+func (s installer) service() string { return s.domain() + "/com.surplies.notify" }
 
 func systemdQuote(value string) string {
 	value = strings.ReplaceAll(value, "%", "%%")
@@ -254,7 +258,7 @@ func stopCommand(args []string, out io.Writer) error {
 func (s installer) disable() error {
 	switch s.goos {
 	case "darwin":
-		service := "gui/" + strconv.Itoa(s.uid) + "/com.surplies.notify"
+		service := s.service()
 		if err := s.run("launchctl", "disable", service); err != nil {
 			return err
 		}
@@ -294,5 +298,9 @@ func (s installer) remove() error {
 	if s.goos == "linux" {
 		return s.run("systemctl", "--user", "daemon-reload")
 	}
-	return nil
+	// disable() wrote a persistent launchd override. Clear it now that the job
+	// is unloaded and the plist is gone, so removal does not leave an orphan
+	// "disabled" entry behind for a service that no longer exists. The plist is
+	// already deleted, so this only clears the override; it cannot load anything.
+	return s.run("launchctl", "enable", s.service())
 }

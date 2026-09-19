@@ -282,6 +282,49 @@ func TestScheduleRemoveKeepsUnrelatedFiles(t *testing.T) {
 	}
 }
 
+func TestRemoveClearsLaunchdDisableOverride(t *testing.T) {
+	var calls []string
+	inst := installer{goos: "darwin", home: t.TempDir(), uid: 123, scripts: testScripts(t), run: func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}}
+	if err := inst.install(9, 0); err != nil {
+		t.Fatal(err)
+	}
+	calls = nil
+	if err := inst.remove(); err != nil {
+		t.Fatal(err)
+	}
+	// disable() writes a persistent override; remove() must clear it last, once
+	// the job is unloaded and the plist is gone. Otherwise launchd keeps a
+	// "disabled" entry for a service that no longer exists.
+	want := []string{
+		"launchctl disable gui/123/com.surplies.notify",
+		"launchctl bootout gui/123/com.surplies.notify",
+		"launchctl enable gui/123/com.surplies.notify",
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls: %v", calls)
+	}
+}
+
+func TestDisableKeepsLaunchdOverride(t *testing.T) {
+	var calls []string
+	inst := installer{goos: "darwin", home: t.TempDir(), uid: 123, scripts: testScripts(t), run: func(name string, args ...string) error {
+		calls = append(calls, name+" "+strings.Join(args, " "))
+		return nil
+	}}
+	if err := inst.disable(); err != nil {
+		t.Fatal(err)
+	}
+	// disable() must NOT re-enable; the override is what makes it persist.
+	for _, call := range calls {
+		if strings.Contains(call, "enable") {
+			t.Fatalf("disable re-enabled the job: %v", calls)
+		}
+	}
+}
+
 func TestScheduleRemoveStopsOnSchedulerError(t *testing.T) {
 	for _, goos := range []string{"darwin", "linux"} {
 		inst := installer{goos: goos, home: t.TempDir(), scripts: testScripts(t), run: func(string, ...string) error { return nil }}
