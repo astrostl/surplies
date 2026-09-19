@@ -196,9 +196,10 @@ func (s *Scanner) recordStall(key, path string) {
 
 	if first {
 		s.addFinding(Finding{
-			Check:    "scan-incomplete",
-			Severity: SevWarn,
-			Path:     key,
+			Check:            "scan-incomplete",
+			coverageCategory: "timed out",
+			Severity:         SevWarn,
+			Path:             key,
 			Detail: fmt.Sprintf(
 				"A read under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
 					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
@@ -269,7 +270,7 @@ func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) [
 		}
 		if len(read.data) > SignatureScanMaxBytes {
 			if reportTruncation {
-				s.scanError(path, fmt.Errorf("content exceeds %d bytes; only the first %d bytes were checked", SignatureScanMaxBytes, SignatureScanMaxBytes))
+				s.partialScan(path, fmt.Sprintf("content exceeds %d bytes; only the first %d bytes were checked", SignatureScanMaxBytes, SignatureScanMaxBytes))
 			}
 			read.data = read.data[:SignatureScanMaxBytes]
 		}
