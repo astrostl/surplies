@@ -2,12 +2,30 @@
 
 ## Design principles
 
-- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories.
-- **Report only, never remediate.** surplies is a read-only scanner. It must never delete files, uninstall packages, modify configs, or take any corrective action. Findings are reported; the user decides what to do.
+- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories. The `schedule` subcommand additionally runs `launchctl`, `systemctl --user`, and `notify-send`; this is outside detection entirely and is covered by the scheduling carve-out below.
+- **Report only, never remediate.** surplies is a read-only scanner. A scan must never delete files, uninstall packages, modify configs, or take any corrective action in response to a finding. Findings are reported; the user decides what to do. See the scheduling carve-out below for the single, explicitly invoked exception.
 - **No container/orchestrator checks.** Do not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem rooted at the user's home directory and explicitly added `-root` directories (plus well-known system paths for artifact checks).
-- **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS.
+- **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS. The `schedule` subcommand is the one deliberate exception: it supports macOS and Linux only and refuses cleanly elsewhere, because Windows has no equivalent user-level scheduler already covered by the embedded helpers.
 - **Zero dependencies.** stdlib only. No third-party Go modules. Git history inspection requires an installed Git supporting `--no-lazy-fetch`.
 - **Citation-required IOCs.** Only add checks for attacks that the developer explicitly requests with a linked, referenced source. Never speculatively add IOCs or checks from general knowledge.
+
+### Scheduling subcommand
+
+`surplies schedule` is the only code path that writes outside a debug log, and it is
+not part of detection. Nothing in a scan reaches it; the user must type the verb.
+The boundary that keeps "report only, never remediate" true is ownership, not
+read-only-ness:
+
+- It writes exactly three names it owns — `~/.local/bin/surplies-notify`, and either
+  `~/Library/LaunchAgents/com.surplies.notify.plist` or `surplies-notify.{service,timer}`
+  under `$XDG_CONFIG_HOME/systemd/user`. It must never touch a file it did not create,
+  and `remove` must delete only that same set.
+- It must never act on a finding, and must never run as part of a scan.
+- It stays in `internal/schedule`, not `internal/scan`. Detection code must not import it.
+- Prerequisite checks run before anything is written, so a failed install leaves no files.
+- External commands are invoked through the injected `run` func so tests never touch the
+  real scheduler.
+
 
 ## Output rules
 
@@ -43,9 +61,11 @@ Writeups and tracker pages are often behind Cloudflare, which returns `403` to b
 
 ## Structure
 
-Go layout: the root is a thin `package main` so `go install github.com/astrostl/surplies@latest` keeps working; everything else lives in `internal/scan`.
+Go layout: the root is a thin `package main` so `go install github.com/astrostl/surplies@latest` keeps working; detection lives in `internal/scan` and the scheduling subcommand in `internal/schedule`.
 
-- `main.go` — CLI entry point only: flags, root collection, exit codes
+- `main.go` — CLI entry point only: subcommand dispatch, flags, root collection, exit codes
+- `embed.go` — `//go:embed` of `scripts/notify/*.sh`; the root owns these because an embed pattern cannot traverse up out of its own directory, and the scripts stay at the repo root for documented manual installation
+- `internal/schedule/` — the `schedule` subcommand: launchd and systemd user-timer install, disable, remove. Takes the embedded scripts as a parameter; imports nothing from `internal/scan`
 - `internal/scan/modes.go` — scan mode flags and default-scope help text
 - `internal/scan/scanner.go` — orchestration, types, npm checks
 - `internal/scan/report.go`, `report_print.go` — JSON report and human rendering
