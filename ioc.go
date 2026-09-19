@@ -1182,16 +1182,14 @@ var SignatureScannedExtensions = []string{
 	".woff2", ".woff", ".dict", ".json",
 }
 
-// SignatureScanMaxBytes caps how much of a file is read when hunting for
-// payload signatures. The injected loader is appended after the original
-// content, and the observed payloads run to ~1 MB, so a small cap would read
-// only the clean prefix and report nothing.
-const SignatureScanMaxBytes = 4 << 20 // 4 MiB
+// SignatureScanMaxBytes is the exclusive whole-file content limit (100 MB).
+// Reading and inspection together must finish within ReadTimeout.
+const SignatureScanMaxBytes = 100_000_000
 
 // ConfigPaddingRunLength is the number of consecutive spaces that marks a
 // whitespace-padded injection. PolinRider pads with roughly 280 spaces to push
-// the payload off the right edge of an editor viewport; no formatter or
-// minifier produces a run anywhere near this long in a config file.
+// the payload off the right edge of an editor viewport. Only runs between
+// non-whitespace text on the same line qualify; indentation is ignored.
 // https://opensourcemalware.com/blog/developer-guide-getting-over-polinrider
 const ConfigPaddingRunLength = 200
 

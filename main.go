@@ -112,7 +112,7 @@ func printScanSummary(stats ScanStats) {
 
 	if stats.FilesUnreadable > 0 {
 		fmt.Fprintf(os.Stderr,
-			"Note: %d file(s) could not be read and were NOT scanned; see scan-incomplete findings for errors or timeouts.\n",
+			"Note: %d file(s) could not be fully processed; see scan-incomplete findings for size limits, errors, or timeouts.\n",
 			stats.FilesUnreadable)
 	}
 	fmt.Fprintln(os.Stderr)
@@ -178,7 +178,7 @@ func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	return
 }
 
-var coverageCategories = []string{"partially checked", "permission denied", "timed out", "other errors"}
+var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "other errors"}
 
 func groupCoverage(coverage []Finding) map[string][]Finding {
 	groups := make(map[string][]Finding)
@@ -217,11 +217,7 @@ func printCoverage(coverage []Finding, details bool) {
 		if len(group) == 0 {
 			continue
 		}
-		label := category
-		if category == "partially checked" {
-			label += " (content exceeds read limit)"
-		}
-		fmt.Printf("\n  %s — %d path(s):\n", label, len(group))
+		fmt.Printf("\n  %s — %d path(s):\n", category, len(group))
 		sort.Slice(group, func(i, j int) bool { return group[i].Path < group[j].Path })
 		for _, f := range group {
 			fmt.Printf("    %s\n", f.Path)

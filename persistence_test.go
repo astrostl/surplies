@@ -163,7 +163,7 @@ func TestStagingIsWarningAndDeduplicated(t *testing.T) {
 func TestUnscannedApplicationContentIsReported(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.js")
-	writeFixture(t, path, strings.Repeat(" ", 2*SignatureScanMaxBytes+1))
+	writeSparseFixture(t, path, SignatureScanMaxBytes)
 	s := New(dir, false)
 	s.checkApplicationFile(path)
 	if len(findingsFor(s, "scan-incomplete")) != 1 {
@@ -174,7 +174,7 @@ func TestUnscannedApplicationContentIsReported(t *testing.T) {
 func TestApplicationAppendedPayloadBeyondProjectCap(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "main.js")
-	writeFixture(t, path, strings.Repeat(" ", SignatureScanMaxBytes+100)+"/*RS260605*/")
+	writeFixture(t, path, strings.Repeat(" ", 20<<20)+"/*RS260605*/")
 	s := New(dir, false)
 	s.checkApplicationFile(path)
 	if len(findingsFor(s, "patched-application")) != 1 || len(findingsFor(s, "scan-incomplete")) != 0 {
@@ -239,14 +239,14 @@ func TestPersistenceRootSymlink(t *testing.T) {
 func TestGeneralReadFailuresAndTruncationReported(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "large.config.js")
-	writeFixture(t, path, strings.Repeat("x", SignatureScanMaxBytes)+"/*RS260605*/")
+	writeSparseFixture(t, path, SignatureScanMaxBytes+1)
 	s := New(root, false)
 	s.checkSourceFile(path, filepath.Base(path))
 	s.readCapped(filepath.Join(root, "missing.config.js"))
 	if len(findingsFor(s, "scan-incomplete")) != 2 {
 		t.Fatalf("incomplete reads reported clean: %+v", s.Findings)
 	}
-	if s.stats.FilesUnreadable != 1 {
+	if s.stats.FilesUnreadable != 2 {
 		t.Fatalf("unreadable count: %d", s.stats.FilesUnreadable)
 	}
 }
@@ -272,6 +272,43 @@ func TestProjectWalkPreservesPersistenceInsideSkippedTrees(t *testing.T) {
 		s.scanProjectDirs()
 		if len(findingsFor(s, "malicious-repo-artifact")) != 3 || len(findingsFor(s, "patched-application")) != 3 {
 			t.Fatalf("deep=%v lost coverage: %+v", deep, s.Findings)
+		}
+	}
+}
+
+func writeSparseFixture(t *testing.T, path string, size int64) {
+	t.Helper()
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	if err := f.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWholeFileFindsMiddleAndTailBeyondOldLimit(t *testing.T) {
+	for _, application := range []bool{false, true} {
+		for _, offset := range []int{6 << 20, 20 << 20} {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "index.js")
+			data := []byte(strings.Repeat("x", 21<<20))
+			copy(data[offset:], "/*RS260605*/")
+			if err := os.WriteFile(path, data, 0644); err != nil {
+				t.Fatal(err)
+			}
+			s := New(dir, false)
+			check := "payload-signature"
+			if application {
+				s.checkApplicationFile(path)
+				check = "patched-application"
+			} else {
+				s.checkSourceFile(path, "index.js")
+			}
+			if len(findingsFor(s, check)) != 1 || len(findingsFor(s, "scan-incomplete")) != 0 {
+				t.Fatalf("whole-file coverage failed: %+v", s.Findings)
+			}
 		}
 	}
 }
