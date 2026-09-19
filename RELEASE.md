@@ -16,10 +16,10 @@ Use [semantic versioning](https://semver.org/). For IOC-only additions (new pack
 
 ### 2. Sync the README with changes since the last release
 
-Diff `ioc.go`, `scanner.go`, `python.go`, `composer.go`, and `main.go` against the previous release tag to enumerate everything that needs to be reflected in `README.md`:
+Diff the scanner package against the previous release tag to enumerate everything that needs to be reflected in `README.md`:
 
 ```sh
-git diff $(git describe --tags --abbrev=0) -- ioc.go scanner.go python.go composer.go main.go
+git diff $(git describe --tags --abbrev=0) -- internal/scan main.go
 ```
 
 For each change, update the matching section of `README.md`:

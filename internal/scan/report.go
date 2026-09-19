@@ -1,0 +1,200 @@
+package scan
+
+import (
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"sort"
+	"strings"
+	"time"
+)
+
+func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invocation string) {
+	critical, warnings, context := 0, 0, 0
+	_, coverage := splitFindings(findings)
+	for _, f := range findings {
+		if f.Check == "scan-incomplete" || f.Check == "scan-limited" {
+			continue
+		}
+		switch f.Severity {
+		case SevCritical:
+			critical++
+		case SevWarn:
+			warnings++
+		default:
+			context++
+		}
+	}
+	fmt.Fprintf(out, "\n%s\n", invocation)
+	if critical == 0 {
+		fmt.Fprintf(out, "Result: no critical indicators; %d warning(s) need review.\n", warnings)
+	} else {
+		fmt.Fprintf(out, "Result: %d critical indicator(s); %d warning(s) need review.\n", critical, warnings)
+	}
+	if len(coverage) > 0 {
+		fmt.Fprintln(out, coverageSummary(groupCoverage(coverage)))
+	} else {
+		fmt.Fprintln(out, "Coverage: selected checks completed; scope limits apply.")
+	}
+	fmt.Fprintf(out, "Run: %s | %.2f MiB content read | %d files checked\n", stats.Duration.Round(time.Millisecond), float64(stats.ContentBytesRead)/(1<<20), stats.FilesChecked)
+	fmt.Fprintln(out, "Read count excludes filesystem metadata and Git subprocess I/O.")
+	if d := stats.Debug; d != nil {
+		if d.ScannerDiskIO.Available {
+			fmt.Fprintf(out, "OS disk reads: scanner %.2f MiB; measured Git children %.2f MiB (%d/%d commands).\n", float64(d.ScannerDiskIO.ReadBytes)/(1<<20), float64(d.GitDiskReadBytes)/(1<<20), d.GitDiskCommandsMeasured, d.GitDiskCommandsMeasured+d.GitDiskCommandsUnmeasured)
+		} else {
+			fmt.Fprintf(out, "OS disk reads unavailable: %s\n", d.ScannerDiskIO.Error)
+		}
+	}
+	if stats.Git {
+		fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
+	}
+	if context > 0 {
+		fmt.Fprintf(out, "Context: %d informational observation(s), not attack indicators.\n", context)
+	}
+}
+
+func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, details bool, invocation string) {
+	defer PrintReportSummary(out, findings, stats, invocation)
+	for _, section := range []struct {
+		severity Severity
+		title    string
+	}{{SevCritical, "CRITICAL INDICATORS"}, {SevWarn, "WARNINGS TO REVIEW — heuristics, not proof of compromise"}, {SevInfo, "INFORMATIONAL CONTEXT"}} {
+		var selected []Finding
+		for _, f := range findings {
+			if f.Check != "scan-incomplete" && f.Check != "scan-limited" && f.Severity == section.severity {
+				selected = append(selected, f)
+			}
+		}
+		if len(selected) == 0 {
+			continue
+		}
+		fmt.Fprintf(out, "\n%s (%d)\n", section.title, len(selected))
+		groups := make(map[string][]Finding)
+		var keys []string
+		for _, f := range selected {
+			key := f.Check + "\x00" + f.Detail
+			if _, ok := groups[key]; !ok {
+				keys = append(keys, key)
+			}
+			groups[key] = append(groups[key], f)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			group := groups[key]
+			fmt.Fprintf(out, "\n  %s (%d location(s))\n    %s\n", reportCheckTitle(group[0].Check), len(group), group[0].Detail)
+			paths := make([]string, 0, len(group))
+			for _, f := range group {
+				paths = append(paths, f.Path)
+			}
+			sort.Strings(paths)
+			for _, path := range paths {
+				fmt.Fprintf(out, "    - %s\n", path)
+			}
+		}
+	}
+	printReportDiagnostics(out, findings, details)
+}
+
+func reportCheckTitle(check string) string {
+	switch check {
+	case "suspicious-source-execution":
+		return "Suspicious execution patterns"
+	case "loader-structure":
+		return "Local module loader pattern"
+	case "unicode-concealment":
+		return "Potentially concealed Unicode"
+	case "workspace-setting-context":
+		return "Workspace settings"
+	default:
+		return strings.ReplaceAll(check, "-", " ")
+	}
+}
+
+func scopeReportCategory(f Finding) string {
+	switch {
+	case strings.HasPrefix(f.Detail, "Browser cache"):
+		return "Browser cache directories excluded"
+	case strings.HasPrefix(f.Detail, "Raw npm"):
+		return "Raw npm cache directories excluded"
+	case strings.HasPrefix(f.Detail, "Declared build/pack"):
+		return "Absent build/pack script targets"
+	case strings.HasPrefix(f.Detail, "DNS completed"):
+		return "Domains without routable DNS answers"
+	case strings.HasPrefix(f.Detail, "Shallow Git"):
+		return "Shallow Git repositories"
+	case strings.HasPrefix(f.Detail, "Binary plist"):
+		return "Binary startup plists not decoded"
+	case strings.HasPrefix(f.Detail, "Non-npm"):
+		return "Non-npm manifests"
+	case f.Path == "content" || f.Path == "dependencies":
+		return "Content selection and binary exclusions"
+	default:
+		return "Other scope limits"
+	}
+}
+
+// Preserve every diagnostic from this run without requiring another scan.
+// CreateTemp uses a private 0600 file; reports contain paths and findings, not
+// inspected source contents. JSON stdout mode already preserves these records.
+func SaveScanReport(dir string, findings []Finding, stats ScanStats, invocation string) (string, error) {
+	f, err := os.CreateTemp(dir, "surplies-report-*.json")
+	if err != nil {
+		return "", err
+	}
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	err = enc.Encode(struct {
+		Invocation string    `json:"invocation"`
+		Stats      ScanStats `json:"stats"`
+		Findings   []Finding `json:"findings"`
+	}{invocation, stats, findings})
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		os.Remove(f.Name())
+		return "", err
+	}
+	return f.Name(), nil
+}
+
+func printReportDiagnostics(out io.Writer, findings []Finding, details bool) {
+	_, coverage := splitFindings(findings)
+	if len(coverage) > 0 && details {
+		fmt.Fprintln(out, "\nCHECKS THAT COULD NOT COMPLETE — coverage gaps, not attack indicators")
+		groups := groupCoverage(coverage)
+		for _, category := range coverageCategories {
+			if group := groups[category]; len(group) > 0 {
+				fmt.Fprintf(out, "\n  %s (%d location(s))\n", category, len(group))
+				printDiagnosticGroups(out, group)
+			}
+		}
+	}
+	var limits []Finding
+	for _, f := range findings {
+		if f.Check == "scan-limited" {
+			limits = append(limits, f)
+		}
+	}
+	if len(limits) > 0 && details {
+		fmt.Fprintln(out, "\nSCOPE LIMITS (details in saved report)")
+		counts := map[string]int{}
+		for _, f := range limits {
+			counts[scopeReportCategory(f)]++
+		}
+		keys := make([]string, 0, len(counts))
+		for key := range counts {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			fmt.Fprintf(out, "  %s: %d notice(s)\n", key, counts[key])
+		}
+	}
+
+	if len(coverage) > 0 && !details {
+		fmt.Fprintln(out, "\nUse -json for full coverage records.")
+	}
+}

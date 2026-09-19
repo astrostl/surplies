@@ -43,20 +43,31 @@ Writeups and tracker pages are often behind Cloudflare, which returns `403` to b
 
 ## Structure
 
-- `main.go` — CLI entry point, flags, output formatting
-- `scanner.go` — orchestration, types, npm checks
-- `python.go` — Python/PyPI checks (site-packages, .pth files)
-- `composer.go` — Composer/Packagist checks (vendor/composer/installed.json)
-- `content.go` — content-based checks (payload signatures, fake-font detection, repo artifacts, patched npm CLI) for attacks that inject into a file that is supposed to exist under that name
-- `ioc.go` — known IOC database (bad versions, phantom packages, C2 indicators, artifact paths)
+Go layout: the root is a thin `package main` so `go install github.com/astrostl/surplies@latest` keeps working; everything else lives in `internal/scan`.
 
-- `persistence.go` — targeted application entrypoints and sidecars, plus runtime/staging warnings
-- `tasks.go` — JSONC-aware detection of automatic Node-to-font tasks
+- `main.go` — CLI entry point only: flags, root collection, exit codes
+- `internal/scan/modes.go` — scan mode flags and default-scope help text
+- `internal/scan/scanner.go` — orchestration, types, npm checks
+- `internal/scan/report.go`, `report_print.go` — JSON report and human rendering
+- `internal/scan/python.go` — Python/PyPI checks (site-packages, .pth files)
+- `internal/scan/composer.go` — Composer/Packagist checks (vendor/composer/installed.json)
+- `internal/scan/content.go` — content-based checks (payload signatures, fake-font detection, repo artifacts, patched npm CLI) for attacks that inject into a file that is supposed to exist under that name
+- `internal/scan/content_scope.go` — which files are eligible for content inspection
+- `internal/scan/assets.go` — disguised-asset header validation
+- `internal/scan/heuristics.go` — loader/obfuscation/Unicode contextual checks
+- `internal/scan/ioc.go` — known IOC database (bad versions, phantom packages, C2 indicators, artifact paths, payload hashes)
+- `internal/scan/persistence.go` — targeted application entrypoints and sidecars, plus runtime/staging warnings
+- `internal/scan/toolchains.go` — additional package-manager entrypoints
+- `internal/scan/tasks.go` — JSONC-aware detection of automatic Node-to-font tasks and workspace settings context
+- `internal/scan/startup.go` — shell startup, launch agents, systemd, cron and hosts content checks
+- `internal/scan/network.go` — bounded netstat snapshot and DNS resolution
+- `internal/scan/roots.go` — shared home/additional-root traversal, root symlink resolution, and overlap deduplication
+- `internal/scan/git.go` — local Git ref/history inspection against the shared payload hash list; no fetch or checkout
+- `internal/scan/testdata/` — benign fixtures, notably the genuine `Math_Symbol.js` whose filename collides with the keyv payload
 
-- `roots.go` — shared home/additional-root traversal, root symlink resolution, and overlap deduplication
+### Payload hash tiers
 
-- `git.go` — local Git ref/history inspection against the shared exact-payload hash list; no fetch or checkout
-
+`KnownRepoPayloadHashes` has two tiers and the difference is a published size. A sized entry is matched by exact length plus SHA-256 under any filename or extension. A size-less entry is matched by published filename only and is deliberately excluded from Git blob candidates, because a size-less entry must never mean "hash every blob in every repository". Where a source publishes a Git object identity, match it against the object ID directly, with no body read.
 
 ## Runtime scope decision (G15)
 
