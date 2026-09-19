@@ -89,13 +89,17 @@ gh release create v1.2.3 \
   --notes "Brief description of what changed."
 ```
 
-### 7. Verify Homebrew
+### 7. Upgrade the local Homebrew installation (required for every release)
+
+After publishing the release assets and updated formula, upgrade the local Homebrew installation of surplies. A release is not complete until the installed binary reports the newly released version. Run the Homebrew-installed `surplies`, not `./surplies` from the checkout.
 
 ```sh
 brew update
 brew upgrade surplies
 surplies -version
 ```
+
+Confirm that the reported version matches the release tag. If the upgrade fails or still reports the previous version, resolve it before declaring the release complete.
 
 If testing from scratch:
 

@@ -1,14 +1,13 @@
 package main
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -63,20 +62,18 @@ type Scanner struct {
 	Findings []Finding
 	mu       sync.Mutex
 	Verbose  bool
-	// Deep lifts the directory boundaries the walk normally stops at —
-	// node_modules, Composer vendor/, and Python site-packages. It does not
-	// add or change a single check: it changes WHERE the checks already
-	// defined here are allowed to run. Any IOC added to ioc.go later gets the
-	// wider surface for free, with no code change.
-	//
-	// Off by default because it roughly triples scan time on a developer home
-	// directory. The default scan identifies dependencies by name and version
-	// (cheap, and correct for anything with a published advisory); deep mode
-	// additionally reads their contents, which is the only way to catch a
-	// compromised package whose version nobody has pinned yet.
-	Deep  bool
-	Git   bool
-	stats ScanStats
+	// Deep adds declared dependency entrypoint and known-candidate inspection.
+	// Metadata, lifecycle targets and targeted persistence run in both modes.
+
+	Deep            bool
+	Git             bool
+	NpmCache        bool
+	Broad           bool
+	BrowserCache    bool
+	contentDirs     map[string]bool
+	dependencyDirs  map[string]bool
+	rawCacheSkipped map[string]bool
+	stats           ScanStats
 	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
 	// is abandoned after StallThreshold strikes instead of costing
 	// ReadTimeout on every file beneath it. Guarded by mu.
@@ -86,10 +83,16 @@ type Scanner struct {
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
 	persistenceWalked  map[string]bool
+	packageChecked     map[string]bool
+	scriptChecked      map[string]bool
+	contentIO          *contentReadStats
+	nextReadReport     int64
+	debug              *scanDebug
 }
 
 // ScanStats tracks scan progress.
 type ScanStats struct {
+	Debug                   *DebugReport `json:"debug,omitempty"`
 	Git                     bool
 	GitRepositoriesFound    int
 	GitRepositoriesScanned  int
@@ -103,6 +106,8 @@ type ScanStats struct {
 	ComposerVendorsFound    int
 	ComposerPackagesScanned int
 	FilesChecked            int
+	ContentBytesRead        int64
+	BinaryPrefixesSkipped   int64
 	// FilesUnreadable counts files selected for content scanning whose read
 	// failed or timed out — a cloud placeholder the provider could not materialize, a
 	// stalled network mount, or similar. Counted, not swallowed: a scan that
@@ -118,79 +123,97 @@ type ScanStats struct {
 // New creates a scanner targeting the given home directory.
 func New(homeDir string, verbose bool) *Scanner {
 	return &Scanner{
-		HomeDir: homeDir,
-		Verbose: verbose,
+		HomeDir:   homeDir,
+		Verbose:   verbose,
+		contentIO: new(contentReadStats),
 	}
 }
 
 func (s *Scanner) addFinding(f Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if f.Check == "scan-incomplete" {
-		for _, previous := range s.Findings {
-			if previous.Check == f.Check && previous.Path == f.Path {
-				return
-			}
+	for _, previous := range s.Findings {
+		if previous.Check == f.Check && previous.Path == f.Path && previous.Detail == f.Detail && previous.Severity == f.Severity {
+			return
 		}
 	}
 	s.Findings = append(s.Findings, f)
 }
 
 func (s *Scanner) log(format string, args ...any) {
-	if s.Verbose {
-		fmt.Fprintf(os.Stderr, "  [scan] "+format+"\n", args...)
-	}
+	s.progress("  [scan] "+format+"\n", args...)
 }
 
 // Run executes all checks and returns findings.
 func (s *Scanner) Run() ([]Finding, ScanStats) {
 	start := time.Now()
+	defer s.debug.summary()
 
-	fmt.Fprintf(os.Stderr, "Scanning home directory: %s\n", s.HomeDir)
+	s.progress("Scanning home directory: %s\n", s.HomeDir)
 	for _, root := range s.ExtraRoots {
-		fmt.Fprintf(os.Stderr, "Additional scan root: %s\n", root)
+		s.progress("Additional scan root: %s\n", root)
 	}
-	fmt.Fprintf(os.Stderr, "Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
+	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 
 	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
 	// global npm CLI entrypoint, which lives outside the home directory.
-	fmt.Fprintf(os.Stderr, "[1/5] Checking known malicious artifacts...\n")
+	s.progress("[1/5] Checking known malicious artifacts...\n")
+	s.debug.stage("artifacts/persistence")
 	s.checkArtifacts()
 	s.checkNpmCLI()
 	s.checkApplicationPersistence()
 	s.checkPersistenceRoots()
 	s.checkRuntimeStaging()
+	s.checkExtraToolchains()
+	s.checkStartupFiles()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
-	mode := "names and versions only"
+	mode := "selected injection candidates, dependency metadata and lifecycle targets"
 	if s.Deep {
-		mode = "deep: reading file contents inside dependency directories"
+		mode = "deep: checking declared dependency entrypoints and known payload candidates"
 	}
-	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — %s...\n", mode)
+	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — %s...\n", mode)
+	s.debug.stage("projects")
+	if !s.Broad {
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
+	}
 	s.scanProjectDirs()
+	if s.Deep {
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Deep dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
+	}
 
 	// Phase 3: Find and scan Python site-packages directories
-	fmt.Fprintf(os.Stderr, "[3/5] Scanning Python site-packages for compromised packages...\n")
+	s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
+	s.debug.stage("python")
 	s.scanPythonPackages()
 
 	// Phase 4: Check for network IOCs in shell history/config
-	fmt.Fprintf(os.Stderr, "[4/5] Checking active connections for network IOCs...\n")
+	s.progress("[4/5] Checking active connections for network IOCs...\n")
+	s.debug.stage("network")
 	s.checkNetworkIOCs()
 
 	// Phase 5: Check tmp directories for suspicious payload remnants
-	fmt.Fprintf(os.Stderr, "[5/5] Checking temp directories for payload remnants...\n")
+	s.progress("[5/5] Checking temp directories for payload remnants...\n")
+	s.debug.stage("temp")
 	s.checkTempArtifacts()
 
 	if s.Git {
-		fmt.Fprintln(os.Stderr, "[git] Checking locally available refs and history against known payload hashes...")
+		s.progress("[git] Checking locally available refs and history against known payload hashes...\n")
+		s.debug.stage("git")
 		s.scanGitRepositories()
 	}
 
+	s.stats.ContentBytesRead = s.contentIO.bytes.Load()
+	s.stats.BinaryPrefixesSkipped = s.contentIO.binary.Load()
+	if s.stats.BinaryPrefixesSkipped > 0 {
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: fmt.Sprintf("%d binary files excluded from general text inspection after at most %d prefix bytes each; binary bodies are not scanned as source", s.stats.BinaryPrefixesSkipped, SourceSniffBytes)})
+	}
 	s.stats.Deep = s.Deep
 	s.stats.Git = s.Git
 	s.stats.Duration = time.Since(start)
-	fmt.Fprintln(os.Stderr)
+	s.progress("\n")
 
+	s.stats.Debug = s.debug.snapshot()
 	return s.Findings, s.stats
 }
 
@@ -238,10 +261,15 @@ func (s *Scanner) scanProjectDirs() {
 		}
 
 		if !d.IsDir() {
-			s.checkSourceFile(path, d.Name())
+			if s.routineContentFile(path, d.Name()) {
+				s.checkSourceFile(path, d.Name())
+			}
 			return nil
 		}
 
+		if d.Name() == ".git" {
+			return filepath.SkipDir
+		}
 		if d.Name() == "site-packages" {
 			return s.persistenceOrDescend(path)
 		}
@@ -295,7 +323,7 @@ func (s *Scanner) scanProjectDirs() {
 
 // descendOrSkip returns the walk verdict for a dependency directory whose
 // package-level checks have just run: stop here normally, or keep walking in
-// deep mode so the content checks reach the files inside.
+// deep mode to discover nested metadata and known candidate names.
 func (s *Scanner) descendOrSkip() error {
 	if s.Deep {
 		return nil
@@ -355,25 +383,6 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 		}
 	}
 
-	// Check 2: Known bad versions
-	for pkg, badVersions := range KnownBadNpmVersions {
-		pkgJSON := filepath.Join(nmDir, pkg, "package.json")
-		version := readPackageVersion(pkgJSON)
-		if version == "" {
-			continue
-		}
-		for _, bad := range badVersions {
-			if version == bad {
-				s.addFinding(Finding{
-					Check:    "compromised-version",
-					Severity: SevCritical,
-					Path:     pkgJSON,
-					Detail:   fmt.Sprintf("Known compromised version %s@%s", pkg, version),
-				})
-			}
-		}
-	}
-
 	// Check 3: Lifecycle scripts + npm payload files for every package
 	s.scanNodeModulesPackages(nmDir)
 }
@@ -384,26 +393,28 @@ func (s *Scanner) checkNodeModulesDir(nmDir string) {
 // scope name (checked against every package under that scope) or an exact
 // unscoped package name.
 func (s *Scanner) scanNodeModulesPackages(nmDir string) {
-	entries, err := os.ReadDir(nmDir)
+	entries, err := s.readDir(nmDir)
 	if err != nil {
+		s.scanError(nmDir, err)
 		return
 	}
 
 	for _, entry := range entries {
-		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
+		if strings.HasPrefix(entry.Name(), ".") || !s.packageDirectory(filepath.Join(nmDir, entry.Name()), entry) {
 			continue
 		}
 
 		// Scoped packages (@org/pkg)
 		if strings.HasPrefix(entry.Name(), "@") {
 			scopeDir := filepath.Join(nmDir, entry.Name())
-			scopedEntries, err := os.ReadDir(scopeDir)
+			scopedEntries, err := s.readDir(scopeDir)
 			if err != nil {
+				s.scanError(scopeDir, err)
 				continue
 			}
 			payloadFiles := KnownNpmPayloadFiles[entry.Name()]
 			for _, se := range scopedEntries {
-				if !se.IsDir() {
+				if !s.packageDirectory(filepath.Join(scopeDir, se.Name()), se) {
 					continue
 				}
 				pkgDir := filepath.Join(scopeDir, se.Name())
@@ -424,47 +435,93 @@ func (s *Scanner) scanNodeModulesPackages(nmDir string) {
 	}
 }
 
+// Explicit package metadata checks follow package-directory symlinks, including
+// pnpm layouts. This does not make the recursive content walker follow them.
+func (s *Scanner) packageDirectory(path string, entry os.DirEntry) bool {
+	if entry.IsDir() {
+		return true
+	}
+	if entry.Type()&os.ModeSymlink == 0 {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		s.scanError(path, err)
+		return false
+	}
+	return info.IsDir()
+}
+
 // packageJSON represents the relevant fields of a package.json.
 type packageJSON struct {
 	Name    string            `json:"name"`
 	Version string            `json:"version"`
 	Scripts map[string]string `json:"scripts"`
-}
-
-func readPackageJSON(path string) *packageJSON {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
-	}
-	var pkg packageJSON
-	if err := json.Unmarshal(data, &pkg); err != nil {
-		return nil
-	}
-	return &pkg
-}
-
-func readPackageVersion(path string) string {
-	pkg := readPackageJSON(path)
-	if pkg == nil {
-		return ""
-	}
-	return pkg.Version
+	Main    json.RawMessage   `json:"main"`
+	Module  json.RawMessage   `json:"module"`
+	Bin     json.RawMessage   `json:"bin"`
+	Exports json.RawMessage   `json:"exports"`
 }
 
 // checkPackage examines a single package for red flags.
 func (s *Scanner) checkPackage(pkgDir, pkgName string) {
+	s.checkPackageManifest(pkgDir, pkgName, true)
+}
+func (s *Scanner) checkPackageManifest(pkgDir, pkgName string, optional bool) {
 	pkgJSONPath := filepath.Join(pkgDir, "package.json")
-	pkg := readPackageJSON(pkgJSONPath)
-	if pkg == nil {
+	if s.packageChecked == nil {
+		s.packageChecked = make(map[string]bool)
+	}
+	if s.packageChecked[pkgJSONPath] {
 		return
 	}
-	s.stats.PackagesScanned++
+	s.packageChecked[pkgJSONPath] = true
+
+	if s.processFileMode(pkgJSONPath, ReadTimeout, func(local *Scanner, data []byte) {
+		// package.json is also used by non-npm applications (e.g. OBS).
+		// Recognize that shape before imposing npm's version schema.
+		if nonNpmUpdateManifest(data) {
+			local.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: pkgJSONPath, Detail: "Non-npm update manifest; npm package/version and lifecycle checks do not apply"})
+			return
+		}
+		var pkg packageJSON
+		if err := json.Unmarshal(data, &pkg); err != nil || !bytes.HasPrefix(bytes.TrimSpace(data), []byte("{")) {
+			if err == nil {
+				err = fmt.Errorf("expected an object")
+			}
+			local.scanError(pkgJSONPath, fmt.Errorf("invalid package manifest: %w", err))
+			return
+		}
+		local.inspectGeneralContent(pkgJSONPath, data)
+		for _, bad := range KnownBadNpmVersions[pkgName] {
+			if pkg.Version == bad {
+				local.addFinding(Finding{Check: "compromised-version", Severity: SevCritical, Path: pkgJSONPath, Detail: fmt.Sprintf("Known compromised version %s@%s", pkgName, pkg.Version)})
+			}
+		}
+		local.inspectPackageScripts(pkgDir, pkgName, &pkg)
+		if local.Deep {
+			local.inspectPackageEntrypoints(pkgDir, &pkg)
+		}
+		if !hasIncomplete(local.Findings) {
+			local.stats.PackagesScanned++
+		}
+	}, optional) != nil {
+		s.stats.FilesChecked++
+	}
+}
+
+func (s *Scanner) inspectPackageScripts(pkgDir, pkgName string, pkg *packageJSON) {
+	pkgJSONPath := filepath.Join(pkgDir, "package.json")
 
 	// Check for suspicious lifecycle scripts. `prepare` is included because the
 	// Mini Shai-Hulud TanStack sub-incident uses it (e.g.
 	// "prepare": "bun run tanstack_runner.js && exit 1") — npm runs `prepare`
 	// on local installs and on `npm pack`, so it's a viable malware vehicle.
-	suspiciousHooks := []string{"preinstall", "install", "postinstall", "prepare"}
+	// Additional prepublish/pack hooks are selected according to npm lifecycle
+	// semantics; their presence alone is not a finding.
+	// https://docs.npmjs.com/cli/v11/using-npm/scripts/
+	// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
+	suspiciousHooks := []string{"preinstall", "install", "postinstall", "prepare", "prepublish", "prepack", "postpack"}
 	for _, hook := range suspiciousHooks {
 		script, ok := pkg.Scripts[hook]
 		if !ok {
@@ -486,14 +543,9 @@ func (s *Scanner) checkPackage(pkgDir, pkgName string) {
 		// If the script references a JS file, check it for obfuscation
 		if jsFile := extractScriptTarget(script); jsFile != "" {
 			jsPath := filepath.Join(pkgDir, jsFile)
-			if findings := checkFileObfuscation(jsPath); len(findings) > 0 {
-				s.addFinding(Finding{
-					Check:    "obfuscated-install-script",
-					Severity: SevCritical,
-					Path:     jsPath,
-					Detail:   fmt.Sprintf("%s install script appears obfuscated (flags: %s)", pkgName, strings.Join(findings, ", ")),
-				})
-			}
+			buildOnly := hook == "prepare" || hook == "prepublish" || hook == "prepack" || hook == "postpack"
+			installed := strings.Contains(filepath.ToSlash(pkgDir), "/node_modules/")
+			s.checkScriptFileMode(jsPath, pkgName, buildOnly && installed)
 		}
 	}
 }
@@ -536,30 +588,67 @@ func analyzeScript(script string) []string {
 		}
 	}
 
+	if matchesDecodeExecute([]byte(script)) {
+		flags = append(flags, "decode-and-execute")
+	}
+	if downloadShell.MatchString(script) {
+		flags = append(flags, "download-to-shell")
+	}
+	if victimAssignment.MatchString(script) && strings.Contains(script, " -e") {
+		flags = append(flags, "inline-global-bootstrap")
+	}
+	if taskRunsAsset(vscodeTask{Command: json.RawMessage(strconv.Quote(script))}) {
+		flags = append(flags, "interpreter-to-asset")
+	}
 	return flags
 }
 
 // extractScriptTarget pulls out a JS filename from a "node foo.js" style script,
 // including a shell subshell wrapper such as Yarn's "(node ./preinstall.js …)".
 func extractScriptTarget(script string) string {
-	parts := strings.Fields(script)
-	for i, p := range parts {
-		if strings.TrimLeft(p, "(") == "node" && i+1 < len(parts) {
-			target := parts[i+1]
-			if strings.HasSuffix(target, ".js") {
-				return target
-			}
+	tokens := shellTokens.FindAllString(script, -1)
+	for i, token := range tokens {
+		if !nodeExecutable(token) || i+1 >= len(tokens) {
+			continue
+		}
+		target := strings.Trim(tokens[i+1], `"'`)
+		if strings.HasPrefix(target, "-") {
+			continue
+		}
+		if isJSFamily(strings.ToLower(filepath.Ext(target))) {
+			return target
 		}
 	}
+
 	return ""
 }
 
 // checkFileObfuscation reads a JS file and checks for obfuscation patterns.
-func checkFileObfuscation(path string) []string {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil
+func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptFileMode(path, pkgName, false) }
+func (s *Scanner) checkScriptFileMode(path, pkgName string, optionalBuild bool) {
+	if optionalBuild {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: path, Detail: "Declared build/pack hook target is absent from the installed package; no target content available to inspect"})
+			return
+		}
 	}
+	if s.scriptChecked == nil {
+		s.scriptChecked = make(map[string]bool)
+	}
+	if s.scriptChecked[path] {
+		return
+	}
+	s.scriptChecked[path] = true
+	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+		local.inspectGeneralContent(path, data)
+		if flags := obfuscationFlags(data); len(flags) > 0 {
+			local.addFinding(Finding{Check: "obfuscated-install-script", Severity: SevWarn, Path: path, Detail: fmt.Sprintf("%s lifecycle target contains review patterns (flags: %s); these patterns alone do not establish compromise", pkgName, strings.Join(flags, ", "))})
+		}
+	}) != nil {
+		s.stats.FilesChecked++
+	}
+}
+func obfuscationFlags(data []byte) []string {
 	content := string(data)
 	var flags []string
 
@@ -598,101 +687,6 @@ func checkFileObfuscation(path string) []string {
 	}
 
 	return flags
-}
-
-// resolveRoutableIPs resolves domain via the default resolver and returns only
-// routable addresses. Unspecified (::, 0.0.0.0) and loopback results are
-// dropped: sinkholed or blocked domains can resolve to ::, and substring-
-// matching that against netstat output hits every IPv6 listener line.
-func resolveRoutableIPs(ctx context.Context, domain string) []string {
-	ips, err := net.DefaultResolver.LookupHost(ctx, domain)
-	if err != nil {
-		return nil
-	}
-	routable := ips[:0]
-	for _, ip := range ips {
-		parsed := net.ParseIP(ip)
-		if parsed == nil || parsed.IsUnspecified() || parsed.IsLoopback() {
-			continue
-		}
-		routable = append(routable, ip)
-	}
-	return routable
-}
-
-// checkNetworkIOCs checks active network connections for known C2 indicators.
-// Runs netstat -n (no reverse DNS) and resolves known C2 domains to IPs in
-// parallel, then matches resolved IPs against the netstat output. Forward DNS
-// on the small known-bad list finishes in well under a second, vs. reverse DNS
-// on every active connection which can take minutes on a busy machine.
-func (s *Scanner) checkNetworkIOCs() {
-	var (
-		netstatOut []byte
-		resolved   = make(map[string][]string)
-		resolvedMu sync.Mutex
-		wg         sync.WaitGroup
-	)
-
-	s.log("running netstat -n and resolving %d C2 domains in parallel", len(KnownC2Domains))
-
-	wg.Go(func() {
-		netstatOut, _ = exec.Command("netstat", "-n").Output()
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	for _, d := range KnownC2Domains {
-		domain := d
-		wg.Go(func() {
-			routable := resolveRoutableIPs(ctx, domain)
-			if len(routable) == 0 {
-				return
-			}
-			resolvedMu.Lock()
-			resolved[domain] = routable
-			resolvedMu.Unlock()
-		})
-	}
-	wg.Wait()
-
-	totalIPs := 0
-	for _, ips := range resolved {
-		totalIPs += len(ips)
-	}
-	s.log("netstat complete: %d bytes; resolved %d/%d C2 domains to %d IPs", len(netstatOut), len(resolved), len(KnownC2Domains), totalIPs)
-
-	content := string(netstatOut)
-	seen := make(map[string]bool)
-
-	for _, ip := range KnownC2IPs {
-		if !seen[ip] && strings.Contains(content, ip) {
-			seen[ip] = true
-			s.addFinding(Finding{
-				Check:    "network-ioc-active-connection",
-				Severity: SevCritical,
-				Path:     "netstat",
-				Detail:   fmt.Sprintf("Active connection to known C2 indicator '%s'", ip),
-			})
-		}
-	}
-
-	for domain, ips := range resolved {
-		if seen[domain] {
-			continue
-		}
-		for _, ip := range ips {
-			if strings.Contains(content, ip) {
-				seen[domain] = true
-				s.addFinding(Finding{
-					Check:    "network-ioc-active-connection",
-					Severity: SevCritical,
-					Path:     "netstat",
-					Detail:   fmt.Sprintf("Active connection to known C2 indicator '%s' (resolved to %s)", domain, ip),
-				})
-				break
-			}
-		}
-	}
 }
 
 // checkTempArtifacts looks for suspicious files in temp directories.
@@ -744,4 +738,9 @@ func (s *Scanner) persistenceOrDescend(path string) error {
 	}
 	s.walkPersistenceRoot(path)
 	return filepath.SkipDir
+}
+
+func nonNpmUpdateManifest(data []byte) bool {
+	var shape map[string]json.RawMessage
+	return json.Unmarshal(data, &shape) == nil && shape["name"] == nil && shape["scripts"] == nil && shape["main"] == nil && shape["exports"] == nil && shape["url"] != nil && shape["files"] != nil
 }

@@ -16,7 +16,12 @@ func TestExtraRootRunsNormalChecksAndHonorsDeep(t *testing.T) {
 	for _, dependency := range []string{"node_modules/demo", "vendor/demo", "venv/site-packages/demo"} {
 		writeFixture(t, filepath.Join(extra, dependency, "index.js"), "/*RS260605*/")
 	}
-	writeFixture(t, filepath.Join(extra, "vendor", "composer", "installed.json"), `{"packages":[]}`)
+	writeFixture(t, filepath.Join(extra, "vendor", "composer", "installed.json"), `{"packages":[{"name":"demo","autoload":{"files":["index.js"]}}]}`)
+	writeFixture(t, filepath.Join(extra, "node_modules/demo/package.json"), `{"main":"index.js"}`)
+	writeFixture(t, filepath.Join(extra, "venv/site-packages/demo-1.0.dist-info/entry_points.txt"), "[console_scripts]\ndemo = demo.index:main\n")
+	// Python entrypoints use Python modules, not unrelated JavaScript files.
+	writeFixture(t, filepath.Join(extra, "venv/site-packages/demo/index.py"), "/*RS260605*/")
+
 	for _, deep := range []bool{false, true} {
 		s := New(home, false)
 		s.ExtraRoots = []string{extra, extra, filepath.Join(extra, "repo")}
@@ -76,7 +81,7 @@ func TestPlatformDefaultRootsAndHelp(t *testing.T) {
 			if len(roots) != 2 || roots[0] != env["ProgramFiles"] || !strings.Contains(help, "%USERPROFILE%") || strings.Contains(help, "/Applications") {
 				t.Fatalf("bad Windows defaults: %s", help)
 			}
-		} else if !strings.Contains(help, "Default normal scan: ~") || strings.Contains(help, "D:") {
+		} else if !strings.Contains(help, "Default full scan: ~") || strings.Contains(help, "D:") {
 			t.Fatalf("bad Unix defaults: %s", help)
 		}
 		if strings.Contains(help, "/Applications") != (goos == "darwin") {

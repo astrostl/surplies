@@ -35,7 +35,7 @@ func (s *Scanner) persistenceDirs(pattern string) []string {
 	}
 	var matches []string
 	for _, parent := range s.persistenceDirs(filepath.Dir(pattern)) {
-		entries, err := os.ReadDir(parent)
+		entries, err := s.readDir(parent)
 		if err != nil {
 			s.persistenceError(parent, err)
 			continue
@@ -79,7 +79,7 @@ func (s *Scanner) checkPersistenceSiblings(dir string) {
 	if !s.markPersistenceChecked(dir) {
 		return
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := s.readDir(dir)
 	if err != nil {
 		s.persistenceError(dir, err)
 		return
@@ -127,9 +127,11 @@ func (s *Scanner) checkApplicationFile(path string) {
 		return
 	}
 	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
-		if sig, ok := persistenceSignature(data); ok {
+		if sig, ok := persistenceSignature(normalizeASCII(data)); ok {
 			local.addFinding(Finding{Check: "patched-application", Severity: SevCritical, Path: path,
 				Detail: fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack)})
+		} else {
+			local.inspectGeneralContent(path, data)
 		}
 	}) != nil {
 		s.stats.FilesChecked++
@@ -234,37 +236,7 @@ func (s *Scanner) walkPersistenceRoot(root string) {
 		return
 	}
 	_ = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			s.scanError(path, err)
-			return nil
-		}
-		if entry.IsDir() {
-			if s.persistenceWalked[path] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// Most files cannot be persistence entrypoints. Reject them before
-		// allocating or normalizing full paths.
-		if !isPersistenceSidecar(entry.Name()) && !persistenceEntrypointName(entry.Name()) {
-			return nil
-		}
-		// Preserve the caller's path spelling so the ordinary home walk and
-		// fixed-path checks share deduplication keys (e.g. macOS /var aliases).
-		rel, err := filepath.Rel(resolved, path)
-		if err != nil {
-			s.scanError(path, err)
-			return nil
-		}
-		path = filepath.Join(absolute, rel)
-		if isPersistenceSidecar(entry.Name()) {
-			if s.markPersistenceChecked(path) {
-				s.checkRepoArtifactName(path, entry.Name())
-			}
-		} else if discoveredPersistenceEntrypoint(path) {
-			s.checkApplicationFile(path)
-		}
-		return nil
+		return s.visitPersistencePath(absolute, resolved, path, entry, err)
 	})
 	s.persistenceWalked[resolved] = true
 }
@@ -285,4 +257,41 @@ func discoveredPersistenceEntrypoint(path string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Scanner) visitPersistencePath(absolute, resolved, path string, entry os.DirEntry, err error) error {
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	if entry.IsDir() {
+		if s.skipNpmCache(path) || s.skipBrowserStorage(path) {
+			return filepath.SkipDir
+		}
+		if s.persistenceWalked[path] {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	// Most files cannot be persistence entrypoints. Reject them before
+	// allocating or normalizing full paths.
+	if !isPersistenceSidecar(entry.Name()) && !persistenceEntrypointName(entry.Name()) && !extraToolchainPath(path) {
+		return nil
+	}
+	// Preserve the caller's path spelling so the ordinary home walk and
+	// fixed-path checks share deduplication keys (e.g. macOS /var aliases).
+	rel, err := filepath.Rel(resolved, path)
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	path = filepath.Join(absolute, rel)
+	if isPersistenceSidecar(entry.Name()) {
+		if s.markPersistenceChecked(path) {
+			s.checkRepoArtifactName(path, entry.Name())
+		}
+	} else if discoveredPersistenceEntrypoint(path) || extraToolchainPath(path) {
+		s.checkApplicationFile(path)
+	}
+	return nil
 }
