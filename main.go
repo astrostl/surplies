@@ -77,6 +77,15 @@ func printScanSummary(stats ScanStats) {
 		stats.SitePackagesFound, stats.PythonPackagesScanned,
 		stats.ComposerVendorsFound, stats.ComposerPackagesScanned,
 		stats.FilesChecked)
+
+	// Surfaced rather than swallowed: a scan that walked past a synced folder
+	// without reading any of it must not be mistaken for a scan that read it
+	// and found nothing.
+	if stats.FilesUnreadable > 0 {
+		fmt.Fprintf(os.Stderr,
+			"Note: %d file(s) could not be read within %s and were NOT scanned — typically a cloud placeholder the provider could not download (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. Re-run with -v to list them.\n",
+			stats.FilesUnreadable, ReadTimeout)
+	}
 }
 
 func printFindings(findings []Finding, stats ScanStats) {

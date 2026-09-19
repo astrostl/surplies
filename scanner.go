@@ -63,6 +63,10 @@ type Scanner struct {
 	mu       sync.Mutex
 	Verbose  bool
 	stats    ScanStats
+	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
+	// is abandoned after StallThreshold strikes instead of costing
+	// ReadTimeout on every file beneath it. Guarded by mu.
+	stallCounts map[string]int
 }
 
 // ScanStats tracks scan progress.
@@ -74,7 +78,12 @@ type ScanStats struct {
 	ComposerVendorsFound    int
 	ComposerPackagesScanned int
 	FilesChecked            int
-	Duration                time.Duration
+	// FilesUnreadable counts files selected for content scanning whose read
+	// timed out — a cloud placeholder the provider could not materialize, a
+	// stalled network mount, or similar. Counted, not swallowed: a scan that
+	// gave up on a whole synced folder must not read as a clean one.
+	FilesUnreadable int
+	Duration        time.Duration
 }
 
 // New creates a scanner targeting the given home directory.

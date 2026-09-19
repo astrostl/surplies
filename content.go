@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 )
 
 // Content-based checks. Every other check in surplies matches on a path, a
@@ -100,20 +101,139 @@ func isJSFamily(ext string) bool {
 	return false
 }
 
-// readCapped reads up to SignatureScanMaxBytes from path. Returns nil on any
-// error — an unreadable file is not a finding.
-func readCapped(path string) []byte {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil
-	}
-	defer f.Close()
+// ReadTimeout bounds how long a single file read may take.
+//
+// A file under Dropbox, OneDrive, iCloud Drive, or Google Drive may exist as a
+// placeholder whose contents are not on local disk. Opening one asks the
+// provider to fetch it. Usually that works and the file should be scanned —
+// cloud-synced folders hold real repositories, and skipping them outright would
+// be a blind spot in exactly the place this campaign spreads. But when the
+// provider is not running, the account is unlinked, or the file is no longer
+// available server-side, the read blocks indefinitely and then fails. The same
+// happens on a stalled NFS or SMB mount.
+//
+// A timeout covers both: healthy placeholders download and get scanned, broken
+// ones cost a few seconds and are reported. Four MiB from a local disk is
+// effectively instant, so this only ever fires on something genuinely stuck.
+const ReadTimeout = 5 * time.Second
 
-	data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes))
-	if err != nil {
+// StallThreshold is how many reads may time out under one subtree before that
+// subtree is abandoned for the rest of the scan.
+//
+// A timeout alone bounds each individual file but not the scan. An offline
+// Dropbox folder holding a few hundred build configs would cost
+// ReadTimeout × every one of them — technically not a hang, practically still
+// unusable. Three strikes is enough to distinguish "one odd file" from "this
+// whole mount is not answering", and caps the damage at
+// StallThreshold × ReadTimeout per subtree.
+const StallThreshold = 3
+
+// stallKeyDepth is how many path components below the home directory identify
+// a subtree for stall tracking. Three resolves the cloud-provider layouts that
+// matter — `Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`
+// — without lumping all of `Library` together, and degrades sensibly elsewhere
+// (`~/Dropbox` keys on itself; `~/src/project` keys per project).
+const stallKeyDepth = 3
+
+// stallKey identifies the subtree a path belongs to for stall tracking.
+func (s *Scanner) stallKey(path string) string {
+	rel, err := filepath.Rel(s.HomeDir, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		// Outside the home directory (e.g. a global npm install): key on the
+		// containing directory.
+		return filepath.Dir(path)
+	}
+
+	parts := strings.Split(rel, string(filepath.Separator))
+	if len(parts) > stallKeyDepth {
+		parts = parts[:stallKeyDepth]
+	} else if len(parts) > 1 {
+		parts = parts[:len(parts)-1] // drop the filename
+	}
+	return filepath.Join(s.HomeDir, filepath.Join(parts...))
+}
+
+// stalled reports whether a subtree has already been abandoned.
+func (s *Scanner) stalled(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.stallCounts[key] >= StallThreshold
+}
+
+// recordStall notes a timed-out read and, on crossing the threshold, abandons
+// the subtree and records a finding.
+//
+// The finding is deliberately a finding and not a log line: it lands in the
+// JSON output, it appears in the findings list, and it pushes the exit code off
+// zero. A scan that silently gave up on a synced folder full of repositories
+// must never be reportable as a clean scan — which is the same failure mode as
+// a rate-limited API sweep returning empty results and being read as "nothing
+// there".
+func (s *Scanner) recordStall(key, path string) {
+	s.mu.Lock()
+	s.stats.FilesUnreadable++
+	if s.stallCounts == nil {
+		s.stallCounts = make(map[string]int)
+	}
+	s.stallCounts[key]++
+	tripped := s.stallCounts[key] == StallThreshold
+	s.mu.Unlock()
+
+	s.log("read timed out after %s, not scanned: %s", ReadTimeout, path)
+
+	if tripped {
+		s.addFinding(Finding{
+			Check:    "scan-incomplete",
+			Severity: SevWarn,
+			Path:     key,
+			Detail: fmt.Sprintf(
+				"%d reads under this path timed out after %s each, so it was skipped for the rest of the scan and its contents were NOT checked. "+
+					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
+					"Bring it online and re-run to cover it.",
+				StallThreshold, ReadTimeout),
+		})
+	}
+}
+
+// readCapped reads up to SignatureScanMaxBytes from path, giving up after
+// ReadTimeout, and skipping outright if this path's subtree has already proven
+// unresponsive.
+func (s *Scanner) readCapped(path string) []byte {
+	key := s.stallKey(path)
+	if s.stalled(key) {
+		s.mu.Lock()
+		s.stats.FilesUnreadable++
+		s.mu.Unlock()
 		return nil
 	}
-	return data
+
+	// Buffered so a goroutine still blocked on a hung read can send and exit
+	// rather than leaking for the lifetime of the scan.
+	done := make(chan []byte, 1)
+
+	go func() {
+		f, err := os.Open(path)
+		if err != nil {
+			done <- nil
+			return
+		}
+		defer f.Close()
+
+		data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes))
+		if err != nil {
+			done <- nil
+			return
+		}
+		done <- data
+	}()
+
+	select {
+	case data := <-done:
+		return data
+	case <-time.After(ReadTimeout):
+		s.recordStall(key, path)
+		return nil
+	}
 }
 
 // looksLikeText reports whether a buffer is plausibly text rather than a
@@ -206,7 +326,7 @@ func (s *Scanner) checkSourceFile(path, name string) {
 		return
 	}
 
-	data := readCapped(path)
+	data := s.readCapped(path)
 	if data == nil {
 		return
 	}
@@ -326,7 +446,7 @@ func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
 // dropped. A .gitignore listing a file the developer never created is a
 // deliberate concealment step, and it survives cleanup of the file itself.
 func (s *Scanner) checkGitignore(path string) {
-	data := readCapped(path)
+	data := s.readCapped(path)
 	if data == nil {
 		return
 	}
@@ -408,7 +528,7 @@ func (s *Scanner) checkNpmCLI() {
 
 			// Under the size threshold, still read it: a smaller loader stub
 			// carrying a known signature is just as bad.
-			data := readCapped(path)
+			data := s.readCapped(path)
 			if data == nil {
 				continue
 			}

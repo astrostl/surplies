@@ -1,10 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 // findingsFor returns the findings whose Check matches name.
@@ -479,5 +483,100 @@ func TestCleanProjectNoContentFindings(t *testing.T) {
 		if hits := findingsFor(s, check); len(hits) != 0 {
 			t.Errorf("clean project produced %s findings: %v", check, hits)
 		}
+	}
+}
+
+// A named pipe with no writer blocks forever on open/read — the closest
+// faithful stand-in for an offline cloud placeholder that never materializes.
+func mkHangingFile(t *testing.T, path string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFOs are not available on Windows")
+	}
+	if err := syscall.Mkfifo(path, 0644); err != nil {
+		t.Skipf("cannot create FIFO: %v", err)
+	}
+}
+
+func TestReadTimesOutRatherThanHanging(t *testing.T) {
+	dir := t.TempDir()
+	mkHangingFile(t, filepath.Join(dir, "stuck.config.js"))
+
+	s := New(dir, false)
+	start := time.Now()
+	data := s.readCapped(filepath.Join(dir, "stuck.config.js"))
+	elapsed := time.Since(start)
+
+	if data != nil {
+		t.Error("expected nil from a read that cannot complete")
+	}
+	if elapsed > ReadTimeout*2 {
+		t.Errorf("read took %s, expected to give up near %s", elapsed, ReadTimeout)
+	}
+	if s.stats.FilesUnreadable != 1 {
+		t.Errorf("timeout not counted: got %d", s.stats.FilesUnreadable)
+	}
+}
+
+func TestStalledSubtreeAbandonedAndReported(t *testing.T) {
+	dir := t.TempDir()
+	sub := filepath.Join(dir, "Library", "CloudStorage", "Dropbox", "repo")
+	os.MkdirAll(sub, 0755)
+
+	// More hanging files than the threshold. Only the first StallThreshold may
+	// actually cost a timeout; the rest must be skipped instantly.
+	const total = 8
+	for i := range total {
+		mkHangingFile(t, filepath.Join(sub, fmt.Sprintf("a%d.config.js", i)))
+	}
+
+	s := New(dir, false)
+	start := time.Now()
+	s.scanProjectDirs()
+	elapsed := time.Since(start)
+
+	budget := ReadTimeout * (StallThreshold + 1)
+	if elapsed > budget {
+		t.Errorf("scan took %s; breaker should have capped it near %s", elapsed, ReadTimeout*StallThreshold)
+	}
+	if s.stats.FilesUnreadable != total {
+		t.Errorf("want all %d files counted unreadable, got %d", total, s.stats.FilesUnreadable)
+	}
+
+	hits := findingsFor(s, "scan-incomplete")
+	if len(hits) != 1 {
+		t.Fatalf("want exactly 1 scan-incomplete finding, got %d: %v", len(hits), hits)
+	}
+	if hits[0].Severity != SevWarn {
+		t.Errorf("scan-incomplete should be WARN, got %v", hits[0].Severity)
+	}
+	if !strings.HasSuffix(hits[0].Path, filepath.Join("Library", "CloudStorage", "Dropbox")) {
+		t.Errorf("finding should name the sync root, got %s", hits[0].Path)
+	}
+}
+
+func TestStallInOneSubtreeDoesNotBlockAnother(t *testing.T) {
+	dir := t.TempDir()
+
+	bad := filepath.Join(dir, "Library", "CloudStorage", "Dropbox")
+	os.MkdirAll(bad, 0755)
+	for i := range StallThreshold + 2 {
+		mkHangingFile(t, filepath.Join(bad, fmt.Sprintf("b%d.config.js", i)))
+	}
+
+	// A healthy project elsewhere must still be scanned.
+	good := filepath.Join(dir, "src", "app")
+	os.MkdirAll(good, 0755)
+	os.WriteFile(filepath.Join(good, "postcss.config.mjs"),
+		[]byte(`x;var q="Cot%3t=shtP";`), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	if hits := findingsFor(s, "payload-signature"); len(hits) != 1 {
+		t.Errorf("healthy subtree was not scanned: got %d payload-signature findings", len(hits))
+	}
+	if hits := findingsFor(s, "scan-incomplete"); len(hits) != 1 {
+		t.Errorf("want 1 scan-incomplete finding, got %d", len(hits))
 	}
 }

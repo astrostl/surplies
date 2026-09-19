@@ -496,6 +496,20 @@ Checks the global npm CLI entrypoint (`npm/lib/cli.js`) for signs of having been
 
 **Why this matters:** This is the persistence that outlasts everything else. A poisoned project config only runs when that project builds; a patched `cli.js` re-spawns the payload on *every* `npm`, `npx`, or `npm exec` invocation, survives a reboot, and survives a full credential rotation — one developer traced their reinfection to an editor silently running `npm exec <package>@latest` in the background. The real file is a few hundred bytes across every npm major version (four lines that require the implementation); the PolinRider replacement is roughly 1 MB with the payload appended after a long whitespace run starting on line 5. The 100 KiB threshold sits two orders of magnitude above normal and an order below the malicious size, so the check does not depend on either number staying exact.
 
+---
+
+### 21. `scan-incomplete` (WARN)
+
+Reports a subtree the scanner gave up on because reads under it kept timing out.
+
+**How it works:** Every content read is bounded at 5 seconds. Reads that time out are tracked per subtree — keyed on the first three path components below the home directory, which resolves the cloud-provider layouts that matter (`Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`) without lumping all of `~/Library` together. After three timeouts in the same subtree, that subtree is abandoned for the rest of the scan and one finding is emitted naming it.
+
+**Why this matters:** Files under Dropbox, OneDrive, iCloud Drive, or Google Drive often exist only as placeholders whose contents live on the provider's servers. Opening one asks the provider to fetch it. Usually that works, and it *should* — cloud-synced folders hold real repositories, and skipping them outright would be a blind spot in exactly the kind of place this campaign spreads. But when the provider is offline, the account is unlinked, or the file is gone server-side, the read blocks indefinitely and then fails. The same happens on a stalled NFS or SMB mount.
+
+A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
+
+The result is reported as a **finding rather than a log line** on purpose. It lands in the JSON output, it appears in the findings list, and it pushes the exit code off zero — so a scan that quietly gave up on a folder full of repositories can never be mistaken for a scan that read them and found nothing. That is the same failure mode as a rate-limited API sweep returning empty results and being read as "nothing there."
+
 ## Acknowledgments
 
 Every IOC, malicious filename, C2 domain, persistence path, and obfuscation pattern checked by this tool was lifted directly from incident analyses published by others. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs so you can sweep a developer machine for them in a few seconds.
