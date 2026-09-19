@@ -37,14 +37,14 @@ func main() {
 	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower, finds compromised dependencies that have no known advisory)")
-	flag.Func("persistence-root", "additional directory to search recursively for documented persistence (repeatable)", func(path string) error {
+	flag.Func("root", "additional directory to search recursively for documented persistence (repeatable)", func(path string) error {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("persistence root must not be empty")
 		}
 		persistenceRoots = append(persistenceRoots, path)
 		return nil
 	})
-	flag.BoolVar(&coverageDetails, "coverage-details", false, "list individual paths with incomplete scan coverage")
+	flag.BoolVar(&coverageDetails, "cov", false, "list individual paths with incomplete scan coverage")
 	flag.Parse()
 
 	if showVer {
@@ -177,7 +177,7 @@ func printCoverage(coverage []Finding, details bool) {
 	}
 	fmt.Printf("\nCoverage incomplete: %d path(s) could not be fully checked. These are not attack indicators.\n", len(coverage))
 	if !details {
-		fmt.Println("Use --coverage-details or -json to inspect the affected paths.")
+		fmt.Println("Use -cov or -json to inspect the affected paths.")
 		return
 	}
 	for _, f := range coverage {
