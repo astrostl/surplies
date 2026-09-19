@@ -165,6 +165,45 @@ func TestPaddedSourceFileWarnsWithoutSignature(t *testing.T) {
 	}
 }
 
+func TestBinaryFontWithSpaceRunNotFlagged(t *testing.T) {
+	// Regression: a legitimate 21 MB CJK TrueType font was flagged as
+	// padded-source-file because its glyph tables happened to contain 200
+	// consecutive 0x20 bytes. Hiding a payload off the right edge of an editor
+	// is a trick that only means anything in text; in a binary container a run
+	// of spaces is just data.
+	dir := t.TempDir()
+
+	font := []byte{0x00, 0x01, 0x00, 0x00, 0x00, 0x0d, 0x00, 0x80}
+	font = append(font, []byte(strings.Repeat(" ", 400))...)
+	font = append(font, 0x00, 0xff, 0xfe, 0x00)
+	os.WriteFile(filepath.Join(dir, "MicrosoftJhengHei.ttf"), font, 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	if hits := findingsFor(s, "padded-source-file"); len(hits) != 0 {
+		t.Errorf("legitimate binary font with a space run flagged: %v", hits)
+	}
+	if hits := findingsFor(s, "fake-font-payload"); len(hits) != 0 {
+		t.Errorf("legitimate binary font flagged as a fake font: %v", hits)
+	}
+}
+
+func TestPaddedFakeFontStillFlagged(t *testing.T) {
+	// The inverse of the above: a font-named file that really is text must
+	// still be caught, as a critical finding.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "fa-solid-400.woff2"),
+		[]byte("var a=1;"+strings.Repeat(" ", 300)+"var payload=2;"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	if hits := findingsFor(s, "fake-font-payload"); len(hits) != 1 {
+		t.Fatalf("text-bearing fake font not detected: got %d findings", len(hits))
+	}
+}
+
 func TestPaddedSourceFileNotDoubleReported(t *testing.T) {
 	dir := t.TempDir()
 

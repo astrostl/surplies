@@ -444,9 +444,11 @@ Checks build configs, web fonts, dictionary files, and `.vscode/tasks.json` for 
 
 ### 17. `padded-source-file` (WARN)
 
-Flags a JS-family file, dictionary file, or font-extension file containing a run of 200 or more consecutive spaces.
+Flags a JS-family file, dictionary file, or font-extension file whose contents are text and which contains a run of 200 or more consecutive spaces.
 
 **How it works:** A single `strings.Contains` against a precomputed space run, applied only to files that already passed the signature scan without matching. If a known signature matched, this check stays quiet — one injection produces one finding, not two.
+
+The text precondition is load-bearing, not a nicety. Pushing a payload off the right edge of an editor viewport is a trick that only means anything in a file a human reads as text; inside a binary container, a run of `0x20` bytes is just data. A 21 MB CJK TrueType font has ample room to contain 200 consecutive spaces in its glyph tables by coincidence, and flagging that is noise. Fonts that really are text are still caught — as a critical `fake-font-payload` finding, by the magic-number check above.
 
 **Why this matters:** This is the deliberate backstop for `payload-signature`. No formatter, minifier, or bundler produces a 200-space run in a config file; the padding exists purely to push the payload off the right edge of an editor viewport so it is invisible in review. Because it describes the *shape* of the injection rather than any particular payload, it keeps working after the campaign rotates its constants — which it has done once already and will do again. It is a warning rather than a critical finding because the shape alone is not proof, and the honest reading of a hit here is "this looks like an injection we do not have a signature for yet."
 

@@ -296,8 +296,19 @@ func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
 // off the right edge of an editor. Reported as a warning rather than a finding
 // of fact, because the campaign rotates its constants and this is what a
 // rotation past our signature list would look like.
+//
+// The text precondition is load-bearing, not a nicety. Pushing a payload off
+// the right edge of an editor viewport is a trick that only means anything in
+// a file a human reads as text; inside a binary container a run of 0x20 bytes
+// is just data. A 21 MB CJK TrueType font has ample room to contain 200
+// consecutive spaces in its glyph tables by coincidence, and flagging that is
+// noise. Fonts that really are text still get caught — as a critical
+// fake-font-payload finding, by the magic-number check above.
 func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
 	if !isJSFamily(ext) && ext != ".dict" && !isFont {
+		return
+	}
+	if !looksLikeText(data) {
 		return
 	}
 	if !strings.Contains(string(data), paddingRun) {
