@@ -230,12 +230,12 @@ func (s *Scanner) scanProjectDirs() {
 			// second round of package-level checks, but in deep mode the walk
 			// still descends so their file contents are read.
 			if strings.Contains(filepath.Dir(path), "node_modules") {
-				return s.descendOrSkip()
+				return s.persistenceOrDescend(path)
 			}
 			s.stats.NodeModulesFound++
 			s.log("found node_modules: %s", path)
 			s.checkNodeModulesDir(path)
-			return s.descendOrSkip()
+			return s.persistenceOrDescend(path)
 		}
 
 		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
@@ -249,7 +249,7 @@ func (s *Scanner) scanProjectDirs() {
 			// before returning — `.vscode/tasks.json` is the PolinRider
 			// loader and would otherwise never be read.
 			s.scanDirFiles(path)
-			return filepath.SkipDir
+			return s.persistenceOrDescend(path)
 		}
 
 		// A composer vendor/ directory is identified by the presence of
@@ -260,12 +260,12 @@ func (s *Scanner) scanProjectDirs() {
 			installedJSON := filepath.Join(path, "composer", "installed.json")
 			if _, err := os.Stat(installedJSON); err == nil {
 				if strings.Contains(filepath.Dir(path), "vendor") {
-					return s.descendOrSkip()
+					return s.persistenceOrDescend(path)
 				}
 				s.stats.ComposerVendorsFound++
 				s.log("found composer vendor: %s", path)
 				s.checkComposerVendor(path)
-				return s.descendOrSkip()
+				return s.persistenceOrDescend(path)
 			}
 		}
 
@@ -702,4 +702,14 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+// Reuse the project walk for persistence discovery. Only pruned dependency or
+// config trees need a separate names/entrypoints-only walk in default mode.
+func (s *Scanner) persistenceOrDescend(path string) error {
+	if s.Deep {
+		return nil
+	}
+	s.walkPersistenceRoot(path)
+	return filepath.SkipDir
 }

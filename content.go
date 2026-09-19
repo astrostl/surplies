@@ -250,7 +250,7 @@ func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) [
 			}
 		}
 
-		data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes+1))
+		data, err := readScanContent(f, reportTruncation && slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(path))))
 		if err != nil {
 			done <- result{err: err}
 			return
@@ -278,6 +278,24 @@ func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) [
 		s.recordStall(key, path)
 		return nil
 	}
+}
+
+// A recognized font container completes the fake-font check from its header.
+// Binary glyph tables are not JavaScript carriers for this check.
+func readScanContent(r io.Reader, sniffFont bool) ([]byte, error) {
+	if sniffFont {
+		prefix := make([]byte, 32)
+		n, err := io.ReadFull(r, prefix)
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return nil, err
+		}
+		prefix = prefix[:n]
+		if hasFontMagic(prefix) {
+			return prefix, nil
+		}
+		r = io.MultiReader(bytes.NewReader(prefix), r)
+	}
+	return io.ReadAll(io.LimitReader(r, SignatureScanMaxBytes+1))
 }
 
 // looksLikeText reports whether a buffer is plausibly text rather than a
@@ -355,6 +373,10 @@ func hasFontMagic(data []byte) bool {
 // name alone never needs reading.
 func (s *Scanner) checkSourceFile(path, name string) {
 	if s.persistenceChecked[path] {
+		return
+	}
+	if persistenceEntrypointName(name) && discoveredPersistenceEntrypoint(path) {
+		s.checkApplicationFile(path)
 		return
 	}
 	if s.checkRepoArtifactName(path, name) {

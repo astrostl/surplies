@@ -198,7 +198,7 @@ func (s *Scanner) scanError(path string, err error) {
 // https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh
 // https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
 func (s *Scanner) checkPersistenceRoots() {
-	roots := []string{s.HomeDir}
+	var roots []string // Home discovery shares the project walk.
 	if runtime.GOOS == "windows" {
 		for _, key := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
 			if root := os.Getenv(key); root != "" {
@@ -234,19 +234,26 @@ func (s *Scanner) walkPersistenceRoot(root string) {
 		s.scanError(root, err)
 		return
 	}
+	if s.persistenceWalked == nil {
+		s.persistenceWalked = make(map[string]bool)
+	}
+	if s.persistenceWalked[resolved] {
+		return
+	}
 	_ = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			s.scanError(path, err)
 			return nil
 		}
 		if entry.IsDir() {
-			if s.persistenceWalked == nil {
-				s.persistenceWalked = make(map[string]bool)
-			}
 			if s.persistenceWalked[path] {
 				return filepath.SkipDir
 			}
-			s.persistenceWalked[path] = true
+			return nil
+		}
+		// Most files cannot be persistence entrypoints. Reject them before
+		// allocating or normalizing full paths.
+		if !isPersistenceSidecar(entry.Name()) && !persistenceEntrypointName(entry.Name()) {
 			return nil
 		}
 		// Preserve the caller's path spelling so the ordinary home walk and
@@ -266,16 +273,21 @@ func (s *Scanner) walkPersistenceRoot(root string) {
 		}
 		return nil
 	})
+	s.persistenceWalked[resolved] = true
+}
+
+func persistenceEntrypointName(name string) bool {
+	return strings.EqualFold(name, "main.js") || strings.EqualFold(name, "index.js") || strings.EqualFold(name, "cli.js")
 }
 
 func discoveredPersistenceEntrypoint(path string) bool {
-	path = filepath.ToSlash(path)
+	path = strings.ToLower(filepath.ToSlash(path))
 	for _, suffix := range []string{
 		"/resources/app/main.js", "/resources/app/out/main.js",
 		"/@vscode/deviceid/dist/index.js",
 		"/discord_desktop_core/index.js", "/npm/lib/cli.js",
 	} {
-		if strings.HasSuffix(strings.ToLower(path), suffix) {
+		if strings.HasSuffix(path, suffix) {
 			return true
 		}
 	}
