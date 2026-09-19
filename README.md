@@ -54,8 +54,8 @@ surplies -deep        # also read file contents inside dependency directories
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
-surplies --coverage-details  # list paths with incomplete coverage
-surplies --persistence-root /custom/apps  # additional recursive persistence search; repeatable
+surplies -cov  # list paths with incomplete coverage
+surplies -root /custom/apps  # additional recursive persistence search; repeatable
 ```
 
 ### `-deep`
@@ -95,7 +95,7 @@ surplies -json | jq '.[] | select(.severity == "CRITICAL")'
 
 The scanner runs five phases sequentially:
 
-1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `--persistence-root` directories; also warn on documented runtime/staging paths
+1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
 2. **Project directory scanning** — walk home directory once, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The walk stops at dependency directories rather than descending into them unless `-deep` is set
 3. **Python site-packages scanning** — walk home directory + system Python paths, inspect every `site-packages`
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
@@ -546,7 +546,7 @@ Reports general project/persistence traversal errors, failed content reads, the 
 
 A timeout alone bounds each file but not the scan: an offline Dropbox folder holding a few hundred build configs would cost 5 seconds times every one of them. Three strikes is enough to tell "one odd file" from "this whole mount is not answering," and caps the cost at 15 seconds per subtree.
 
-Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. Use `--coverage-details` to list affected paths. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
+Coverage limitations appear in a compact, separate summary in text output; they are not counted as attack indicators. Use `-cov` to list affected paths. JSON retains individual `scan-incomplete` records, and incomplete coverage still produces a nonzero exit status.
 
 ### 22. `patched-application` (CRITICAL)
 
@@ -564,7 +564,7 @@ Adjacent `*.inz.cjs` / `*.inz.orig` files produce `malicious-repo-artifact` find
 
 Persistence discovery shares the project walk under home and recursively searches `/usr/local/lib`, `/opt`, `/usr/lib`, and `/usr/share` on Unix, plus `/Applications` on macOS; Windows searches home and Program Files. Discovery crosses dependency directories even without `-deep` and recognizes renamed app bundles and custom npm prefixes. It reads selected entrypoints, not every file's contents. The public [NullReceiver scanner](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh) supplies the recursive sidecar/entrypoint approach; [StepSecurity](https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise) documents the application targets. Search roots are coverage choices, not additional IOCs.
 
-Use `--persistence-root /custom/apps` (repeatable) to include other locations. Root symlinks are resolved; directory symlinks encountered within a tree are not traversed. Supply their destination as another root when needed. Overlapping recursive roots are deduplicated. ASAR archives are not unpacked. Signature matching does not unpack obfuscated code, and absence of a marker does not establish that the host was never compromised.
+Use `-root /custom/apps` (repeatable) to include other locations. Root symlinks are resolved; directory symlinks encountered within a tree are not traversed. Supply their destination as another root when needed. Overlapping recursive roots are deduplicated. ASAR archives are not unpacked. Signature matching does not unpack obfuscated code, and absence of a marker does not establish that the host was never compromised.
 
 ### 23. `font-execution-task` (CRITICAL)
 
