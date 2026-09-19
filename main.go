@@ -64,18 +64,7 @@ func main() {
 	findings, stats := s.Run()
 
 	invocation := invocationLabel(version, os.Args[1:])
-	if jsonOutput {
-		indicators, coverage := splitFindings(findings)
-		fmt.Fprintln(os.Stderr, resultSummary(invocation, indicators))
-		if len(coverage) > 0 {
-			fmt.Fprintf(os.Stderr, "Coverage incomplete: %d path(s); see scan-incomplete JSON records.\n", len(coverage))
-		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		enc.Encode(findings)
-	} else {
-		printFindings(findings, stats, coverageDetails, invocation)
-	}
+	printResults(findings, stats, jsonOutput, coverageDetails, invocation)
 
 	// Exit code reflects worst severity
 	exitCode := 0
@@ -89,6 +78,24 @@ func main() {
 		}
 	}
 	os.Exit(exitCode)
+}
+
+func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetails bool, invocation string) {
+	if jsonOutput {
+		indicators, coverage := splitFindings(findings)
+		if len(coverage) > 0 {
+			fmt.Fprintf(os.Stderr, "Coverage incomplete: %d path(s); see scan-incomplete JSON records.\n", len(coverage))
+		}
+		enc := json.NewEncoder(os.Stdout)
+		enc.SetIndent("", "  ")
+		enc.Encode(findings)
+		fmt.Fprintln(os.Stderr, resultSummary(invocation, indicators))
+	} else {
+		printFindings(findings, stats, coverageDetails)
+		indicators, _ := splitFindings(findings)
+		fmt.Println(resultSummary(invocation, indicators))
+	}
+
 }
 
 func printScanSummary(stats ScanStats) {
@@ -114,7 +121,7 @@ func printScanSummary(stats ScanStats) {
 	}
 }
 
-func printFindings(findings []Finding, stats ScanStats, coverageDetails bool, invocation string) {
+func printFindings(findings []Finding, stats ScanStats, coverageDetails bool) {
 	indicators, coverage := splitFindings(findings)
 	findings = indicators
 	defer printCoverage(coverage, coverageDetails)
@@ -137,14 +144,11 @@ func printFindings(findings []Finding, stats ScanStats, coverageDetails bool, in
 		fmt.Printf("Checked for: %s.\n\n", strings.Join(names, ", "))
 		printScanSummary(stats)
 		fmt.Println()
-		fmt.Println(resultSummary(invocation, findings))
 		return
 	}
 
 	printScanSummary(stats)
 	fmt.Fprintln(os.Stderr)
-
-	fmt.Printf("%s\n\n", resultSummary(invocation, findings))
 
 	for _, f := range findings {
 		marker := " "

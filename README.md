@@ -77,7 +77,7 @@ Expect `padded-source-file` warnings in deep mode that you do not see otherwise.
 
 A scan without `-deep` says so in its summary, so a fast clean scan is never mistaken for a thorough one.
 
-Text results include the version and supplied flags, for example `surplies 0.9.2 -deep : No supply chain attack indicators found.` Progress and stats go to stderr. Findings go to stdout. In JSON mode the version/flags/result summary goes to stderr, leaving the stdout findings array unchanged. This means `-json` output is clean for piping:
+The final output line includes the version, supplied flags, and result, after all findings and coverage details, for example `surplies 0.9.2 -deep : No supply chain attack indicators found.` Progress and stats go to stderr. Findings go to stdout. In JSON mode the final summary is written to stderr after the JSON, leaving the stdout findings array unchanged. This means `-json` output is clean for piping:
 
 ```sh
 surplies -json | jq '.[] | select(.severity == "CRITICAL")'
