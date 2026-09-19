@@ -14,7 +14,7 @@ import (
 // e.g., "litellm-1.82.7.dist-info" -> package "litellm", version "1.82.7"
 var distInfoVersionRe = regexp.MustCompile(`^(.+)-(\d+\..+)\.dist-info$`)
 
-// scanPythonPackages walks the home directory looking for site-packages directories
+// scanPythonPackages walks home and additional roots looking for site-packages directories
 // and checks them for compromised packages and malicious .pth files.
 func (s *Scanner) scanPythonPackages() {
 	// Also check well-known system paths outside home dir for .pth files and bad versions.
@@ -31,8 +31,9 @@ func (s *Scanner) scanPythonPackages() {
 	}
 
 	// Walk home dir for virtualenvs and ~/.local site-packages
-	filepath.WalkDir(s.HomeDir, func(path string, d os.DirEntry, err error) error {
+	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
 		if err != nil {
+			s.scanError(path, err)
 			return nil
 		}
 		if !d.IsDir() {
@@ -46,11 +47,8 @@ func (s *Scanner) scanPythonPackages() {
 				return filepath.SkipDir
 			}
 			s.checkSitePackagesDir(path, entries)
-			// This walk is only hunting for site-packages ROOTS; the project
-			// walk handles file contents and never pruned this subtree in the
-			// first place. Stopping here therefore costs only nested roots —
-			// a venv inside a project inside another venv — which deep mode
-			// keeps looking for.
+			// Package metadata is checked in either mode; deep also discovers
+			// nested environments. The project walk handles content checks.
 			return s.descendOrSkip()
 		}
 		return nil

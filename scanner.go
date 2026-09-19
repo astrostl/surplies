@@ -83,7 +83,7 @@ type Scanner struct {
 	// Explicit persistence checks bypass dependency boundaries; avoid reporting
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
-	PersistenceRoots   []string
+	ExtraRoots         []string
 	persistenceWalked  map[string]bool
 }
 
@@ -140,6 +140,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	start := time.Now()
 
 	fmt.Fprintf(os.Stderr, "Scanning home directory: %s\n", s.HomeDir)
+	for _, root := range s.ExtraRoots {
+		fmt.Fprintf(os.Stderr, "Additional scan root: %s\n", root)
+	}
 	fmt.Fprintf(os.Stderr, "Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 
 	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
@@ -211,11 +214,11 @@ func (s *Scanner) checkArtifacts() {
 	}
 }
 
-// scanProjectDirs walks the home directory once, looking for node_modules to inspect
+// scanProjectDirs walks home and each additional scan root, looking for node_modules to inspect
 // for compromised npm packages AND for project-local config directories (.claude, .vscode)
 // that supply chain attacks are known to drop payload files into.
 func (s *Scanner) scanProjectDirs() {
-	filepath.WalkDir(s.HomeDir, func(path string, d os.DirEntry, err error) error {
+	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			s.scanError(path, err)
 			return nil
@@ -226,6 +229,9 @@ func (s *Scanner) scanProjectDirs() {
 			return nil
 		}
 
+		if d.Name() == "site-packages" {
+			return s.persistenceOrDescend(path)
+		}
 		if d.Name() == "node_modules" {
 			// Nested node_modules (node_modules inside node_modules) get no
 			// second round of package-level checks, but in deep mode the walk

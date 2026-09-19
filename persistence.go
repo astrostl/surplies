@@ -186,28 +186,32 @@ func (s *Scanner) scanError(path string, err error) {
 // depending on product directory names. Roots select coverage, not new IOCs.
 // https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh
 // https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
-func (s *Scanner) checkPersistenceRoots() {
+func defaultPersistenceRoots() []string {
+	return persistenceRootsForOS(runtime.GOOS, os.Getenv)
+}
+
+func persistenceRootsForOS(goos string, getenv func(string) string) []string {
 	var roots []string // Home discovery shares the project walk.
-	if runtime.GOOS == "windows" {
+	if goos == "windows" {
 		for _, key := range []string{"ProgramFiles", "ProgramFiles(x86)"} {
-			if root := os.Getenv(key); root != "" {
+			if root := getenv(key); root != "" {
 				roots = append(roots, root)
 			}
 		}
 	} else {
-		roots = append(roots, "/usr/local/lib", "/opt", "/usr/lib", "/usr/share")
-		if runtime.GOOS == "darwin" {
+		if goos == "darwin" {
 			roots = append(roots, "/Applications")
 		}
+		roots = append(roots, "/usr/local/lib", "/opt", "/usr/lib", "/usr/share")
 	}
-	for _, root := range roots {
+	return roots
+}
+
+func (s *Scanner) checkPersistenceRoots() {
+	for _, root := range defaultPersistenceRoots() {
 		if _, err := os.Stat(root); os.IsNotExist(err) {
 			continue
 		}
-		s.walkPersistenceRoot(root)
-	}
-	// Explicit roots must report missing paths rather than silently skip them.
-	for _, root := range s.PersistenceRoots {
 		s.walkPersistenceRoot(root)
 	}
 }
