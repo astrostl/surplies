@@ -18,7 +18,7 @@ A cross-platform CLI tool that scans your home directory (and well-known system 
 ## Design principles
 
 - **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The sole exception is `netstat`, used only for live network connection IOC matching where no filesystem equivalent exists.
-- **Report only, never remediate.** Read-only scanner. Never deletes files, uninstalls packages, modifies configs, or takes any corrective action. Findings are reported; the user decides what to do.
+- **Report only, never remediate.** Read-only scanner. Scans never delete files, uninstall packages, modify configs, or take corrective action. The explicit `schedule` command installs scheduling files for the current user. Findings are reported; the user decides what to do.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
 - **Zero dependencies.** stdlib only. No third-party Go modules.
@@ -57,6 +57,35 @@ surplies -version     # print version
 surplies -cov  # list paths with incomplete coverage
 surplies -root /custom/path  # additional normal scan root; repeatable
 ```
+
+### Scheduled scans
+
+```sh
+surplies schedule                # install daily scans at 9 AM local time
+surplies schedule -time 14:30    # install or update the daily run time
+surplies schedule disable       # stop scheduled scans; keep installed files
+surplies schedule remove        # stop and remove the schedule and helper
+```
+
+Detects macOS (launchd) or Linux (a systemd user timer), installs the notification
+helper, and activates the schedule for the current user. Run from your normal
+user account, without `sudo`, using an installed binary you intend to keep.
+Rerunning updates the same schedule. The helper uses the installed executable's
+absolute path, so it does not depend on your interactive shell's `PATH`.
+
+Scans use the default options (`-q`). Clean scans are silent; nonzero results,
+including incomplete coverage, trigger a desktop notification. Run `surplies`
+for details. Linux requires a running systemd user manager, `notify-send`
+(libnotify), and a desktop notification session. Scheduled scans run under your
+user account and its permissions; they do not require administrator access.
+
+Disabling also stops a currently running scheduled scan. Run `surplies schedule`
+again to enable daily scans at 9 AM, or supply `-time` for a different time.
+Removal keeps the `surplies` binary and existing scan logs.
+
+See [scheduling details](scripts/README.md) for installed files, removal commands,
+and manual alternatives. If you previously configured cron, remove that entry
+to avoid duplicate scans.
 
 ### `-deep`
 

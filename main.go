@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -25,6 +26,14 @@ func init() {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "schedule" {
+		if err := scheduleCommand(os.Args[2:], os.Stdout); err != nil && !errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	var (
 		jsonOutput      bool
 		quiet           bool
@@ -48,6 +57,10 @@ func main() {
 	flag.BoolVar(&coverageDetails, "cov", false, "show coverage failures grouped by cause")
 	flag.Usage = printUsage
 	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected argument: %s\n", flag.Arg(0))
+		os.Exit(1)
+	}
 
 	if showVer {
 		fmt.Printf("surplies %s\n", version)
@@ -262,7 +275,7 @@ func resultSummary(invocation string, indicators []Finding) string {
 
 func printUsage() {
 	out := flag.CommandLine.Output()
-	fmt.Fprintln(out, "Usage: surplies [flags]")
+	fmt.Fprintln(out, "Usage: surplies [flags]\n       surplies schedule [-time HH:MM]\n       surplies schedule disable|remove\n\nSchedule daily scans with desktop notifications (default: 09:00 local time).")
 	fmt.Fprintln(out)
 	flag.VisitAll(func(f *flag.Flag) {
 		name := f.Name
