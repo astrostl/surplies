@@ -33,7 +33,7 @@ func main() {
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
 	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
-	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower; finds compromised dependencies that have no published advisory yet)")
+	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower, finds compromised dependencies that have no known advisory)")
 	flag.Parse()
 
 	if showVer {
