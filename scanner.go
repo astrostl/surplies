@@ -88,6 +88,8 @@ type Scanner struct {
 	contentIO          *contentReadStats
 	nextReadReport     int64
 	debug              *scanDebug
+	discovery          *scanDiscovery
+	reads              *contentCache
 }
 
 // ScanStats tracks scan progress.
@@ -126,6 +128,7 @@ func New(homeDir string, verbose bool) *Scanner {
 		HomeDir:   homeDir,
 		Verbose:   verbose,
 		contentIO: new(contentReadStats),
+		reads:     newContentCache(),
 	}
 }
 
@@ -177,7 +180,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
 	}
-	s.scanProjectDirs()
+	s.scanSharedDiscovery()
 	if s.Deep {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Deep dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
 	}
@@ -211,8 +214,6 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.stats.Deep = s.Deep
 	s.stats.Git = s.Git
 	s.stats.Duration = time.Since(start)
-	s.progress("\n")
-
 	s.stats.Debug = s.debug.snapshot()
 	return s.Findings, s.stats
 }
@@ -254,71 +255,73 @@ func (s *Scanner) checkArtifacts() {
 // for compromised npm packages AND for project-local config directories (.claude, .vscode)
 // that supply chain attacks are known to drop payload files into.
 func (s *Scanner) scanProjectDirs() {
-	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
-		if err != nil {
-			s.scanError(path, err)
-			return nil
-		}
+	s.walkScanRoots(s.visitProject)
+}
 
-		if !d.IsDir() {
-			if s.routineContentFile(path, d.Name()) {
-				s.checkSourceFile(path, d.Name())
-			}
-			return nil
-		}
-
-		if d.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		if d.Name() == "site-packages" {
-			return s.persistenceOrDescend(path)
-		}
-		if d.Name() == "node_modules" {
-			// Nested node_modules (node_modules inside node_modules) get no
-			// second round of package-level checks, but in deep mode the walk
-			// still descends so their file contents are read.
-			if strings.Contains(filepath.Dir(path), "node_modules") {
-				return s.persistenceOrDescend(path)
-			}
-			s.stats.NodeModulesFound++
-			s.log("found node_modules: %s", path)
-			s.checkNodeModulesDir(path)
-			return s.persistenceOrDescend(path)
-		}
-
-		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
-			s.log("checking project config dir: %s", path)
-			s.checkProjectArtifactDir(path, files)
-			if s.Deep {
-				// Descend instead, so nested files are read too.
-				return nil
-			}
-			// The walk stops here, so inspect this directory's own files
-			// before returning — `.vscode/tasks.json` is the PolinRider
-			// loader and would otherwise never be read.
-			s.scanDirFiles(path)
-			return s.persistenceOrDescend(path)
-		}
-
-		// A composer vendor/ directory is identified by the presence of
-		// vendor/composer/installed.json. We don't blindly SkipDir on every
-		// "vendor" since that name is reused by Go modules and others — only
-		// stop recursing when we've confirmed it's a Composer install.
-		if d.Name() == "vendor" {
-			installedJSON := filepath.Join(path, "composer", "installed.json")
-			if _, err := os.Stat(installedJSON); err == nil {
-				if strings.Contains(filepath.Dir(path), "vendor") {
-					return s.persistenceOrDescend(path)
-				}
-				s.stats.ComposerVendorsFound++
-				s.log("found composer vendor: %s", path)
-				s.checkComposerVendor(path)
-				return s.persistenceOrDescend(path)
-			}
-		}
-
+func (s *Scanner) visitProject(path string, d os.DirEntry, err error) error {
+	if err != nil {
+		s.scanError(path, err)
 		return nil
-	})
+	}
+
+	if !d.IsDir() {
+		if s.routineContentFile(path, d.Name()) {
+			s.checkSourceFile(path, d.Name())
+		}
+		return nil
+	}
+
+	if d.Name() == ".git" {
+		return filepath.SkipDir
+	}
+	if d.Name() == "site-packages" {
+		return s.persistenceOrDescend(path)
+	}
+	if d.Name() == "node_modules" {
+		// Nested node_modules (node_modules inside node_modules) get no
+		// second round of package-level checks, but in deep mode the walk
+		// still descends so their file contents are read.
+		if strings.Contains(filepath.Dir(path), "node_modules") {
+			return s.persistenceOrDescend(path)
+		}
+		s.stats.NodeModulesFound++
+		s.log("found node_modules: %s", path)
+		s.checkNodeModulesDir(path)
+		return s.persistenceOrDescend(path)
+	}
+
+	if files, ok := KnownProjectArtifacts[d.Name()]; ok {
+		s.log("checking project config dir: %s", path)
+		s.checkProjectArtifactDir(path, files)
+		if s.Deep {
+			// Descend instead, so nested files are read too.
+			return nil
+		}
+		// The walk stops here, so inspect this directory's own files
+		// before returning — `.vscode/tasks.json` is the PolinRider
+		// loader and would otherwise never be read.
+		s.scanDirFiles(path)
+		return s.persistenceOrDescend(path)
+	}
+
+	// A composer vendor/ directory is identified by the presence of
+	// vendor/composer/installed.json. We don't blindly SkipDir on every
+	// "vendor" since that name is reused by Go modules and others — only
+	// stop recursing when we've confirmed it's a Composer install.
+	if d.Name() == "vendor" {
+		installedJSON := filepath.Join(path, "composer", "installed.json")
+		if _, err := os.Stat(installedJSON); err == nil {
+			if strings.Contains(filepath.Dir(path), "vendor") {
+				return s.persistenceOrDescend(path)
+			}
+			s.stats.ComposerVendorsFound++
+			s.log("found composer vendor: %s", path)
+			s.checkComposerVendor(path)
+			return s.persistenceOrDescend(path)
+		}
+	}
+
+	return nil
 }
 
 // descendOrSkip returns the walk verdict for a dependency directory whose

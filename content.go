@@ -256,9 +256,8 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 			return
 		default:
 		}
-		s.debug.event("read", path, 0, 0)
 		readStart := time.Now()
-		data, binary, err := readScanContent(f, strings.ToLower(filepath.Ext(path)), source, fileStats, slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == filepath.Base(path) }))
+		data, binary, err := s.readCachedContent(f, path, source, fileStats)
 		readTime = time.Since(readStart)
 		if binary {
 			s.contentIO.binary.Add(1)
@@ -274,6 +273,7 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		}
 		local := New(s.HomeDir, false)
 		local.contentIO = s.contentIO
+		local.reads = s.reads
 		local.Deep = s.Deep
 		local.debug = s.debug
 		s.debug.event("inspect", path, fileStats.bytes.Load(), readTime)

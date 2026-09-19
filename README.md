@@ -130,14 +130,14 @@ The dropper's corresponding SHA-1 Git blob identity is `9b2e3a349e377ba2985c593c
 
 ## Scan phases
 
-The scanner runs five phases sequentially, followed by Git inspection when requested:
+The scanner runs five phases sequentially, followed by local Git history inspection:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
-2. **Project directory scanning** — walk home and each additional `-root` directory, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The walk stops at dependency directories rather than descending into them unless `-deep` is set
-3. **Python site-packages scanning** — walk home and additional `-root` directories + system Python paths, inspect every `site-packages`
+2. **Project directory scanning** — walk home and each additional `-root` directory, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases; dependency checks select declared entrypoints and known payload candidates
+3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
 5. **Temp directory artifacts** — check temp dirs for payload remnants
-6. **Git payload hashes (only with `-git` or `-a`)** — inspect blobs reachable from local refs/history against the active payload hash list
+6. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
 
 ## Checks
 
@@ -723,6 +723,12 @@ Each excluded store is logged immediately and appears once as an informational `
 Installed `node_modules` and `.npm/_npx` installations retain metadata/lifecycle checks and deep declared-entrypoint inspection. Executable plugin caches retain source checks outside dependency boundaries. Extracted uv package bodies are not broadly read; known candidate names and nested installed-package metadata remain discoverable.
 
 ### Performance diagnostics
+
+Directory discovery is shared across project, Python, and Git checks. Content reads
+use a 32 MiB in-memory cache shared by checks, with file identity, size, modification
+time, and mode checked before reuse. Eviction causes a fresh read; it never excludes
+a file from inspection. Separate installed copies remain independently checked.
+Debug reports distinguish actual reads from content cache hits (`CacheHits`).
 
 Run `./surplies -q -debug` for a quiet terminal and a detailed debug log.
 The private log path is printed alongside the saved report. Without `-q`, debug

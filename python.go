@@ -31,30 +31,38 @@ func (s *Scanner) scanPythonPackages() {
 		s.checkSitePackagesDir(sp, entries)
 	}
 
-	// Walk home dir for virtualenvs and ~/.local site-packages
-	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
+	if s.discovery != nil {
+		for _, path := range s.discovery.python {
+			s.visitPython(path, nil, nil)
+		}
+		return
+	}
+	s.walkScanRoots(s.visitPython)
+}
+
+func (s *Scanner) visitPython(path string, d os.DirEntry, err error) error {
+
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	if d != nil && !d.IsDir() {
+		return nil
+	}
+	if filepath.Base(path) == "site-packages" {
+		s.stats.SitePackagesFound++
+		s.log("found site-packages: %s", path)
+		entries, err := s.readDir(path)
 		if err != nil {
 			s.scanError(path, err)
-			return nil
+			return filepath.SkipDir
 		}
-		if !d.IsDir() {
-			return nil
-		}
-		if d.Name() == "site-packages" {
-			s.stats.SitePackagesFound++
-			s.log("found site-packages: %s", path)
-			entries, err := s.readDir(path)
-			if err != nil {
-				s.scanError(path, err)
-				return filepath.SkipDir
-			}
-			s.checkSitePackagesDir(path, entries)
-			// Package metadata is checked in either mode; deep also discovers
-			// nested environments. The project walk handles content checks.
-			return s.descendOrSkip()
-		}
-		return nil
-	})
+		s.checkSitePackagesDir(path, entries)
+		// Package metadata is checked in either mode; deep also discovers
+		// nested environments. The project walk handles content checks.
+		return s.descendOrSkip()
+	}
+	return nil
 }
 
 // checkSitePackagesDir runs all Python-related checks on a single site-packages directory.

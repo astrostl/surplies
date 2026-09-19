@@ -66,6 +66,12 @@ func (s *Scanner) scanGitRepositories() {
 		return
 	}
 	seen := make(map[string]bool)
+	if s.discovery != nil {
+		for _, path := range s.discovery.git {
+			s.checkGitRepository(path, seen)
+		}
+		return
+	}
 	s.walkScanRoots(func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			s.scanError(path, err)
