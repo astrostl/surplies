@@ -1067,6 +1067,8 @@ type PayloadSignature struct {
 	Signature string
 	Desc      string
 	Attack    string
+	// Requires adds context for short strings that are not distinctive alone.
+	Requires string
 }
 
 // KnownPayloadSignatures are byte sequences that identify an injected payload
@@ -1130,6 +1132,45 @@ var KnownPayloadSignatures = []PayloadSignature{
 	{Signature: `0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a`, Desc: "NullReceiver C2-resolver wallet address (EIP-55 checksummed form)", Attack: "polinrider (DPRK)"},
 	{Signature: `/0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
 	{Signature: `/0x/ls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+
+	// Application persistence markers and additional stage paths recovered in
+	// the Joyfill analysis. Match published literals, not arbitrary date tags.
+	// https://socket.dev/blog/joyfill-npm-beta-releases-compromised
+	// https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
+	{Signature: `/*RS260605*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250617A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250618A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250619A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C250620A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C260511A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/*C260512A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/js`, Desc: "PolinRider additional JavaScript fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `ThZG+0jfXE6VAGOJ`, Desc: "DEV#POPPER boot-stage XOR key", Attack: "polinrider (DPRK)"},
+
+	// Community corroboration of the exact markers, including the backup suffix.
+	// Do not copy ByteGuard's broad date-marker regex or unrelated family labels.
+	// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
+	{Signature: `__inzCR`, Desc: "PolinRider application loader identifier", Attack: "polinrider (DPRK)"},
+	{Signature: `/*M260630A*/`, Desc: "PolinRider application build marker", Attack: "polinrider (DPRK)"},
+
+	// Exact XOR keys and payload-header name independently published by Amazon
+	// Inspector. The lowercase header is matched case-insensitively below.
+	// https://osv.dev/vulnerability/MAL-2026-15636
+	// https://osv.dev/vulnerability/MAL-2026-12324
+	{Signature: `q4FZkxX{!h,Sr3=@`, Desc: "NullReceiver cls-stage XOR key", Attack: "polinrider (DPRK)"},
+	{Signature: `y-p_>d$0B&@^1aQk`, Desc: "NullReceiver ls-stage XOR key", Attack: "polinrider (DPRK)"},
+	{Signature: `x-payload-b64`, Desc: "NullReceiver payload response header", Attack: "polinrider (DPRK)"},
+
+	// https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/iocs/iocs.csv
+	{Signature: `/0x/clb`, Desc: "NullReceiver RAT fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `/$/boot`, Desc: "NullReceiver boot-stage fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `/verify-human/`, Desc: "NullReceiver status beacon path", Attack: "polinrider (DPRK)"},
+	{Signature: `helloipbot!!`, Desc: "NullReceiver dead-drop recipient marker", Attack: "polinrider (DPRK)"},
+	{Signature: `68656c6c6f6970626f742121`, Desc: "NullReceiver hex-encoded dead-drop recipient marker", Attack: "polinrider (DPRK)"},
+	// The upload path alone is too short for a meaningful content finding.
+	// Both the endpoint and Socket.IO client are documented in this RAT:
+	// https://socket.dev/blog/joyfill-npm-beta-releases-compromised
+	{Signature: `/u/f`, Requires: `socket.io-client`, Desc: "PolinRider multipart upload path alongside its Socket.IO client", Attack: "polinrider (DPRK)"},
 }
 
 // SignatureScannedExtensions are file extensions worth reading for
@@ -1269,6 +1310,82 @@ func NpmCLIGlobs(homeDir string) []string {
 // magnitude above normal and three below the malicious size, so it does not
 // depend on either number staying exact.
 const NpmCLIMaxNormalBytes = 100 << 10 // 100 KiB
+
+// ApplicationEntrypointGlobs locates the documented injection targets in
+// conventional installation layouts. Layouts are discovery paths, not IOCs:
+// presence alone never flags an application. Recursive discovery supplements
+// these patterns for custom installs; ASAR archives are not unpacked. No installed executable is invoked.
+// Targets: https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
+// Roots: https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh
+// VS Code out/main.js and exact __inzCR / M260630A markers:
+// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts
+func ApplicationEntrypointGlobs(home, goos string, getenv func(string) string) []string {
+	var roots, discord []string
+	switch goos {
+	case "darwin":
+		for _, base := range []string{"/Applications", filepath.Join(home, "Applications")} {
+			for _, app := range []string{"Visual Studio Code", "Visual Studio Code - Insiders", "Cursor", "Antigravity", "GitHub Desktop"} {
+				roots = append(roots, filepath.Join(base, app+".app", "Contents", "Resources", "app"))
+			}
+		}
+		discord = append(discord, filepath.Join(home, "Library", "Application Support", "discord*"))
+	case "windows":
+		roots, discord = windowsApplicationRoots(home, getenv)
+	default:
+		for _, base := range []string{"/usr/share", "/usr/lib", "/opt", filepath.Join(home, ".local", "share")} {
+			for _, app := range []string{"code", "code-insiders", "cursor", "Cursor", "antigravity", "github-desktop"} {
+				roots = append(roots, filepath.Join(base, app, "resources", "app"))
+			}
+		}
+		config := getenv("XDG_CONFIG_HOME")
+		if config == "" {
+			config = filepath.Join(home, ".config")
+		}
+		discord = append(discord, filepath.Join(config, "discord*"))
+	}
+	var paths []string
+	for _, root := range roots {
+		for _, target := range []string{"out/main.js", "main.js", "node_modules/@vscode/deviceid/dist/index.js"} {
+			paths = append(paths, filepath.Join(root, filepath.FromSlash(target)))
+		}
+	}
+	for _, root := range discord {
+		paths = append(paths,
+			filepath.Join(root, "*", "modules", "discord_desktop_core*", "discord_desktop_core", "index.js"),
+			filepath.Join(root, "modules", "discord_desktop_core*", "discord_desktop_core", "index.js"))
+	}
+	return paths
+}
+
+func windowsApplicationRoots(home string, getenv func(string) string) (roots, discord []string) {
+	for _, base := range []string{getenv("ProgramFiles"), getenv("ProgramFiles(x86)"), filepath.Join(home, "AppData", "Local", "Programs")} {
+		if base == "" {
+			continue
+		}
+		for _, app := range []string{"Microsoft VS Code", "Microsoft VS Code Insiders", "cursor", "Antigravity"} {
+			roots = append(roots, filepath.Join(base, app, "resources", "app"))
+		}
+	}
+	local := getenv("LOCALAPPDATA")
+	if local == "" {
+		local = filepath.Join(home, "AppData", "Local")
+	}
+	for _, app := range []string{"Microsoft VS Code", "cursor", "Antigravity"} {
+		roots = append(roots, filepath.Join(local, "Programs", app, "resources", "app"))
+	}
+	roots = append(roots, filepath.Join(local, "GitHubDesktop", "app-*", "resources", "app"))
+	roaming := getenv("APPDATA")
+	if roaming == "" {
+		roaming = filepath.Join(home, "AppData", "Roaming")
+	}
+	discord = append(discord, filepath.Join(roaming, "discord*"), filepath.Join(local, "Discord*", "app-*"))
+	return roots, discord
+}
+
+// Public staging paths, warnings only because these names also have benign uses.
+// https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/iocs/iocs.csv
+// The same source identifies ~/.node_modules/node_modules as runtime storage.
+var NullReceiverStagingNames = []string{"get-pip.py", ".pip", ".npm"}
 
 // --- Network IOCs ---
 

@@ -79,6 +79,11 @@ type Scanner struct {
 	// is abandoned after StallThreshold strikes instead of costing
 	// ReadTimeout on every file beneath it. Guarded by mu.
 	stallCounts map[string]int
+	// Explicit persistence checks bypass dependency boundaries; avoid reporting
+	// those same files again in the home walk.
+	persistenceChecked map[string]bool
+	PersistenceRoots   []string
+	persistenceWalked  map[string]bool
 }
 
 // ScanStats tracks scan progress.
@@ -91,7 +96,7 @@ type ScanStats struct {
 	ComposerPackagesScanned int
 	FilesChecked            int
 	// FilesUnreadable counts files selected for content scanning whose read
-	// timed out — a cloud placeholder the provider could not materialize, a
+	// failed or timed out — a cloud placeholder the provider could not materialize, a
 	// stalled network mount, or similar. Counted, not swallowed: a scan that
 	// gave up on a whole synced folder must not read as a clean one.
 	FilesUnreadable int
@@ -113,6 +118,13 @@ func New(homeDir string, verbose bool) *Scanner {
 func (s *Scanner) addFinding(f Finding) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if f.Check == "scan-incomplete" {
+		for _, previous := range s.Findings {
+			if previous.Check == f.Check && previous.Path == f.Path {
+				return
+			}
+		}
+	}
 	s.Findings = append(s.Findings, f)
 }
 
@@ -134,6 +146,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "[1/5] Checking known malicious artifacts...\n")
 	s.checkArtifacts()
 	s.checkNpmCLI()
+	s.checkApplicationPersistence()
+	s.checkPersistenceRoots()
+	s.checkRuntimeStaging()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
 	mode := "names and versions only"
@@ -201,7 +216,8 @@ func (s *Scanner) checkArtifacts() {
 func (s *Scanner) scanProjectDirs() {
 	filepath.WalkDir(s.HomeDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
-			return nil // skip inaccessible dirs
+			s.scanError(path, err)
+			return nil
 		}
 
 		if !d.IsDir() {

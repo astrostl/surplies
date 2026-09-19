@@ -173,8 +173,8 @@ func (s *Scanner) stalled(key string) bool {
 	return s.stallCounts[key] >= StallThreshold
 }
 
-// recordStall notes a timed-out read and, on crossing the threshold, abandons
-// the subtree and records a finding.
+// recordStall reports the first timed-out read in a subtree. Reaching the
+// threshold abandons further reads there, without emitting duplicate findings.
 //
 // The finding is deliberately a finding and not a log line: it lands in the
 // JSON output, it appears in the findings list, and it pushes the exit code off
@@ -189,18 +189,18 @@ func (s *Scanner) recordStall(key, path string) {
 		s.stallCounts = make(map[string]int)
 	}
 	s.stallCounts[key]++
-	tripped := s.stallCounts[key] == StallThreshold
+	first := s.stallCounts[key] == 1
 	s.mu.Unlock()
 
 	s.log("read timed out after %s, not scanned: %s", ReadTimeout, path)
 
-	if tripped {
+	if first {
 		s.addFinding(Finding{
 			Check:    "scan-incomplete",
 			Severity: SevWarn,
 			Path:     key,
 			Detail: fmt.Sprintf(
-				"%d reads under this path timed out after %s each, so it was skipped for the rest of the scan and its contents were NOT checked. "+
+				"A read under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
 					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
 					"Bring it online and re-run to cover it.",
 				StallThreshold, ReadTimeout),
@@ -212,6 +212,14 @@ func (s *Scanner) recordStall(key, path string) {
 // ReadTimeout, and skipping outright if this path's subtree has already proven
 // unresponsive.
 func (s *Scanner) readCapped(path string) []byte {
+	return s.readWindow(path, 0, true)
+}
+
+func (s *Scanner) readCappedAt(path string, offset int64) []byte {
+	return s.readWindow(path, offset, false)
+}
+
+func (s *Scanner) readWindow(path string, offset int64, reportTruncation bool) []byte {
 	key := s.stallKey(path)
 	if s.stalled(key) {
 		s.mu.Lock()
@@ -222,27 +230,50 @@ func (s *Scanner) readCapped(path string) []byte {
 
 	// Buffered so a goroutine still blocked on a hung read can send and exit
 	// rather than leaking for the lifetime of the scan.
-	done := make(chan []byte, 1)
+	type result struct {
+		data []byte
+		err  error
+	}
+	done := make(chan result, 1)
 
 	go func() {
 		f, err := os.Open(path)
 		if err != nil {
-			done <- nil
+			done <- result{err: err}
 			return
 		}
 		defer f.Close()
+		if offset > 0 {
+			if _, err := f.Seek(offset, io.SeekStart); err != nil {
+				done <- result{err: err}
+				return
+			}
+		}
 
-		data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes))
+		data, err := io.ReadAll(io.LimitReader(f, SignatureScanMaxBytes+1))
 		if err != nil {
-			done <- nil
+			done <- result{err: err}
 			return
 		}
-		done <- data
+		done <- result{data: data}
 	}()
 
 	select {
-	case data := <-done:
-		return data
+	case read := <-done:
+		if read.err != nil {
+			s.mu.Lock()
+			s.stats.FilesUnreadable++
+			s.mu.Unlock()
+			s.scanError(path, read.err)
+			return nil
+		}
+		if len(read.data) > SignatureScanMaxBytes {
+			if reportTruncation {
+				s.scanError(path, fmt.Errorf("content exceeds %d bytes; only the first %d bytes were checked", SignatureScanMaxBytes, SignatureScanMaxBytes))
+			}
+			read.data = read.data[:SignatureScanMaxBytes]
+		}
+		return read.data
 	case <-time.After(ReadTimeout):
 		s.recordStall(key, path)
 		return nil
@@ -323,6 +354,9 @@ func hasFontMagic(data []byte) bool {
 // Name-based checks run first and short-circuit: a file that is malicious by
 // name alone never needs reading.
 func (s *Scanner) checkSourceFile(path, name string) {
+	if s.persistenceChecked[path] {
+		return
+	}
 	if s.checkRepoArtifactName(path, name) {
 		return
 	}
@@ -344,6 +378,9 @@ func (s *Scanner) checkSourceFile(path, name string) {
 		return
 	}
 	s.stats.FilesChecked++
+	if name == "tasks.json" && filepath.Base(filepath.Dir(path)) == ".vscode" {
+		s.checkFontTask(path, data)
+	}
 
 	if isFont {
 		s.checkFakeFont(path, ext, data)
@@ -378,26 +415,17 @@ func (s *Scanner) checkRepoArtifactName(path, name string) bool {
 	// entrypoint requires. Matched by suffix because the stem varies with
 	// whichever file was patched.
 	//
-	// Source is the NullReceiver IR kit, which is the only public writeup
-	// found for this campaign's IDE-injection persistence — OSM's dossier,
-	// its remediation guide, its NullReceiver post and Socket's coverage all
-	// stop at the repo-level artifacts and the npm CLI overwrite. Its
-	// provenance is weaker than the rest of this file's sources (one
-	// researcher, self-published), so it is worth recording WHY it is trusted
-	// here: its independently-derived constants agree with the campaign
-	// details already documented from other sources — the `/0x/cls`, `/0x/ls`
-	// and `/0x/clb` fetch paths, the `Sec-V` campaign-tag header, the
-	// publisher wallet and its `helloipbot!!` recipient tail, and the spoofed
-	// Chrome 131 user-agent. It also carries the registry advisory IDs, which
-	// check out against OSV. The IOC table names `*.inz.cjs` as the
-	// "IDE-injection loader sidecar" and `@vscode/deviceid/dist/index.js`
-	// (VS Code / Cursor / Antigravity) plus GitHub Desktop's `main.js` as the
-	// entrypoints rewritten to load it.
+	// The community IR kit documents sidecar injection; ByteGuard corroborates
+	// the backup suffix. Socket and StepSecurity's Joyfill reports independently
+	// document the application targets and exact persistence markers. These
+	// sources describe different builds of the same persistence mechanism.
+	// https://socket.dev/blog/joyfill-npm-beta-releases-compromised
+	// https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
 	//
-	// NOT COVERED BY THE SCAN ROOT: those app bundles live under
-	// /Applications, and this scanner walks $HOME. A clean run means no
-	// sidecar under the home directory, NOT that the IDE is unpatched.
+	// Known application entrypoint directories are also scanned separately,
+	// including system installations outside $HOME and nested node_modules.
 	// https://github.com/OsamaCodes62/nullreceiver-ir-kit (iocs/iocs.csv, scan_macos.sh)
+	// Backup suffix: https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
 	if strings.HasSuffix(name, ".inz.cjs") || strings.HasSuffix(name, ".inz.orig") {
 		s.stats.FilesChecked++
 		s.addFinding(Finding{
@@ -430,19 +458,30 @@ func (s *Scanner) checkFakeFont(path, ext string, data []byte) {
 // checkPayloadSignatures reports whether a known payload signature is present,
 // adding a finding if so.
 func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
-	content := string(data)
-	for _, sig := range KnownPayloadSignatures {
-		if strings.Contains(content, sig.Signature) {
-			s.addFinding(Finding{
-				Check:    "payload-signature",
-				Severity: SevCritical,
-				Path:     path,
-				Detail:   fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack),
-			})
-			return true
-		}
+	if sig, ok := payloadSignature(data); ok {
+		s.addFinding(Finding{
+			Check:    "payload-signature",
+			Severity: SevCritical,
+			Path:     path,
+			Detail:   fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack),
+		})
+		return true
 	}
 	return false
+}
+
+func payloadSignature(data []byte) (PayloadSignature, bool) {
+	content := string(data)
+	for _, sig := range KnownPayloadSignatures {
+		if sig.Requires != "" && !strings.Contains(content, sig.Requires) {
+			continue
+		}
+		if strings.Contains(content, sig.Signature) ||
+			(sig.Signature == "x-payload-b64" && strings.Contains(strings.ToLower(content), sig.Signature)) {
+			return sig, true
+		}
+	}
+	return PayloadSignature{}, false
 }
 
 // checkPadding warns on a file carrying the shape of an injection without a
@@ -509,6 +548,7 @@ func (s *Scanner) checkGitignore(path string) {
 func (s *Scanner) scanDirFiles(dir string) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		s.scanError(dir, err)
 		return
 	}
 	for _, e := range entries {
@@ -529,21 +569,24 @@ func (s *Scanner) checkNpmCLI() {
 	seen := make(map[string]bool)
 
 	for _, pattern := range NpmCLIGlobs(s.HomeDir) {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			continue
-		}
-
-		for _, path := range matches {
+		for _, dir := range s.persistenceDirs(filepath.Dir(pattern)) {
+			path := filepath.Join(dir, filepath.Base(pattern))
 			if seen[path] {
 				continue
 			}
 			seen[path] = true
+			s.checkPersistenceSiblings(dir)
 
 			info, err := os.Stat(path)
-			if err != nil || info.IsDir() {
+			if err != nil {
+				s.persistenceError(path, err)
 				continue
 			}
+			if !info.Mode().IsRegular() {
+				s.persistenceError(path, fmt.Errorf("expected a regular npm entrypoint file"))
+				continue
+			}
+			s.markPersistenceChecked(path)
 			s.stats.FilesChecked++
 			s.log("checking npm CLI entrypoint: %s (%d bytes)", path, info.Size())
 
@@ -564,19 +607,16 @@ func (s *Scanner) checkNpmCLI() {
 			// carrying a known signature is just as bad.
 			data := s.readCapped(path)
 			if data == nil {
+				s.persistenceError(path, fmt.Errorf("npm entrypoint could not be read"))
 				continue
 			}
-			content := string(data)
-			for _, sig := range KnownPayloadSignatures {
-				if strings.Contains(content, sig.Signature) {
-					s.addFinding(Finding{
-						Check:    "patched-npm-cli",
-						Severity: SevCritical,
-						Path:     path,
-						Detail:   fmt.Sprintf("global npm CLI entrypoint carries an injected payload — %s (attack: %s)", sig.Desc, sig.Attack),
-					})
-					break
-				}
+			if sig, ok := persistenceSignature(data); ok {
+				s.addFinding(Finding{
+					Check:    "patched-npm-cli",
+					Severity: SevCritical,
+					Path:     path,
+					Detail:   fmt.Sprintf("global npm CLI entrypoint carries an injected payload — %s (attack: %s)", sig.Desc, sig.Attack),
+				})
 			}
 		}
 	}

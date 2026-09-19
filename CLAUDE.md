@@ -43,3 +43,6 @@ Writeups and tracker pages are often behind Cloudflare, which returns `403` to b
 - `composer.go` — Composer/Packagist checks (vendor/composer/installed.json)
 - `content.go` — content-based checks (payload signatures, fake-font detection, repo artifacts, patched npm CLI) for attacks that inject into a file that is supposed to exist under that name
 - `ioc.go` — known IOC database (bad versions, phantom packages, C2 indicators, artifact paths)
+
+- `persistence.go` — targeted application entrypoints and sidecars, plus runtime/staging warnings
+- `tasks.go` — JSONC-aware detection of automatic Node-to-font tasks

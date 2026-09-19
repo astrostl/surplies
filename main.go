@@ -24,16 +24,24 @@ func init() {
 
 func main() {
 	var (
-		jsonOutput bool
-		quiet      bool
-		showVer    bool
-		deep       bool
+		jsonOutput       bool
+		quiet            bool
+		showVer          bool
+		deep             bool
+		persistenceRoots []string
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
 	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower, finds compromised dependencies that have no known advisory)")
+	flag.Func("persistence-root", "additional directory to search recursively for documented persistence (repeatable)", func(path string) error {
+		if strings.TrimSpace(path) == "" {
+			return fmt.Errorf("persistence root must not be empty")
+		}
+		persistenceRoots = append(persistenceRoots, path)
+		return nil
+	})
 	flag.Parse()
 
 	if showVer {
@@ -49,6 +57,7 @@ func main() {
 
 	s := New(homeDir, !quiet)
 	s.Deep = deep
+	s.PersistenceRoots = persistenceRoots
 	findings, stats := s.Run()
 
 	if jsonOutput {
@@ -86,13 +95,13 @@ func printScanSummary(stats ScanStats) {
 	// and found nothing.
 	if !stats.Deep {
 		fmt.Fprintln(os.Stderr,
-			"Note: dependency directories (node_modules, vendor/, site-packages) were checked by package name and version only — their file contents were NOT read. Re-run with -deep to read them.")
+			"Note: dependency contents were not broadly scanned; only package checks and targeted application/npm persistence checks ran inside them. Re-run with -deep for dependency content scanning.")
 	}
 
 	if stats.FilesUnreadable > 0 {
 		fmt.Fprintf(os.Stderr,
-			"Note: %d file(s) could not be read within %s and were NOT scanned — typically a cloud placeholder the provider could not download (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. Re-run with -v to list them.\n",
-			stats.FilesUnreadable, ReadTimeout)
+			"Note: %d file(s) could not be read and were NOT scanned; see scan-incomplete findings for errors or timeouts.\n",
+			stats.FilesUnreadable)
 	}
 }
 
