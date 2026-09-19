@@ -562,6 +562,9 @@ func TestReadTimesOutRatherThanHanging(t *testing.T) {
 	if s.stats.FilesUnreadable != 1 {
 		t.Errorf("timeout not counted: got %d", s.stats.FilesUnreadable)
 	}
+	if len(findingsFor(s, "scan-incomplete")) != 1 {
+		t.Fatal("single timeout reported clean")
+	}
 }
 
 func TestStalledSubtreeAbandonedAndReported(t *testing.T) {
