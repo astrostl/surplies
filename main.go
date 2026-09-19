@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/astrostl/surplies/internal/scan"
+	"github.com/astrostl/surplies/internal/schedule"
 )
 
 var version = "dev"
@@ -23,6 +25,22 @@ func init() {
 }
 
 func main() {
+	// The schedule subcommand is dispatched before flag parsing so its own flag
+	// set owns everything after the verb. It never scans.
+	if len(os.Args) > 1 && os.Args[1] == "schedule" {
+		if err := schedule.Command(os.Args[2:], os.Stdout, notifyScripts()); err != nil && !errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+	os.Exit(runScan())
+}
+
+// runScan parses the scan flags, runs the scan and returns the process exit
+// code. It is separate from main so the subcommand dispatch above stays a
+// dispatch and neither half inflates the other's cyclomatic complexity.
+func runScan() int {
 	var (
 		jsonOutput bool
 		quiet      bool
@@ -44,16 +62,20 @@ func main() {
 	})
 	flag.Usage = printUsage
 	flag.Parse()
+	if flag.NArg() != 0 {
+		fmt.Fprintf(os.Stderr, "error: unexpected argument: %s\n", flag.Arg(0))
+		return 1
+	}
 
 	if showVer {
 		fmt.Printf("surplies %s\n", version)
-		os.Exit(0)
+		return 0
 	}
 
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	s := scan.New(homeDir, !quiet)
@@ -67,7 +89,7 @@ func main() {
 		debugLog, err = s.EnableDebug("", quiet, os.Stderr)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Could not create debug log: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 	}
 	s.ExtraRoots = extraRoots
@@ -81,24 +103,32 @@ func main() {
 	invocation := scan.InvocationLabel(version, os.Args[1:])
 	scan.PrintResults(findings, stats, jsonOutput, modes.Coverage, invocation)
 
-	// Exit code reflects worst severity
+	return worstSeverityExitCode(findings)
+}
+
+// worstSeverityExitCode maps findings to the process exit code the notify
+// scripts key on: 2 critical, 1 warning, 0 clean.
+func worstSeverityExitCode(findings []scan.Finding) int {
 	exitCode := 0
 	for _, f := range findings {
 		if f.Severity == scan.SevCritical {
-			exitCode = 2
-			break
+			return 2
 		}
-		if f.Severity == scan.SevWarn && exitCode < 1 {
+		if f.Severity == scan.SevWarn {
 			exitCode = 1
 		}
 	}
-	os.Exit(exitCode)
+	return exitCode
 }
 
 func printUsage() {
 	out := flag.CommandLine.Output()
 	fmt.Fprintf(out, "surplies %s\n\n", version)
 	fmt.Fprintln(out, "Usage: surplies [flags]")
+	fmt.Fprintln(out, "       surplies schedule [-time HH:MM]")
+	fmt.Fprintln(out, "       surplies schedule disable|remove")
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, "Schedule daily scans with desktop notifications (default: 09:00 local time).")
 	fmt.Fprintln(out)
 	flag.VisitAll(func(f *flag.Flag) {
 		name := f.Name

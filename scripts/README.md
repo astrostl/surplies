@@ -2,9 +2,46 @@
 
 Helper scripts for integrating `surplies` into your system's scheduled tasks and notification pipeline.
 
+## Automatic setup
+
+Use an installed `surplies` binary from your normal user account:
+
+```sh
+surplies schedule                 # daily at 09:00 local time
+surplies schedule -time 18:30     # update to 6:30 PM
+```
+
+The CLI embeds these scripts; no repository checkout or manual copy is needed.
+It writes `~/.local/bin/surplies-notify` with the executable's absolute path,
+then installs and activates the platform schedule. Existing files with the same
+names are replaced. Other schedules are left alone.
+
+- **macOS:** `~/Library/LaunchAgents/com.surplies.notify.plist`, with output in
+  `~/Library/Logs/surplies-notify.log`. Requires a logged-in GUI session.
+- **Linux:** `surplies-notify.service` and `surplies-notify.timer` in
+  `$XDG_CONFIG_HOME/systemd/user` (default `~/.config/systemd/user`). Requires
+  systemd's user manager and `notify-send`. The persistent timer catches up a
+  missed run when the user manager starts; desktop notifications require a
+  desktop session and its notification service.
+
+Run the command again after moving the binary. Remove any previously configured
+cron entry yourself to avoid duplicate scans. Windows scheduling is not supported.
+
+To disable or remove the installed schedule:
+
+```sh
+surplies schedule disable  # stop scheduled scans, including a running scan; keep files
+surplies schedule remove   # stop scans and delete the schedule files and helper
+```
+
+Disabling persists across login/reboot. Run `surplies schedule` to enable daily
+scans at 09:00 again, or provide `-time HH:MM`. Removal keeps the CLI binary,
+existing logs, and unrelated files. Manually configured cron entries must still
+be removed separately.
+
 ## notify/
 
-Scripts that run `surplies` and send a desktop notification **only when findings are detected**. Silent on clean scans — no noise, no false positives.
+Scripts that run `surplies` and send a desktop notification **when a scan exits nonzero**, including findings or incomplete coverage. Silent on clean scans.
 
 Severity maps to notification urgency using `surplies`' exit codes:
 
@@ -18,7 +55,7 @@ Severity maps to notification urgency using `surplies`' exit codes:
 
 Uses `osascript` (built-in, no extra dependencies).
 
-**Setup with launchd (runs daily at 9 AM):**
+**Manual setup with launchd (runs daily at 9 AM):**
 
 1. Copy the script and make it executable:
    ```sh
@@ -63,7 +100,7 @@ Uses `osascript` (built-in, no extra dependencies).
 
 Uses `notify-send` from [libnotify](https://gitlab.gnome.org/GNOME/libnotify). Available on most desktop distributions (`apt install libnotify-bin` / `dnf install libnotify`).
 
-**Setup with cron (runs daily at 9 AM):**
+**Manual setup with cron (runs daily at 9 AM):**
 
 ```sh
 cp scripts/notify/linux.sh ~/.local/bin/surplies-notify
@@ -72,7 +109,7 @@ chmod +x ~/.local/bin/surplies-notify
 (crontab -l 2>/dev/null; echo "0 9 * * * DISPLAY=:0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus ~/.local/bin/surplies-notify") | crontab -
 ```
 
-**Setup with a systemd timer:**
+**Manual setup with a systemd timer:**
 
 `~/.config/systemd/user/surplies-notify.service`:
 ```ini

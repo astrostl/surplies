@@ -19,7 +19,7 @@ A cross-platform CLI tool that scans your home directory (and well-known system 
 ## Design principles
 
 - **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
-- **Report only, never remediate.** Read-only scanner. Never deletes files, uninstalls packages, modifies configs, or takes any corrective action. Findings are reported; the user decides what to do.
+- **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
 - **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
@@ -59,6 +59,23 @@ surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
 ```
+
+### Scheduled scans
+
+```sh
+surplies schedule                # install daily scans at 09:00 local time
+surplies schedule -time 14:30    # install or update the daily run time
+surplies schedule disable        # stop scheduled scans; keep installed files
+surplies schedule remove         # stop and remove the schedule and helper
+```
+
+Installs a daily scan using launchd on macOS or a systemd user timer on Linux, along with the notification helper, for the current user. Run it from your normal account without `sudo`, using an installed binary you intend to keep. Rerunning updates the same schedule rather than adding another. The helper records the executable's absolute path, so it does not depend on your interactive shell's `PATH`. Windows is not supported.
+
+Scheduled scans use the default options plus `-q`. A clean scan is silent; any nonzero exit, including incomplete coverage, raises a desktop notification. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
+
+`disable` also stops a scan that is running at the time, and the setting survives logout and reboot. Run `surplies schedule` again to re-enable at 09:00, or pass `-time`. `remove` keeps the `surplies` binary and existing scan logs.
+
+See [scheduling details](scripts/README.md) for the exact files installed and the manual alternatives. If you previously configured cron by hand, remove that entry yourself to avoid duplicate scans.
 
 `-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
 
