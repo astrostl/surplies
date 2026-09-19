@@ -1195,7 +1195,7 @@ const ConfigPaddingRunLength = 200
 
 // --- Repo-local propagation artifacts ---
 
-// KnownRepoArtifacts are filenames that are malicious wherever they appear in
+// KnownRepoArtifacts are filenames treated as malicious wherever they appear in
 // a project tree, matched on basename during the home-directory walk rather
 // than at a fixed path.
 //
@@ -1218,32 +1218,41 @@ var KnownRepoArtifacts = []ProjectArtifact{
 	{Filename: "temp_auto_push.bat", Desc: "PolinRider propagation script (clock reset + commit amend + force-push)", Attack: "polinrider (DPRK)"},
 	{Filename: "config.bat", Desc: "PolinRider hidden orchestrator (added to .gitignore to hide it from git status)", Attack: "polinrider (DPRK)"},
 
-	// Mini Shai-Hulud payload filenames, listed here IN ADDITION to their
-	// entries in KnownNpmPayloadFiles. That map is keyed by scope or package
-	// name, so `router_init.js` is only ever looked for under `@tanstack/*`
-	// and `Math_Symbol.js` only under the eight keyv-wave packages. For a
-	// worm whose defining behaviour is spreading itself into whatever its
-	// victims maintain, scoping the search to the packages already known to
-	// be hit has it backwards: the next carrier is by definition not on the
-	// list. Matching the basename anywhere costs a string compare during a
-	// walk that is already happening.
-	//
-	// `setup.mjs` is deliberately NOT promoted. It is a plausible filename
-	// for a legitimate package to ship, and unlike the three below it carries
-	// no campaign-specific wording, so matching it everywhere would trade a
-	// real false-positive rate for very little. It stays scoped to the eight
-	// packages Snyk names.
+	// Mini Shai-Hulud payload filenames are also checked outside known npm
+	// scopes to catch additional carriers. Generic names such as setup.mjs
+	// remain package-scoped. Math_Symbol.js requires content verification
+	// below because regenerate-unicode-properties legitimately ships it.
 	//
 	// Sources:
 	//   - TanStack postmortem (router_init.js)
 	//     https://tanstack.com/blog/tanstack-router-compromise-postmortem
 	//   - Aikido (tanstack_runner.js + SHA-256)
 	//     https://www.aikido.dev/blog/tanstack-npm-supply-chain-attack
-	//   - Snyk (Math_Symbol.js, byte-identical across all 11 keyv releases)
-	//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
 	{Filename: "router_init.js", Desc: "mini-shai-hulud payload loader", Attack: "mini-shai-hulud (May 2026)"},
 	{Filename: "tanstack_runner.js", Desc: "mini-shai-hulud Bun-loaded payload", Attack: "mini-shai-hulud (May 2026)"},
-	{Filename: "Math_Symbol.js", Desc: "keyv-wave payload blob (727,680 bytes, byte-identical across all affected releases)", Attack: "keyv npm compromise (August 2026)"},
+}
+
+// RepoPayloadHash requires both a candidate filename and verified file content.
+type RepoPayloadHash struct {
+	Filename string
+	SHA256   string
+	Desc     string
+	Attack   string
+}
+
+// KnownRepoPayloadHashes disambiguates payload names also used by legitimate
+// packages. No directory is exempted: a replaced Unicode file is still checked.
+// Source: Snyk's independently computed second-stage hash:
+// https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+// Legitimate filename collision:
+// https://github.com/mathiasbynens/regenerate-unicode-properties/blob/v10.2.0/General_Category/Math_Symbol.js
+var KnownRepoPayloadHashes = []RepoPayloadHash{
+	{
+		Filename: "Math_Symbol.js",
+		SHA256:   "9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc",
+		Desc:     "keyv second-stage payload (SHA-256 verified)",
+		Attack:   "keyv npm compromise (August 2026)",
+	},
 }
 
 // GitignoreInjectedLines are exact .gitignore entries a documented attack adds
