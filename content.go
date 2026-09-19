@@ -50,12 +50,25 @@ var paddingRun = strings.Repeat(" ", ConfigPaddingRunLength)
 // 1,736 compromised repos) plus the babel.config.cjs variant documented in
 // their npm case study.
 // https://github.com/OpenSourceMalware/PolinRider
+// `plugin.js` is the NullReceiver carrier name — bianira-ui ships its loader as
+// an appended top-level IIFE in the package main, named plugin.js because the
+// package poses as a Tailwind plugin.
+// https://osv.dev/vulnerability/MAL-2026-11132
+//
+// Read what this does and does not buy. The walk SkipDirs node_modules, so
+// content scanning never reaches an INSTALLED bianira-ui; that package is
+// caught by version pin instead (KnownBadNpmVersions). This entry only covers
+// a plugin.js in the developer's own tree, which is the force-pushed-repo
+// vector rather than the npm-delivery vector the OSV records describe. It is a
+// common filename, so it only ever earns a read — a finding still requires a
+// signature match.
 var injectableSourceNames = []string{
 	"App.js",
 	"index.js",
 	"truffle.js",
 	"tasks.json",
 	"cli.js",
+	"plugin.js",
 }
 
 // shouldScanForSignatures reports whether a file is worth reading for payload
@@ -364,6 +377,27 @@ func (s *Scanner) checkRepoArtifactName(path, name string) bool {
 	// `.inz.cjs` / `.inz.orig` are the sibling modules a patched Electron
 	// entrypoint requires. Matched by suffix because the stem varies with
 	// whichever file was patched.
+	//
+	// Source is the NullReceiver IR kit, which is the only public writeup
+	// found for this campaign's IDE-injection persistence — OSM's dossier,
+	// its remediation guide, its NullReceiver post and Socket's coverage all
+	// stop at the repo-level artifacts and the npm CLI overwrite. Its
+	// provenance is weaker than the rest of this file's sources (one
+	// researcher, self-published), so it is worth recording WHY it is trusted
+	// here: its independently-derived constants agree with the campaign
+	// details already documented from other sources — the `/0x/cls`, `/0x/ls`
+	// and `/0x/clb` fetch paths, the `Sec-V` campaign-tag header, the
+	// publisher wallet and its `helloipbot!!` recipient tail, and the spoofed
+	// Chrome 131 user-agent. It also carries the registry advisory IDs, which
+	// check out against OSV. The IOC table names `*.inz.cjs` as the
+	// "IDE-injection loader sidecar" and `@vscode/deviceid/dist/index.js`
+	// (VS Code / Cursor / Antigravity) plus GitHub Desktop's `main.js` as the
+	// entrypoints rewritten to load it.
+	//
+	// NOT COVERED BY THE SCAN ROOT: those app bundles live under
+	// /Applications, and this scanner walks $HOME. A clean run means no
+	// sidecar under the home directory, NOT that the IDE is unpatched.
+	// https://github.com/OsamaCodes62/nullreceiver-ir-kit (iocs/iocs.csv, scan_macos.sh)
 	if strings.HasSuffix(name, ".inz.cjs") || strings.HasSuffix(name, ".inz.orig") {
 		s.stats.FilesChecked++
 		s.addFinding(Finding{

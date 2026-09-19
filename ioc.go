@@ -810,9 +810,19 @@ var KnownBadNpmVersions = map[string][]string{
 	// PolinRider / NullReceiver — trojanized Tailwind-plugin impersonators
 	// that resolve their C2 off the Ethereum chain (same publisher wallet
 	// 0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a as the rest of the campaign).
-	// https://opensourcemalware.com/blog/nullreceiver-dprk-c2-technique
+	//
+	// fluid-type-ui shipped the payload in TWO versions. OSM's writeup names
+	// only 2.0.8, which is the version the analysis was done against; the OSV
+	// record references both 2.0.8 and 2.0.9 as affected, so a 2.0.8-only pin
+	// misses the later one — and "the fixed version" is a reasonable thing for
+	// a victim to have upgraded into. Registry advisory data is the
+	// authoritative source for the version RANGE even when a blog is the
+	// authoritative source for the behavior.
+	//   https://opensourcemalware.com/blog/nullreceiver-dprk-c2-technique
+	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
+	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
 	"bianira-ui":    {"1.27.0"},
-	"fluid-type-ui": {"2.0.8"},
+	"fluid-type-ui": {"2.0.8", "2.0.9"},
 }
 
 // --- Composer/Packagist ---
@@ -1089,6 +1099,37 @@ var KnownPayloadSignatures = []PayloadSignature{
 	{Signature: `global['!']=`, Desc: "PolinRider global injection marker", Attack: "polinrider (DPRK)"},
 	{Signature: `global['_V']=`, Desc: "PolinRider global injection marker (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
 	{Signature: `global.i="A8-`, Desc: "PolinRider campaign-tag marker (fake-font and babel.config.cjs variants)", Attack: "polinrider (DPRK)"},
+
+	// The NullReceiver loader's own constants, from the OSV records for the two
+	// trojanized npm carriers. These are a different class of indicator from the
+	// markers above: those identify a generation of the obfuscator, these
+	// identify the C2 resolver itself, so they survive a rotation of the
+	// obfuscator and hold across carriers the campaign has not published yet.
+	//
+	// The wallet is the durable one. Every host in KnownC2IPs rotates for the
+	// price of one Ethereum transaction, because the loader reads the next
+	// address off-chain — but the address it reads FROM is compiled into the
+	// payload, and changing that means republishing to every victim rather than
+	// sending a transaction. Both spellings are listed because matching is exact
+	// bytes: OSV renders the address lowercase, the campaign writeups render it
+	// EIP-55 checksummed, and a sample can carry either.
+	//
+	// Sources — both records independently document the same wallet, the same
+	// Ethereum JSON-RPC endpoint set, the same `/0x/cls` + `/0x/ls` fetch paths,
+	// the same XOR-then-eval decode, and the same `node -e` spawn:
+	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
+	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
+	//
+	// Known blind spot: bianira-ui's own plugin.js writes every one of these
+	// identifiers as \uXXXX escapes specifically to defeat a literal scan, so
+	// these signatures do not match that sample. It is covered by version pin
+	// instead (KnownBadNpmVersions). No escaped form is listed here, because the
+	// exact escaping is not documented in either record and guessing at it would
+	// be inventing an IOC.
+	{Signature: `0xa322e5f3d311d3080e6f0121063e9adc2490ef1a`, Desc: "NullReceiver C2-resolver wallet address (lowercase form)", Attack: "polinrider (DPRK)"},
+	{Signature: `0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a`, Desc: "NullReceiver C2-resolver wallet address (EIP-55 checksummed form)", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+	{Signature: `/0x/ls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
 }
 
 // SignatureScannedExtensions are file extensions worth reading for
@@ -1137,6 +1178,33 @@ const ConfigPaddingRunLength = 200
 var KnownRepoArtifacts = []ProjectArtifact{
 	{Filename: "temp_auto_push.bat", Desc: "PolinRider propagation script (clock reset + commit amend + force-push)", Attack: "polinrider (DPRK)"},
 	{Filename: "config.bat", Desc: "PolinRider hidden orchestrator (added to .gitignore to hide it from git status)", Attack: "polinrider (DPRK)"},
+
+	// Mini Shai-Hulud payload filenames, listed here IN ADDITION to their
+	// entries in KnownNpmPayloadFiles. That map is keyed by scope or package
+	// name, so `router_init.js` is only ever looked for under `@tanstack/*`
+	// and `Math_Symbol.js` only under the eight keyv-wave packages. For a
+	// worm whose defining behaviour is spreading itself into whatever its
+	// victims maintain, scoping the search to the packages already known to
+	// be hit has it backwards: the next carrier is by definition not on the
+	// list. Matching the basename anywhere costs a string compare during a
+	// walk that is already happening.
+	//
+	// `setup.mjs` is deliberately NOT promoted. It is a plausible filename
+	// for a legitimate package to ship, and unlike the three below it carries
+	// no campaign-specific wording, so matching it everywhere would trade a
+	// real false-positive rate for very little. It stays scoped to the eight
+	// packages Snyk names.
+	//
+	// Sources:
+	//   - TanStack postmortem (router_init.js)
+	//     https://tanstack.com/blog/tanstack-router-compromise-postmortem
+	//   - Aikido (tanstack_runner.js + SHA-256)
+	//     https://www.aikido.dev/blog/tanstack-npm-supply-chain-attack
+	//   - Snyk (Math_Symbol.js, byte-identical across all 11 keyv releases)
+	//     https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/
+	{Filename: "router_init.js", Desc: "mini-shai-hulud payload loader", Attack: "mini-shai-hulud (May 2026)"},
+	{Filename: "tanstack_runner.js", Desc: "mini-shai-hulud Bun-loaded payload", Attack: "mini-shai-hulud (May 2026)"},
+	{Filename: "Math_Symbol.js", Desc: "keyv-wave payload blob (727,680 bytes, byte-identical across all affected releases)", Attack: "keyv npm compromise (August 2026)"},
 }
 
 // GitignoreInjectedLines are exact .gitignore entries a documented attack adds
@@ -1232,7 +1300,10 @@ var KnownC2Domains = []string{
 //
 // The Ethereum JSON-RPC endpoints the loader queries (1rpc.io, eth.drpc.org,
 // ethereum-rpc.publicnode.com, eth-mainnet.public.blastapi.io,
-// eth.blockscout.com) are deliberately NOT listed as C2 domains: they are
+// eth.blockscout.com — the first, second and last of those confirmed again in
+// https://osv.dev/vulnerability/MAL-2026-11136 and
+// https://osv.dev/vulnerability/MAL-2026-11132) are deliberately NOT listed as
+// C2 domains: they are
 // legitimate public infrastructure, and flagging them would report every web3
 // developer as compromised. Egress to them from a machine that has no business
 // speaking JSON-RPC is a real signal, but it is one for network monitoring,

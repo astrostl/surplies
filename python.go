@@ -46,7 +46,12 @@ func (s *Scanner) scanPythonPackages() {
 				return filepath.SkipDir
 			}
 			s.checkSitePackagesDir(path, entries)
-			return filepath.SkipDir
+			// This walk is only hunting for site-packages ROOTS; the project
+			// walk handles file contents and never pruned this subtree in the
+			// first place. Stopping here therefore costs only nested roots —
+			// a venv inside a project inside another venv — which deep mode
+			// keeps looking for.
+			return s.descendOrSkip()
 		}
 		return nil
 	})

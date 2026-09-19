@@ -27,11 +27,13 @@ func main() {
 		jsonOutput bool
 		quiet      bool
 		showVer    bool
+		deep       bool
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
 	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
+	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor/, and site-packages (slower; finds compromised dependencies that have no published advisory yet)")
 	flag.Parse()
 
 	if showVer {
@@ -46,6 +48,7 @@ func main() {
 	}
 
 	s := New(homeDir, !quiet)
+	s.Deep = deep
 	findings, stats := s.Run()
 
 	if jsonOutput {
@@ -81,6 +84,11 @@ func printScanSummary(stats ScanStats) {
 	// Surfaced rather than swallowed: a scan that walked past a synced folder
 	// without reading any of it must not be mistaken for a scan that read it
 	// and found nothing.
+	if !stats.Deep {
+		fmt.Fprintln(os.Stderr,
+			"Note: dependency directories (node_modules, vendor/, site-packages) were checked by package name and version only — their file contents were NOT read. Re-run with -deep to read them.")
+	}
+
 	if stats.FilesUnreadable > 0 {
 		fmt.Fprintf(os.Stderr,
 			"Note: %d file(s) could not be read within %s and were NOT scanned — typically a cloud placeholder the provider could not download (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. Re-run with -v to list them.\n",

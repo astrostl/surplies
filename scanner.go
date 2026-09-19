@@ -62,7 +62,19 @@ type Scanner struct {
 	Findings []Finding
 	mu       sync.Mutex
 	Verbose  bool
-	stats    ScanStats
+	// Deep lifts the directory boundaries the walk normally stops at —
+	// node_modules, Composer vendor/, and Python site-packages. It does not
+	// add or change a single check: it changes WHERE the checks already
+	// defined here are allowed to run. Any IOC added to ioc.go later gets the
+	// wider surface for free, with no code change.
+	//
+	// Off by default because it roughly triples scan time on a developer home
+	// directory. The default scan identifies dependencies by name and version
+	// (cheap, and correct for anything with a published advisory); deep mode
+	// additionally reads their contents, which is the only way to catch a
+	// compromised package whose version nobody has pinned yet.
+	Deep  bool
+	stats ScanStats
 	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
 	// is abandoned after StallThreshold strikes instead of costing
 	// ReadTimeout on every file beneath it. Guarded by mu.
@@ -83,7 +95,11 @@ type ScanStats struct {
 	// stalled network mount, or similar. Counted, not swallowed: a scan that
 	// gave up on a whole synced folder must not read as a clean one.
 	FilesUnreadable int
-	Duration        time.Duration
+	// Deep records whether the scan read inside dependency directories. Kept
+	// in stats so output can state it plainly: a fast scan that found nothing
+	// must not be reported the same way as a deep one that found nothing.
+	Deep     bool
+	Duration time.Duration
 }
 
 // New creates a scanner targeting the given home directory.
@@ -120,7 +136,11 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.checkNpmCLI()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
-	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
+	mode := "names and versions only"
+	if s.Deep {
+		mode = "deep: reading file contents inside dependency directories"
+	}
+	fmt.Fprintf(os.Stderr, "[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — %s...\n", mode)
 	s.scanProjectDirs()
 
 	// Phase 3: Find and scan Python site-packages directories
@@ -135,6 +155,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	fmt.Fprintf(os.Stderr, "[5/5] Checking temp directories for payload remnants...\n")
 	s.checkTempArtifacts()
 
+	s.stats.Deep = s.Deep
 	s.stats.Duration = time.Since(start)
 	fmt.Fprintln(os.Stderr)
 
@@ -189,20 +210,25 @@ func (s *Scanner) scanProjectDirs() {
 		}
 
 		if d.Name() == "node_modules" {
-			// Skip nested node_modules (node_modules inside node_modules)
-			parent := filepath.Dir(path)
-			if strings.Contains(parent, "node_modules") {
-				return filepath.SkipDir
+			// Nested node_modules (node_modules inside node_modules) get no
+			// second round of package-level checks, but in deep mode the walk
+			// still descends so their file contents are read.
+			if strings.Contains(filepath.Dir(path), "node_modules") {
+				return s.descendOrSkip()
 			}
 			s.stats.NodeModulesFound++
 			s.log("found node_modules: %s", path)
 			s.checkNodeModulesDir(path)
-			return filepath.SkipDir
+			return s.descendOrSkip()
 		}
 
 		if files, ok := KnownProjectArtifacts[d.Name()]; ok {
 			s.log("checking project config dir: %s", path)
 			s.checkProjectArtifactDir(path, files)
+			if s.Deep {
+				// Descend instead, so nested files are read too.
+				return nil
+			}
 			// The walk stops here, so inspect this directory's own files
 			// before returning — `.vscode/tasks.json` is the PolinRider
 			// loader and would otherwise never be read.
@@ -217,19 +243,28 @@ func (s *Scanner) scanProjectDirs() {
 		if d.Name() == "vendor" {
 			installedJSON := filepath.Join(path, "composer", "installed.json")
 			if _, err := os.Stat(installedJSON); err == nil {
-				parent := filepath.Dir(path)
-				if strings.Contains(parent, "vendor") {
-					return filepath.SkipDir
+				if strings.Contains(filepath.Dir(path), "vendor") {
+					return s.descendOrSkip()
 				}
 				s.stats.ComposerVendorsFound++
 				s.log("found composer vendor: %s", path)
 				s.checkComposerVendor(path)
-				return filepath.SkipDir
+				return s.descendOrSkip()
 			}
 		}
 
 		return nil
 	})
+}
+
+// descendOrSkip returns the walk verdict for a dependency directory whose
+// package-level checks have just run: stop here normally, or keep walking in
+// deep mode so the content checks reach the files inside.
+func (s *Scanner) descendOrSkip() error {
+	if s.Deep {
+		return nil
+	}
+	return filepath.SkipDir
 }
 
 // checkNpmPayloadFiles looks for known malicious filenames inside a single npm

@@ -149,6 +149,52 @@ func TestPayloadSignatureRotatedVariants(t *testing.T) {
 	}
 }
 
+func TestPayloadSignatureNullReceiverResolver(t *testing.T) {
+	// The C2-resolver constants from MAL-2026-11136 / MAL-2026-11132. Unlike
+	// the obfuscator markers above these do not rotate: the wallet is compiled
+	// into the payload, so changing it means republishing to every victim.
+	// `plugin.js` is included as a carrier name because that is where
+	// bianira-ui shipped its loader.
+	variants := map[string]string{
+		"wallet-lower.config.js": `x;const a="0xa322e5f3d311d3080e6f0121063e9adc2490ef1a";`,
+		"wallet-eip55.config.js": `x;const a="0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a";`,
+		"cls-path.config.js":     `x;fetch("http://"+h+"/0x/cls");`,
+		"ls-path.config.js":      `x;fetch("http://"+h+"/0x/ls");`,
+		"plugin.js":              `module.exports={};(function(){fetch("http://"+h+"/0x/cls")})();`,
+	}
+
+	for name, body := range variants {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			os.WriteFile(filepath.Join(dir, name), []byte(body), 0644)
+
+			s := New(dir, false)
+			s.scanProjectDirs()
+
+			if hits := findingsFor(s, "payload-signature"); len(hits) != 1 {
+				t.Errorf("variant %s not detected: got %d findings", name, len(hits))
+			}
+		})
+	}
+}
+
+func TestPluginJSCleanNotFlagged(t *testing.T) {
+	// plugin.js is a common filename in the JS ecosystem. Widening the read
+	// set to include it must not turn an ordinary one into a finding.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "plugin.js"),
+		[]byte("module.exports = function plugin() { return { name: 'demo' }; };\n"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	for _, check := range []string{"payload-signature", "padded-source-file"} {
+		if hits := findingsFor(s, check); len(hits) != 0 {
+			t.Errorf("clean plugin.js produced %s findings: %v", check, hits)
+		}
+	}
+}
+
 func TestPaddedSourceFileWarnsWithoutSignature(t *testing.T) {
 	dir := t.TempDir()
 
@@ -578,5 +624,89 @@ func TestStallInOneSubtreeDoesNotBlockAnother(t *testing.T) {
 	}
 	if hits := findingsFor(s, "scan-incomplete"); len(hits) != 1 {
 		t.Errorf("want 1 scan-incomplete finding, got %d", len(hits))
+	}
+}
+
+func TestDeepScanReadsInsideNodeModules(t *testing.T) {
+	// The default scan identifies dependencies by name and version and never
+	// opens their files. A package carrying the loader in a version nobody has
+	// pinned is therefore invisible until -deep is set.
+	dir := t.TempDir()
+	pkg := filepath.Join(dir, "proj", "node_modules", "some-ui-kit", "src")
+	if err := os.MkdirAll(pkg, 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(pkg, "index.js"),
+		[]byte(`module.exports={};var w="0xa322e5f3d311d3080e6f0121063e9adc2490ef1a";`), 0644)
+
+	shallow := New(dir, false)
+	shallow.scanProjectDirs()
+	if hits := findingsFor(shallow, "payload-signature"); len(hits) != 0 {
+		t.Errorf("default scan read inside node_modules: %v", hits)
+	}
+
+	deep := New(dir, false)
+	deep.Deep = true
+	deep.scanProjectDirs()
+	if hits := findingsFor(deep, "payload-signature"); len(hits) != 1 {
+		t.Fatalf("deep scan missed the payload inside node_modules: got %d", len(hits))
+	}
+}
+
+func TestDeepScanReadsInsideComposerVendor(t *testing.T) {
+	dir := t.TempDir()
+	vendor := filepath.Join(dir, "proj", "vendor")
+	if err := os.MkdirAll(filepath.Join(vendor, "composer"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(vendor, "composer", "installed.json"), []byte(`{"packages":[]}`), 0644)
+	os.MkdirAll(filepath.Join(vendor, "acme", "pkg"), 0755)
+	os.WriteFile(filepath.Join(vendor, "acme", "pkg", "index.js"),
+		[]byte(`x;var q="Cot%3t=shtP";`), 0644)
+
+	shallow := New(dir, false)
+	shallow.scanProjectDirs()
+	if hits := findingsFor(shallow, "payload-signature"); len(hits) != 0 {
+		t.Errorf("default scan read inside vendor/: %v", hits)
+	}
+
+	deep := New(dir, false)
+	deep.Deep = true
+	deep.scanProjectDirs()
+	if hits := findingsFor(deep, "payload-signature"); len(hits) != 1 {
+		t.Errorf("deep scan missed the payload inside vendor/: got %d", len(hits))
+	}
+}
+
+func TestShaiHuludPayloadNamesMatchAnywhere(t *testing.T) {
+	// These were previously only looked for under the scopes already known to
+	// be hit, which is backwards for a self-spreading worm.
+	for _, name := range []string{"router_init.js", "tanstack_runner.js", "Math_Symbol.js"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			proj := filepath.Join(dir, "unrelated-project")
+			os.MkdirAll(proj, 0755)
+			os.WriteFile(filepath.Join(proj, name), []byte("payload"), 0644)
+
+			s := New(dir, false)
+			s.scanProjectDirs()
+
+			if hits := findingsFor(s, "malicious-repo-artifact"); len(hits) != 1 {
+				t.Errorf("%s outside a known scope was not flagged: got %d", name, len(hits))
+			}
+		})
+	}
+}
+
+func TestSetupMjsNotMatchedAnywhere(t *testing.T) {
+	// Deliberately left scoped: a plausible filename for a legitimate package.
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "setup.mjs"), []byte("export default {}"), 0644)
+
+	s := New(dir, false)
+	s.scanProjectDirs()
+
+	if hits := findingsFor(s, "malicious-repo-artifact"); len(hits) != 0 {
+		t.Errorf("setup.mjs was matched as a repo artifact: %v", hits)
 	}
 }
