@@ -2,12 +2,18 @@
 
 ## Design principles
 
-- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The sole exception is `netstat`, used only for live network connection IOC matching where no filesystem equivalent exists across all supported platforms.
+- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and explicitly requested `-git` scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories.
 - **Report only, never remediate.** surplies is a read-only scanner. It must never delete files, uninstall packages, modify configs, or take any corrective action. Findings are reported; the user decides what to do.
 - **No container/orchestrator checks.** Do not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem rooted at the user's home directory and explicitly added `-root` directories (plus well-known system paths for artifact checks).
 - **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS.
-- **Zero dependencies.** stdlib only. No third-party Go modules.
+- **Zero dependencies.** stdlib only. No third-party Go modules. The optional `-git` mode requires an installed Git supporting `--no-lazy-fetch`.
 - **Citation-required IOCs.** Only add checks for attacks that the developer explicitly requests with a linked, referenced source. Never speculatively add IOCs or checks from general knowledge.
+
+## Output rules
+
+- **Roll up repeated diagnostics by cause.** Human-readable errors, coverage warnings, and scope notices must print each shared explanation once, followed by all affected paths in sorted order. Group coverage by category, then cause; normalize the affected path embedded in an explanation rather than repeating the same error for every filename. Preserve distinct evidence and causes. JSON retains the original individual records and exact details.
+- **Distinguish scope from failures.** Expected limits such as shallow Git history are informational scope notices, not scan errors or attack indicators. Actual inspection failures remain warnings and qualify the final result as incomplete coverage.
+- **Describe counters precisely.** Distinguish blobs considered by metadata from candidate blob bodies actually hashed. Zero candidate hashes must not imply that no Git objects were inspected.
 
 ## Citation hygiene
 
@@ -48,3 +54,5 @@ Writeups and tracker pages are often behind Cloudflare, which returns `403` to b
 - `tasks.go` — JSONC-aware detection of automatic Node-to-font tasks
 
 - `roots.go` — shared home/additional-root traversal, root symlink resolution, and overlap deduplication
+
+- `git.go` — opt-in local Git ref/history inspection against the shared exact-payload hash list; no fetch or checkout

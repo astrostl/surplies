@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"runtime/debug"
@@ -26,18 +27,16 @@ func init() {
 
 func main() {
 	var (
-		jsonOutput      bool
-		quiet           bool
-		showVer         bool
-		deep            bool
-		extraRoots      []string
-		coverageDetails bool
+		jsonOutput bool
+		quiet      bool
+		showVer    bool
+		extraRoots []string
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
 	flag.BoolVar(&quiet, "q", false, "suppress scan details")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
-	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor, and site-packages (slower)")
+	modes := registerScanModes(flag.CommandLine)
 	flag.Func("root", "add/expand a directory to the normal scan (repeatable)", func(path string) error {
 		if strings.TrimSpace(path) == "" {
 			return fmt.Errorf("scan root must not be empty")
@@ -45,9 +44,9 @@ func main() {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&coverageDetails, "cov", false, "show coverage failures grouped by cause")
 	flag.Usage = printUsage
 	flag.Parse()
+	modes.expand()
 
 	if showVer {
 		fmt.Printf("surplies %s\n", version)
@@ -61,12 +60,13 @@ func main() {
 	}
 
 	s := New(homeDir, !quiet)
-	s.Deep = deep
+	s.Deep = modes.Deep
+	s.Git = modes.Git
 	s.ExtraRoots = extraRoots
 	findings, stats := s.Run()
 
 	invocation := invocationLabel(version, os.Args[1:])
-	printResults(findings, stats, jsonOutput, coverageDetails, invocation)
+	printResults(findings, stats, jsonOutput, modes.Coverage, invocation)
 
 	// Exit code reflects worst severity
 	exitCode := 0
@@ -82,27 +82,55 @@ func main() {
 	os.Exit(exitCode)
 }
 
+type scanModes struct {
+	Deep, Git, Coverage, All bool
+}
+
+func registerScanModes(fs *flag.FlagSet) *scanModes {
+	m := new(scanModes)
+	fs.BoolVar(&m.Deep, "deep", false, "read file contents inside node_modules, vendor, and site-packages (slower)")
+	fs.BoolVar(&m.Git, "git", false, "check local Git refs and history against known payload hashes (requires git; no fetch)")
+	fs.BoolVar(&m.Coverage, "cov", false, "show coverage failures grouped by cause")
+	fs.BoolVar(&m.All, "a", false, "enable -cov -deep -git")
+	fs.BoolVar(&m.All, "all", false, "") // intentionally undocumented alias
+	return m
+}
+
+func (m *scanModes) expand() {
+	if m.All {
+		m.Deep, m.Git, m.Coverage = true, true, true
+	}
+}
+
 func printResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetails bool, invocation string) {
 	if jsonOutput {
-		indicators, coverage := splitFindings(findings)
+		_, coverage := splitFindings(findings)
 		if len(coverage) > 0 {
 			fmt.Fprintln(os.Stderr, coverageSummary(groupCoverage(coverage))+" See scan-incomplete JSON records.")
 		}
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
 		enc.Encode(findings)
+		printScopeNotices(findings, coverageDetails)
 		printScanSummary(stats)
-		fmt.Fprintln(os.Stderr, resultSummary(invocation, indicators))
+		fmt.Fprintln(os.Stderr, resultSummary(invocation, findings))
 	} else {
 		printFindings(findings, coverageDetails)
+		printScopeNotices(findings, coverageDetails)
 		printScanSummary(stats)
-		indicators, _ := splitFindings(findings)
-		fmt.Println(resultSummary(invocation, indicators))
+		fmt.Println(resultSummary(invocation, findings))
 	}
 
 }
 
 func printScanSummary(stats ScanStats) {
+	if stats.Git {
+		fmt.Fprintf(os.Stderr, "Git: %d repositories completed of %d found; %d blobs considered, %d candidate blobs hashed.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked)
+		fmt.Fprintln(os.Stderr, "Git scope: local refs/history only; no fetch, reflog-only or unreachable objects. Only blobs matching a known payload size require hashing.")
+		if stats.GitCacheMarkersSkipped > 0 {
+			fmt.Fprintf(os.Stderr, "Git discovery: %d uv cache marker(s) ignored; these are not repositories.\n", stats.GitCacheMarkersSkipped)
+		}
+	}
 
 	// Surfaced rather than swallowed: a scan that walked past a synced folder
 	// without reading any of it must not be mistaken for a scan that read it
@@ -173,14 +201,14 @@ func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	for _, f := range findings {
 		if f.Check == "scan-incomplete" {
 			coverage = append(coverage, f)
-		} else {
+		} else if f.Check != "scan-limited" {
 			indicators = append(indicators, f)
 		}
 	}
 	return
 }
 
-var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "other errors"}
+var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "Git errors", "other errors"}
 
 func groupCoverage(coverage []Finding) map[string][]Finding {
 	groups := make(map[string][]Finding)
@@ -220,15 +248,37 @@ func printCoverage(coverage []Finding, details bool) {
 			continue
 		}
 		fmt.Printf("\n  %s — %d path(s):\n", category, len(group))
-		sort.Slice(group, func(i, j int) bool { return group[i].Path < group[j].Path })
-		for _, f := range group {
-			fmt.Printf("    %s\n", f.Path)
-			if category == "other errors" {
-				fmt.Printf("      %s\n", f.Detail)
-			}
-		}
+		printDiagnosticGroups(os.Stdout, group)
 	}
 	fmt.Println()
+}
+
+// Human diagnostics explain each shared cause once, then list its paths.
+// Normalize only the affected path; preserve other evidence and original JSON.
+func printDiagnosticGroups(out io.Writer, findings []Finding) {
+	groups := make(map[string][]string)
+	var reasons []string
+	for _, f := range findings {
+		reason := f.Detail
+		if f.Path != "" {
+			reason = strings.ReplaceAll(reason, f.Path, "<path>")
+		}
+		if _, exists := groups[reason]; !exists {
+			reasons = append(reasons, reason)
+		}
+		groups[reason] = append(groups[reason], f.Path)
+	}
+	sort.Strings(reasons)
+	for _, reason := range reasons {
+		if reason != "" {
+			fmt.Fprintf(out, "    %s\n", reason)
+		}
+		paths := groups[reason]
+		sort.Strings(paths)
+		for _, path := range paths {
+			fmt.Fprintf(out, "      %s\n", path)
+		}
+	}
 }
 
 func invocationLabel(buildVersion string, args []string) string {
@@ -242,8 +292,16 @@ func invocationLabel(buildVersion string, args []string) string {
 	return strings.Join(parts, " ")
 }
 
-func resultSummary(invocation string, indicators []Finding) string {
+func resultSummary(invocation string, findings []Finding) string {
+	indicators, coverage := splitFindings(findings)
+	suffix := ""
+	if len(coverage) > 0 {
+		suffix = " Coverage was incomplete."
+	}
 	if len(indicators) == 0 {
+		if len(findings) > 0 {
+			return invocation + " : No supply chain attack indicators found in scanned content." + suffix
+		}
 		return invocation + " : No supply chain attack indicators found."
 	}
 	critical, warn, info := 0, 0, 0
@@ -257,7 +315,10 @@ func resultSummary(invocation string, indicators []Finding) string {
 			info++
 		}
 	}
-	return fmt.Sprintf("%s : Found %d indicator(s): %d critical, %d warning, %d info", invocation, len(indicators), critical, warn, info)
+	if suffix != "" {
+		suffix = "." + suffix
+	}
+	return fmt.Sprintf("%s : Found %d indicator(s): %d critical, %d warning, %d info", invocation, len(indicators), critical, warn, info) + suffix
 }
 
 func printUsage() {
@@ -266,6 +327,9 @@ func printUsage() {
 	fmt.Fprintln(out)
 	flag.VisitAll(func(f *flag.Flag) {
 		name := f.Name
+		if name == "all" {
+			return
+		}
 		if name == "root" {
 			name += " value"
 		}
@@ -292,4 +356,25 @@ func defaultScanHelp(goos string, roots []string) string {
 		system = "none configured"
 	}
 	return fmt.Sprintf("Default normal scan: %s\nDefault persistence-only scans: %s\n\nNormal scans use supported file types and known checks, not every file.\n\nExample: surplies -root %s -deep", home, system, example)
+}
+
+// Expected scope limits stay visible but are neither collection failures nor
+// attack indicators. JSON retains these INFO records; they do not change exit status.
+func printScopeNotices(findings []Finding, details bool) {
+	var notices []Finding
+	for _, f := range findings {
+		if f.Check == "scan-limited" {
+			notices = append(notices, f)
+		}
+	}
+	if len(notices) == 0 {
+		return
+	}
+	fmt.Fprintf(os.Stderr, "Git limited history — %d path(s). These are scope limits, not scan errors.\n", len(notices))
+	if !details {
+		fmt.Fprintln(os.Stderr, "Shallow repositories: only locally available history was scanned; older history was not fetched.")
+		fmt.Fprintln(os.Stderr, "Use -cov or -json to inspect these repositories.")
+		return
+	}
+	printDiagnosticGroups(os.Stderr, notices)
 }
