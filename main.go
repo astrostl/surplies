@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -25,26 +26,27 @@ func init() {
 
 func main() {
 	var (
-		jsonOutput       bool
-		quiet            bool
-		showVer          bool
-		deep             bool
-		persistenceRoots []string
-		coverageDetails  bool
+		jsonOutput      bool
+		quiet           bool
+		showVer         bool
+		deep            bool
+		extraRoots      []string
+		coverageDetails bool
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
-	flag.BoolVar(&quiet, "q", false, "quiet mode (suppress verbose scan details)")
+	flag.BoolVar(&quiet, "q", false, "suppress scan details")
 	flag.BoolVar(&showVer, "version", false, "print version and exit")
 	flag.BoolVar(&deep, "deep", false, "read file contents inside node_modules, vendor, and site-packages (slower)")
-	flag.Func("root", "additional directory to search recursively for documented persistence (repeatable)", func(path string) error {
+	flag.Func("root", "add/expand a directory to the normal scan (repeatable)", func(path string) error {
 		if strings.TrimSpace(path) == "" {
-			return fmt.Errorf("persistence root must not be empty")
+			return fmt.Errorf("scan root must not be empty")
 		}
-		persistenceRoots = append(persistenceRoots, path)
+		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&coverageDetails, "cov", false, "list individual paths with incomplete scan coverage")
+	flag.BoolVar(&coverageDetails, "cov", false, "show coverage failures grouped by cause")
+	flag.Usage = printUsage
 	flag.Parse()
 
 	if showVer {
@@ -60,7 +62,7 @@ func main() {
 
 	s := New(homeDir, !quiet)
 	s.Deep = deep
-	s.PersistenceRoots = persistenceRoots
+	s.ExtraRoots = extraRoots
 	findings, stats := s.Run()
 
 	invocation := invocationLabel(version, os.Args[1:])
@@ -256,4 +258,38 @@ func resultSummary(invocation string, indicators []Finding) string {
 		}
 	}
 	return fmt.Sprintf("%s : Found %d indicator(s): %d critical, %d warning, %d info", invocation, len(indicators), critical, warn, info)
+}
+
+func printUsage() {
+	out := flag.CommandLine.Output()
+	fmt.Fprintln(out, "Usage: surplies [flags]")
+	fmt.Fprintln(out)
+	flag.VisitAll(func(f *flag.Flag) {
+		name := f.Name
+		if name == "root" {
+			name += " value"
+		}
+		fmt.Fprintf(out, "  -%s\n        %s\n", name, f.Usage)
+	})
+	fmt.Fprintln(out)
+	fmt.Fprintln(out, defaultScanHelp(runtime.GOOS, defaultPersistenceRoots()))
+}
+
+func defaultScanHelp(goos string, roots []string) string {
+	home, example := "~", "/opt"
+	if goos == "darwin" {
+		example = "/Applications"
+	}
+	if goos == "windows" {
+		home = "%USERPROFILE%"
+		example = `"%ProgramFiles%"`
+		if len(roots) > 0 {
+			example = `"` + roots[0] + `"`
+		}
+	}
+	system := strings.Join(roots, ", ")
+	if system == "" {
+		system = "none configured"
+	}
+	return fmt.Sprintf("Default normal scan: %s\nDefault persistence-only scans: %s\n\nNormal scans use supported file types and known checks, not every file.\n\nExample: surplies -root %s -deep", home, system, example)
 }
