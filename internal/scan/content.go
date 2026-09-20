@@ -59,6 +59,11 @@ var paddingRun = strings.Repeat(" ", ConfigPaddingRunLength)
 // package poses as a Tailwind plugin.
 // https://osv.dev/vulnerability/MAL-2026-11132
 //
+// `api_manager.js` and `generate.js` are observed August-wave carriers: that
+// wave appended its payload to the last line of whatever file the project
+// already loaded, so the carrier is an ordinary source file rather than a
+// config. Incident-observed names, not a published IOC list.
+//
 // These historical entrypoint names remain eligible alongside the broader
 // extension policy. Default dependency boundaries still apply to ordinary
 // content; installed package scripts and targeted persistence are exceptions.
@@ -69,6 +74,8 @@ var injectableSourceNames = []string{
 	"tasks.json",
 	"cli.js",
 	"plugin.js",
+	"api_manager.js",
+	"generate.js",
 }
 
 // Eligibility is independent of traversal. Sources, text/config, extensionless
@@ -550,6 +557,11 @@ func renamedNote(name string, h RepoPayloadHash) string {
 	if name == h.Filename {
 		return ""
 	}
+	// An entry with no published filename lands in whatever file the project
+	// already loads, so there is no name to compare against.
+	if h.Filename == "" {
+		return "; identified by exact size and SHA-256, not by filename"
+	}
 	return fmt.Sprintf("; identified by exact size and SHA-256, not by filename (published as %s)", h.Filename)
 }
 
@@ -681,12 +693,77 @@ func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
 	if !hasInlinePadding(data) {
 		return
 	}
+	if s.checkPaddedSegmentHash(path, data) {
+		return
+	}
 	s.addFinding(Finding{
 		Check:    "padded-source-file",
 		Severity: SevWarn,
 		Path:     path,
 		Detail:   fmt.Sprintf("line contains %d+ spaces between text, which can hide appended code off-screen", ConfigPaddingRunLength),
 	})
+}
+
+// checkPaddedSegmentHash carves the appended span out of a padded line and
+// hashes it. The published hashes for the config-append variant are hashes of
+// a span inside a carrier, not of a file: the carrier is the victim's own
+// build config, so its file hash is whatever their config happens to be and
+// matches nothing. Only the injected span is constant across victims.
+//
+// Two spans are carved per padded line, because the injector's whitespace run
+// is itself part of the published invariant: the payload alone, and the
+// payload behind its padding. Both are compared against the sized entries.
+// Carving is pure slicing over bytes already read; nothing is executed.
+func (s *Scanner) checkPaddedSegmentHash(path string, data []byte) bool {
+	for line := range bytes.Lines(data) {
+		idx := bytes.Index(line, []byte(paddingRun))
+		if idx < 0 {
+			continue
+		}
+		// Span the full whitespace run, however much longer than the
+		// threshold it is, so the padded form is carved at its real length.
+		start := idx
+		for start > 0 && line[start-1] == ' ' {
+			start--
+		}
+		end := idx + len(paddingRun)
+		for end < len(line) && line[end] == ' ' {
+			end++
+		}
+		payload := bytes.TrimRight(line[end:], "\r\n")
+		if len(payload) == 0 {
+			continue
+		}
+		padded := bytes.TrimRight(line[start:], "\r\n")
+		for _, span := range [][]byte{payload, padded} {
+			if s.reportPayloadHashMatch(path, span) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// reportPayloadHashMatch compares one carved span against the sized entries.
+// Size is checked before hashing so an ordinary long line costs no SHA-256.
+func (s *Scanner) reportPayloadHashMatch(path string, span []byte) bool {
+	for _, h := range KnownRepoPayloadHashes {
+		if h.Size == 0 || h.Size != int64(len(span)) || h.SHA256 == "" {
+			continue
+		}
+		if fmt.Sprintf("%x", sha256.Sum256(span)) != h.SHA256 {
+			continue
+		}
+		s.addFinding(Finding{
+			Check:    "payload-signature",
+			Severity: SevCritical,
+			Path:     path,
+			Detail: fmt.Sprintf("%s (attack: %s); matched as a %d-byte span appended to this file behind a whitespace run, not as the file's own hash",
+				h.Desc, h.Attack, len(span)),
+		})
+		return true
+	}
+	return false
 }
 
 // Ignore leading indentation and trailing whitespace: the documented pattern

@@ -14,7 +14,11 @@ import (
 // https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
 var victimAssignment = regexp.MustCompile(`global\s*\[\s*['"](?:_V|!)['"]\s*\]\s*=`)
 var inlineLoader = regexp.MustCompile(`import\s*\.\s*meta\s*\.\s*url\s*\)\s*\(\s*['"]\.[^'"\r\n]*\.cjs['"]`)
-var buildMarker = regexp.MustCompile(`/\*(?:M[0-9]{6}[A-Z]?|RS[0-9]{6})\*/`)
+
+// Widened past ByteGuard's published form, which covers only the M and RS
+// prefixes: the C series is the larger half of the observed markers, and a
+// date tag costs the operator nothing to change.
+var buildMarker = regexp.MustCompile(`/\*(?:C|M|RS)[0-9]{6}[A-Z]?\*/`)
 
 // Separate literal prefixes let Go's regexp engine skip directly to candidate
 // calls instead of running the alternation machine over every source byte.

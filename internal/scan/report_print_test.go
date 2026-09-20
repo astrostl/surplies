@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -84,6 +85,14 @@ func TestCoverageIsNotAnIndicator(t *testing.T) {
 func TestResultIncludesVersionAndFlags(t *testing.T) {
 	label := InvocationLabel("v0.9.2", []string{"-q"})
 	if got := ResultSummary(label, nil); got != "surplies 0.9.2 -q : No supply chain attack indicators found." {
+		t.Fatal(got)
+	}
+	// A default run must say so rather than printing a bare version, which is
+	// indistinguishable from a label whose flags were dropped in transcription.
+	if got := InvocationLabel("v0.9.2", nil); got != "surplies 0.9.2 [no flags]" {
+		t.Fatal(got)
+	}
+	if got := InvocationLabel("v0.9.2", []string{}); got != "surplies 0.9.2 [no flags]" {
 		t.Fatal(got)
 	}
 	label = InvocationLabel("v0.9.2", []string{"-root", "/custom apps", "-q"})
@@ -196,9 +205,23 @@ func TestScopeLimitsAndFailuresAreDistinct(t *testing.T) {
 // owns: repositories kept outside the default root need -root to be seen.
 func TestZeroGitRepositoriesPointsAtRoot(t *testing.T) {
 	var out strings.Builder
-	PrintReportSummary(&out, nil, ScanStats{Git: true}, "surplies dev")
+	PrintReportSummary(&out, nil, ScanStats{Git: true, HomeRoot: "/home/u"}, "surplies dev")
 	if !strings.Contains(out.String(), "Git: 0/0 repositories completed") || !strings.Contains(out.String(), "add -root for any kept outside") {
 		t.Fatalf("no -root hint for a zero-repository scan: %s", out.String())
+	}
+	// The notice has to survive a skim of a long report, and `~` alone does
+	// not tell the reader which directory was actually walked.
+	if !strings.Contains(out.String(), "*** NO GIT REPOSITORIES WERE SCANNED! ***") {
+		t.Fatalf("zero-repository notice is not prominent: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "(/home/u)") {
+		t.Fatalf("home root not expanded: %s", out.String())
+	}
+	// Under -only home is not a scan root, so naming it would mislead.
+	out.Reset()
+	PrintReportSummary(&out, nil, ScanStats{Git: true}, "surplies dev")
+	if strings.Contains(out.String(), "(") && strings.Contains(out.String(), "outside ~ (") {
+		t.Fatalf("expanded a home root that was never scanned: %s", out.String())
 	}
 	out.Reset()
 	PrintReportSummary(&out, nil, ScanStats{Git: true, GitRepositoriesFound: 1, GitRepositoriesScanned: 1}, "surplies dev")
@@ -210,4 +233,33 @@ func TestZeroGitRepositoriesPointsAtRoot(t *testing.T) {
 	if strings.Contains(out.String(), "Git:") {
 		t.Fatalf("Git summary printed without a Git scan: %s", out.String())
 	}
+}
+
+// A run must announce its version and flags up front, with the same label the
+// final summary ends with, so a captured log identifies itself from line one.
+func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
+	invocation := InvocationLabel("v0.10.4", []string{"-deep", "-root", "/custom apps"})
+	var out bytes.Buffer
+	s := New("/home/example", false)
+	s.Invocation = invocation
+	s.ExtraRoots = []string{"/custom apps"}
+	s.debug = newScanDebug(&out)
+	s.printRunHeader()
+	header := out.String()
+	first, _, _ := strings.Cut(header, "\n")
+	if first != invocation {
+		t.Fatalf("first line = %q, want %q", first, invocation)
+	}
+	if got := ResultSummary(invocation, nil); !strings.HasPrefix(got, invocation+" ") {
+		t.Fatalf("summary %q does not carry the same label", got)
+	}
+	for _, want := range []string{"Scanning home directory: /home/example", "Additional scan root: /custom apps", "Platform: "} {
+		if !strings.Contains(header, want) {
+			t.Fatalf("missing %q in %q", want, header)
+		}
+	}
+	// Quiet, non-debug runs stay silent; the summary still carries the label.
+	quiet := New("/home/example", false)
+	quiet.Invocation = invocation
+	quiet.printRunHeader()
 }

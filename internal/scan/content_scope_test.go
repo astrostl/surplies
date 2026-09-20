@@ -2,11 +2,14 @@ package scan
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"flag"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 )
 
@@ -240,5 +243,204 @@ func TestContentExpansionFlagsIndependent(t *testing.T) {
 				t.Fatalf("read %d bytes, want %d", got, wantBytes)
 			}
 		})
+	}
+}
+
+// The August wave appended its payload to the last line of a file the project
+// already loaded, so its carriers are ordinary source files rather than
+// configs. Two were observed by name; they are read on that basis alone, and
+// project membership still selects nothing around them.
+func TestAugustCarrierNamesReadWithoutWideningProjectScope(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "src", "project")
+	manifest := `{"name":"fixture"}`
+	writeFixture(t, filepath.Join(project, "package.json"), manifest)
+
+	// The observed August landing: payload behind a long space run on the
+	// file's last line. Signature stands in for the real sample's bytes.
+	payload := "module.exports={};" + strings.Repeat(" ", 507) + "/*RS260605*/"
+	carriers := []string{
+		filepath.Join(project, "api_manager.js"),
+		filepath.Join(project, "skills", "helm", "generate.js"),
+	}
+	for _, path := range carriers {
+		writeFixture(t, path, payload)
+	}
+
+	// Same bytes, same project, names nobody observed: still not read.
+	for _, name := range []string{"helper.js", "util.mjs", "service.ts"} {
+		decoy := filepath.Join(project, "lib", name)
+		writeFixture(t, decoy, payload)
+		if err := os.Chmod(decoy, 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for _, extra := range []bool{false, true} {
+		s := New(home, false)
+		s.Deep = true
+		if extra {
+			s.ExtraRoots = []string{project}
+		}
+		s.scanProjectDirs()
+
+		hits := findingsFor(s, "payload-signature")
+		if len(hits) != len(carriers) {
+			t.Fatalf("extra=%v want %d carrier findings, got %d: %v", extra, len(carriers), len(hits), hits)
+		}
+		for _, h := range hits {
+			if !slices.Contains(carriers, h.Path) {
+				t.Fatalf("extra=%v unobserved name read: %s", extra, h.Path)
+			}
+		}
+		want := int64(len(manifest) + len(carriers)*len(payload))
+		if n := s.contentIO.bytes.Load(); n != want {
+			t.Fatalf("extra=%v read %d bytes want %d", extra, n, want)
+		}
+	}
+}
+
+// generate.js is a generic name. Widening the read set to include it must not
+// turn an ordinary one into a finding.
+func TestAugustCarrierNamesCleanNotFlagged(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "src", "project")
+	writeFixture(t, filepath.Join(project, "package.json"), `{"name":"fixture"}`)
+	writeFixture(t, filepath.Join(project, "api_manager.js"),
+		"module.exports = { get() { return 1; } };\n")
+	writeFixture(t, filepath.Join(project, "skills", "helm", "generate.js"),
+		"export function generate(spec) {\n  return render(spec);\n}\n")
+
+	s := New(home, false)
+	s.Deep = true
+	s.scanProjectDirs()
+
+	for _, check := range []string{"payload-signature", "padded-source-file"} {
+		if hits := findingsFor(s, check); len(hits) != 0 {
+			t.Errorf("clean August carrier produced %s findings: %v", check, hits)
+		}
+	}
+}
+
+// -only exists for one-off checks of a single tree and for fast iteration on
+// fixtures. It must not quietly widen back out to the machine: every check
+// anchored at a fixed system path, at home, at live connections or at temp
+// dirs is skipped, and the walk stays inside the roots it was given.
+func TestOnlySkipsMachineWideChecks(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(home, "target")
+	writeFixture(t, filepath.Join(target, "package.json"), `{"name":"fixture"}`)
+	carrier := filepath.Join(target, "api_manager.js")
+	writeFixture(t, carrier, "module.exports={};"+strings.Repeat(" ", 507)+"/*RS260605*/")
+
+	// A sibling of the root, reachable only if the walk escapes upward.
+	outside := filepath.Join(home, "outside")
+	writeFixture(t, filepath.Join(outside, "package.json"), `{"name":"outside"}`)
+	writeFixture(t, filepath.Join(outside, "api_manager.js"), "module.exports={};"+strings.Repeat(" ", 507)+"/*RS260605*/")
+
+	s := New(target, false)
+	s.Only = true
+	s.Deep = true
+	findings, _ := s.Run()
+
+	var paths []string
+	for _, f := range findings {
+		if f.Check == "payload-signature" {
+			paths = append(paths, f.Path)
+		}
+	}
+	if len(paths) != 1 || paths[0] != carrier {
+		t.Fatalf("want only %s, got %v", carrier, paths)
+	}
+	// The skipped phases must contribute nothing, including coverage rows.
+	for _, f := range findings {
+		if strings.HasPrefix(f.Path, outside) {
+			t.Errorf("-only escaped its root: %+v", f)
+		}
+	}
+}
+
+// The same tree without -only reaches the machine-wide checks, which is what
+// makes the assertion above a real difference rather than a fixture artifact.
+func TestOnlyIsWhatSuppressesThePhases(t *testing.T) {
+	home := t.TempDir()
+	writeFixture(t, filepath.Join(home, "package.json"), `{"name":"fixture"}`)
+
+	quiet := New(home, false)
+	quiet.Only = true
+	quietFindings, _ := quiet.Run()
+
+	full := New(home, false)
+	fullFindings, _ := full.Run()
+
+	if len(fullFindings) <= len(quietFindings) {
+		t.Fatalf("-only produced %d findings, full run %d: expected the full run to check more",
+			len(quietFindings), len(fullFindings))
+	}
+}
+
+// The config-append variant's published hashes describe a span inside a
+// carrier, not a file: the carrier is the victim's own build config, so its
+// file hash is unique per victim and matches nothing. Detection therefore has
+// to carve the appended span out of the padded line and hash that.
+func TestPaddedSegmentIsCarvedAndHashed(t *testing.T) {
+	payload := "module.exports=0;" + strings.Repeat("z", 400) + ";//end"
+	sum := fmt.Sprintf("%x", sha256.Sum256([]byte(payload)))
+
+	restore := KnownRepoPayloadHashes
+	KnownRepoPayloadHashes = append(slices.Clone(restore), RepoPayloadHash{
+		SHA256: sum,
+		Size:   int64(len(payload)),
+		Desc:   "test config-append payload",
+		Attack: "test",
+	})
+	t.Cleanup(func() { KnownRepoPayloadHashes = restore })
+
+	home := t.TempDir()
+	project := filepath.Join(home, "proj")
+	writeFixture(t, filepath.Join(project, "package.json"), `{"name":"fixture"}`)
+	// The real shape: an ordinary config whose LAST line carries the payload
+	// behind a long space run. The file's own size and hash are arbitrary.
+	carrier := filepath.Join(project, "eslint.config.js")
+	writeFixture(t, carrier, "export default [\n  { rules: {} },\n];"+strings.Repeat(" ", 507)+payload)
+
+	s := New(home, false)
+	s.Deep = true
+	s.scanProjectDirs()
+
+	hits := findingsFor(s, "payload-signature")
+	if len(hits) != 1 {
+		t.Fatalf("carved span not matched: %v", hits)
+	}
+	if hits[0].Severity != SevCritical {
+		t.Errorf("want critical, got %v", hits[0].Severity)
+	}
+	if !strings.Contains(hits[0].Detail, "span appended to this file") {
+		t.Errorf("detail should say it matched a span, not the file: %q", hits[0].Detail)
+	}
+	// A span hit is specific; the generic padding warning must not also fire.
+	if warn := findingsFor(s, "padded-source-file"); len(warn) != 0 {
+		t.Errorf("padding warning duplicated a confirmed hash hit: %v", warn)
+	}
+}
+
+// The same carrier without a matching span stays a warning, so carving cannot
+// turn an ordinary padded file into a critical.
+func TestPaddedSegmentWithoutMatchStaysWarning(t *testing.T) {
+	home := t.TempDir()
+	project := filepath.Join(home, "proj")
+	writeFixture(t, filepath.Join(project, "package.json"), `{"name":"fixture"}`)
+	writeFixture(t, filepath.Join(project, "eslint.config.js"),
+		"export default []"+strings.Repeat(" ", 507)+";var somethingElse=1;")
+
+	s := New(home, false)
+	s.Deep = true
+	s.scanProjectDirs()
+
+	if hits := findingsFor(s, "payload-signature"); len(hits) != 0 {
+		t.Errorf("unmatched span produced a critical: %v", hits)
+	}
+	if hits := findingsFor(s, "padded-source-file"); len(hits) != 1 {
+		t.Errorf("want 1 padding warning, got %d", len(hits))
 	}
 }

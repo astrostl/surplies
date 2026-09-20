@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/debug"
 	"strings"
@@ -46,6 +47,7 @@ func runScan() int {
 		quiet      bool
 		showVer    bool
 		extraRoots []string
+		only       bool
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
@@ -60,6 +62,7 @@ func runScan() int {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
+	flag.BoolVar(&only, "only", false, "restrict the scan to -root; skips home and all machine-wide checks")
 	flag.Usage = printUsage
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -72,13 +75,19 @@ func runScan() int {
 		return 0
 	}
 
-	homeDir, err := os.UserHomeDir()
+	homeDir, extraRoots, err := resolveScanScope(only, extraRoots)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: cannot determine home directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		if only && len(extraRoots) == 0 {
+			printUsage()
+		}
 		return 1
 	}
 
+	invocation := scan.InvocationLabel(version, os.Args[1:])
 	s := scan.New(homeDir, !quiet)
+	s.Invocation = invocation
+	s.Only = only
 	s.Deep = modes.Deep
 	s.Git = modes.Git
 	s.NpmCache = modes.NpmCache
@@ -100,7 +109,6 @@ func runScan() int {
 		}
 	}
 
-	invocation := scan.InvocationLabel(version, os.Args[1:])
 	scan.PrintResults(findings, stats, jsonOutput, modes.Coverage, invocation)
 
 	return worstSeverityExitCode(findings)
@@ -121,15 +129,46 @@ func worstSeverityExitCode(findings []scan.Finding) int {
 	return exitCode
 }
 
+// resolveScanScope returns the root the walks are anchored at plus any extra
+// roots. Without -only that is the home directory. With it, -only narrows
+// -root rather than naming its own directory, so the first -root takes home's
+// place and the rest stay extra: every walk then sits inside what the user
+// asked for, and nothing silently falls back to scanning home.
+func resolveScanScope(only bool, roots []string) (string, []string, error) {
+	if !only {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", nil, fmt.Errorf("cannot determine home directory: %w", err)
+		}
+		return home, roots, nil
+	}
+	if len(roots) == 0 {
+		return "", nil, errors.New("-only requires at least one -root")
+	}
+	abs, err := filepath.Abs(roots[0])
+	if err != nil {
+		return "", nil, fmt.Errorf("cannot resolve -root %s: %w", roots[0], err)
+	}
+	if info, statErr := os.Stat(abs); statErr != nil || !info.IsDir() {
+		return "", nil, fmt.Errorf("-only requires an existing directory: %s", abs)
+	}
+	return abs, roots[1:], nil
+}
+
 func printUsage() {
 	out := flag.CommandLine.Output()
 	fmt.Fprintf(out, "surplies %s\n\n", version)
-	fmt.Fprintln(out, "Usage: surplies [flags]")
-	fmt.Fprintln(out, "       surplies schedule [-time HH:MM]")
-	fmt.Fprintln(out, "       surplies schedule disable|remove")
+	fmt.Fprintln(out, "Scan this machine for supply-chain compromise indicators. Reports only; changes nothing.")
 	fmt.Fprintln(out)
-	fmt.Fprintln(out, "Schedule daily scans with desktop notifications (default: 09:00 local time).")
+	fmt.Fprintln(out, "Usage:")
+	fmt.Fprintln(out, "  surplies [flags]                  scan now")
+	fmt.Fprintln(out, "  surplies schedule [-time HH:MM]   schedule a daily scan + notification (default 09:00)")
+	fmt.Fprintln(out, "  surplies schedule disable|remove  turn the daily scan off")
 	fmt.Fprintln(out)
+	// The flags below belong to the scan, not to `schedule`. Naming the
+	// section says so; an unlabelled list under a sentence about scheduling
+	// read as though -broad and -root were options to that subcommand.
+	fmt.Fprintln(out, "Scan flags:")
 	flag.VisitAll(func(f *flag.Flag) {
 		name := f.Name
 		if name == "v" {
