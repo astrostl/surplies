@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -262,4 +263,39 @@ func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
 	quiet := New("/home/example", false)
 	quiet.Invocation = invocation
 	quiet.printRunHeader()
+}
+
+// Absent lifecycle targets fire in dozens of packages on a real machine. One
+// block per package with its own path list drowns the findings that need a
+// reader, so the human report prints the explanation once and counts packages.
+func TestAbsentLifecycleTargetsRollUpInHumanReport(t *testing.T) {
+	root := t.TempDir()
+	var s *Scanner
+	for _, pkg := range []string{"a/node_modules/tr46", "b/node_modules/tr46", "b/node_modules/rollup"} {
+		dir := filepath.Join(root, pkg)
+		name := filepath.Base(pkg)
+		writeFixture(t, filepath.Join(dir, "package.json"), `{"name":"`+name+`","scripts":{"prepare":"node absent.js"}}`)
+		if s == nil {
+			s = New(root, false)
+		}
+		s.checkPackage(dir, name)
+	}
+	var out strings.Builder
+	PrintHumanReport(&out, s.Findings, ScanStats{}, true, "surplies dev")
+	got := out.String()
+	if strings.Count(got, "Lifecycle script target not installed") != 1 {
+		t.Fatalf("check did not roll up into one block:\n%s", got)
+	}
+	for _, want := range []string{"(3 location(s))", "- rollup (prepare): 1\n", "- tr46 (prepare): 2\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	// Individual paths belong in the saved report and -json, not in the block.
+	if strings.Contains(got, filepath.Join(root, "a")) {
+		t.Fatalf("rolled-up block still lists paths:\n%s", got)
+	}
+	if paths := findingsFor(s, "missing-script-target"); len(paths) != 3 || paths[0].Path == "" {
+		t.Fatalf("records lost their paths: %+v", paths)
+	}
 }

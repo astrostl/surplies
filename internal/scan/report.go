@@ -87,6 +87,9 @@ func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, detail
 		var keys []string
 		for _, f := range selected {
 			key := f.Check + "\x00" + f.Detail
+			if f.rollup != "" {
+				key = f.Check
+			}
 			if _, ok := groups[key]; !ok {
 				keys = append(keys, key)
 			}
@@ -95,6 +98,10 @@ func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, detail
 		sort.Strings(keys)
 		for _, key := range keys {
 			group := groups[key]
+			if group[0].rollup != "" {
+				printRollupGroup(out, group)
+				continue
+			}
 			fmt.Fprintf(out, "\n  %s (%d location(s))\n    %s\n", reportCheckTitle(group[0].Check), len(group), group[0].Detail)
 			paths := make([]string, 0, len(group))
 			for _, f := range group {
@@ -107,6 +114,36 @@ func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, detail
 		}
 	}
 	printReportDiagnostics(out, findings, details)
+}
+
+// Some checks describe ordinary ecosystem shape rather than anything to look
+// at, and fire in dozens of packages at once. Printing each package as its own
+// block with its own path list buries the findings that need a reader. Print
+// the shared explanation once and count the subjects; the saved report and
+// -json keep every path.
+func printRollupGroup(out io.Writer, group []Finding) {
+	fmt.Fprintf(out, "\n  %s (%d location(s))\n    %s\n", reportCheckTitle(group[0].Check), len(group), rollupDetail(group[0].Check))
+	counts := map[string]int{}
+	for _, f := range group {
+		counts[f.rollup]++
+	}
+	labels := make([]string, 0, len(counts))
+	for label := range counts {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		fmt.Fprintf(out, "    - %s: %d\n", label, counts[label])
+	}
+}
+
+func rollupDetail(check string) string {
+	switch check {
+	case "missing-script-target":
+		return "Packages declaring a lifecycle script whose target file is not installed. Published tarballs routinely strip build hooks, so this is upstream packaging, not a scan failure. Paths in the saved report."
+	default:
+		return reportCheckTitle(check)
+	}
 }
 
 func reportCheckTitle(check string) string {

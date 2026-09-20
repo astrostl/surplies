@@ -42,10 +42,14 @@ func (s Severity) MarshalJSON() ([]byte, error) {
 // Finding represents a single scan result.
 type Finding struct {
 	coverageCategory string
-	Check            string   `json:"check"`
-	Severity         Severity `json:"severity"`
-	Path             string   `json:"path"`
-	Detail           string   `json:"detail"`
+	// rollup collapses a check that routinely fires across dozens of packages
+	// into one human-report block labelled by subject instead of one block and
+	// one path list per subject. JSON and the saved report keep every record.
+	rollup   string
+	Check    string   `json:"check"`
+	Severity Severity `json:"severity"`
+	Path     string   `json:"path"`
+	Detail   string   `json:"detail"`
 }
 
 // ArtifactCheck describes a known malicious file to look for.
@@ -692,7 +696,7 @@ func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptTarget(pa
 func (s *Scanner) checkScriptTarget(path, pkgName, hook string) {
 	if hook != "" {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			s.addFinding(Finding{Check: "missing-script-target", Severity: SevInfo, Path: path, Detail: fmt.Sprintf("%s declares a %s script that runs this file, but no such file is installed; npm would execute anything later written to this path", pkgName, hook)})
+			s.addFinding(Finding{Check: "missing-script-target", Severity: SevInfo, Path: path, rollup: fmt.Sprintf("%s (%s)", pkgName, hook), Detail: fmt.Sprintf("%s declares a %s script that runs this file, but no such file is installed; npm would execute anything later written to this path", pkgName, hook)})
 			return
 		}
 	}
