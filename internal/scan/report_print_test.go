@@ -191,3 +191,23 @@ func TestScopeLimitsAndFailuresAreDistinct(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// Zero repositories is scope, not a finished Git scan of everything the user
+// owns: repositories kept outside the default root need -root to be seen.
+func TestZeroGitRepositoriesPointsAtRoot(t *testing.T) {
+	var out strings.Builder
+	PrintReportSummary(&out, nil, ScanStats{Git: true}, "surplies dev")
+	if !strings.Contains(out.String(), "Git: 0/0 repositories completed") || !strings.Contains(out.String(), "add -root for any kept outside") {
+		t.Fatalf("no -root hint for a zero-repository scan: %s", out.String())
+	}
+	out.Reset()
+	PrintReportSummary(&out, nil, ScanStats{Git: true, GitRepositoriesFound: 1, GitRepositoriesScanned: 1}, "surplies dev")
+	if strings.Contains(out.String(), "add -root") {
+		t.Fatalf("hint shown with repositories found: %s", out.String())
+	}
+	out.Reset()
+	PrintReportSummary(&out, nil, ScanStats{}, "surplies dev")
+	if strings.Contains(out.String(), "Git:") {
+		t.Fatalf("Git summary printed without a Git scan: %s", out.String())
+	}
+}

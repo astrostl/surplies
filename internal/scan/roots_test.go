@@ -89,3 +89,40 @@ func TestPlatformDefaultRootsAndHelp(t *testing.T) {
 		}
 	}
 }
+
+// A tree reachable only through a directory link is absent from the scan.
+// Say so once, for links that leave every root, and stay quiet for links that
+// point back inside one (no coverage is lost) or resolve to a file.
+func TestUnfollowedDirectoryLinksReportScope(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	writeFixture(t, filepath.Join(outside, "repo", "index.js"), "/*RS260605*/")
+	writeFixture(t, filepath.Join(home, "inside", "index.js"), "/*RS260605*/")
+	writeFixture(t, filepath.Join(home, "file.txt"), "fixture")
+	links := map[string]string{
+		"away":     outside,
+		"internal": filepath.Join(home, "inside"),
+		"tofile":   filepath.Join(home, "file.txt"),
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(home, name)); err != nil {
+			t.Skip(err)
+		}
+	}
+	s := New(home, false)
+	s.scanProjectDirs()
+	s.scanProjectDirs() // repeated walks must not repeat the notice
+	notices := findingsFor(s, "scan-limited")
+	var reported []string
+	for _, f := range notices {
+		if strings.Contains(f.Detail, "Directory link not followed") {
+			reported = append(reported, f.Path)
+		}
+	}
+	if len(reported) != 1 || reported[0] != filepath.Join(home, "away") {
+		t.Fatalf("wrong unfollowed-link notices: %+v", notices)
+	}
+	if reported := findingsFor(s, "scan-incomplete"); len(reported) != 0 {
+		t.Fatalf("scope reported as failure: %+v", reported)
+	}
+}

@@ -29,12 +29,11 @@ func DefaultScanHelp(goos string, roots []string) string {
 	// add coverage that is already present, and for an app bundle the full
 	// scan adds nothing anyway: *.app is a dependency directory, so routine
 	// content reads stay suppressed there with or without -root.
-	home, example, tempExample := "~", "/srv", "/tmp"
+	home, example, tempExample := homeLabel(goos), "/srv", "/tmp"
 	if goos == "darwin" {
 		example = "/Users/Shared"
 	}
 	if goos == "windows" {
-		home = "%USERPROFILE%"
 		tempExample = `"%TEMP%"`
 		example = `"%ProgramData%"`
 	}
@@ -43,4 +42,13 @@ func DefaultScanHelp(goos string, roots []string) string {
 		system = "none configured"
 	}
 	return fmt.Sprintf("Default full scan: %s\nDefault persistence-only scans: %s\n\nFull scans select manifests, execution targets, and documented injection candidates.\nContent: below 100 MB, five-second read/inspection deadline; recognized assets get header checks.\nInternal directory symlinks are not followed; archives are not unpacked.\n\nExample: surplies -root %s -root %s", home, system, example, tempExample)
+}
+
+// How the default root is spelled for the reader's shell. Help text and the
+// zero-repository hint must name the same place.
+func homeLabel(goos string) string {
+	if goos == "windows" {
+		return "%USERPROFILE%"
+	}
+	return "~"
 }
