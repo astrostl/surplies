@@ -119,6 +119,8 @@ func reportCheckTitle(check string) string {
 		return "Potentially concealed Unicode"
 	case "workspace-setting-context":
 		return "Workspace settings"
+	case "missing-script-target":
+		return "Lifecycle script target not installed"
 	default:
 		return strings.ReplaceAll(check, "-", " ")
 	}
@@ -130,8 +132,6 @@ func scopeReportCategory(f Finding) string {
 		return "Browser cache directories excluded"
 	case strings.HasPrefix(f.Detail, "Raw npm"):
 		return "Raw npm cache directories excluded"
-	case strings.HasPrefix(f.Detail, "Declared build/pack"):
-		return "Absent build/pack script targets"
 	case strings.HasPrefix(f.Detail, "DNS completed"):
 		return "Domains without routable DNS answers"
 	case strings.HasPrefix(f.Detail, "Shallow Git"):

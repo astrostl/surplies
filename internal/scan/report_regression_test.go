@@ -45,21 +45,26 @@ func TestNativeEntrypointExcludedBeforeTextSizeLimit(t *testing.T) {
 		t.Fatal("renamed script was excluded by extension")
 	}
 }
-func TestMissingBuildHookIsScopeButMissingInstallIsError(t *testing.T) {
-	for _, hook := range []string{"prepare", "prepack", "postinstall"} {
-		root := t.TempDir()
-		pkg := filepath.Join(root, "node_modules", "pkg")
-		writeFixture(t, filepath.Join(pkg, "package.json"), `{"name":"pkg","scripts":{"`+hook+`":"node absent.js"}}`)
-		s := New(root, false)
-		s.checkPackage(pkg, "pkg")
-		errors := len(findingsFor(s, "scan-incomplete"))
-		limits := len(findingsFor(s, "scan-limited"))
-		if hook == "postinstall" {
-			if errors != 1 {
-				t.Fatal(s.Findings)
+
+// A lifecycle target that is not on disk is upstream packaging, not a read
+// surplies failed: build hooks are stripped from published tarballs and pruned
+// installs drop install helpers, so both must report the same way, and must do
+// so outside node_modules too (renamed dependency directories are common).
+func TestAbsentLifecycleTargetIsNotAReadFailure(t *testing.T) {
+	for _, hook := range []string{"prepare", "prepack", "postinstall", "install"} {
+		for _, dir := range []string{"node_modules", "node_noodles"} {
+			root := t.TempDir()
+			pkg := filepath.Join(root, dir, "pkg")
+			writeFixture(t, filepath.Join(pkg, "package.json"), `{"name":"pkg","scripts":{"`+hook+`":"node absent.js"}}`)
+			s := New(root, false)
+			s.checkPackage(pkg, "pkg")
+			missing := findingsFor(s, "missing-script-target")
+			if len(missing) != 1 || len(findingsFor(s, "scan-incomplete")) != 0 || len(findingsFor(s, "scan-limited")) != 0 {
+				t.Fatalf("%s in %s: %+v", hook, dir, s.Findings)
 			}
-		} else if errors != 0 || limits != 1 {
-			t.Fatal(s.Findings)
+			if missing[0].Severity != SevInfo || !strings.Contains(missing[0].Detail, hook+" script") {
+				t.Fatalf("%s in %s: %+v", hook, dir, missing[0])
+			}
 		}
 	}
 }

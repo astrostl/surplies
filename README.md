@@ -828,7 +828,8 @@ in unselected files. No whole-home runtime is claimed from fixture measurements.
 Native Mach-O/ELF headers are recognized before applying the text-file size limit;
 the binary bodies are outside source-signature inspection, rather than oversized
 source failures. Known exact-hash candidates still receive full candidate reads.
-Absent build/pack hook targets in installed npm packages are scope notices;
-missing install/postinstall targets and other actual read failures remain coverage
-errors. Non-npm update manifests are not parsed as npm versions merely because
+A lifecycle script whose target file is not installed is reported as
+informational context, not as a read failure: published tarballs routinely strip
+build hooks and pruned installs drop install helpers. Actual read failures remain
+coverage errors. Non-npm update manifests are not parsed as npm versions merely because
 they are named `package.json`.
