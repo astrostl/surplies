@@ -24,17 +24,19 @@ func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
 }
 
 func DefaultScanHelp(goos string, roots []string) string {
-	home, example, tempExample := "~", "/opt", "/tmp"
+	// The example must name somewhere that is NOT already a default root.
+	// Suggesting one that is (e.g. /Applications on macOS) reads as advice to
+	// add coverage that is already present, and for an app bundle the full
+	// scan adds nothing anyway: *.app is a dependency directory, so routine
+	// content reads stay suppressed there with or without -root.
+	home, example, tempExample := "~", "/srv", "/tmp"
 	if goos == "darwin" {
-		example = "/Applications"
+		example = "/Users/Shared"
 	}
 	if goos == "windows" {
 		home = "%USERPROFILE%"
 		tempExample = `"%TEMP%"`
-		example = `"%ProgramFiles%"`
-		if len(roots) > 0 {
-			example = `"` + roots[0] + `"`
-		}
+		example = `"%ProgramData%"`
 	}
 	system := strings.Join(roots, ", ")
 	if system == "" {
