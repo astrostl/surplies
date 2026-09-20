@@ -172,6 +172,12 @@ func printScopeNotices(findings []Finding, details bool) {
 
 func InvocationLabel(buildVersion string, args []string) string {
 	parts := []string{"surplies", strings.TrimPrefix(buildVersion, "v")}
+	// A bare version reads the same whether the run was a default scan or had
+	// its flags lost in transcription. Saying so makes a pasted log explicit
+	// about which one it was.
+	if len(args) == 0 {
+		return strings.Join(append(parts, "[no flags]"), " ")
+	}
 	for _, arg := range args {
 		if strings.ContainsAny(arg, " \t\r\n\"\\") || arg == "" {
 			arg = strconv.Quote(arg)

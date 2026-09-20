@@ -1,5 +1,16 @@
 # surplies
 
+## Talking to the developer
+
+Keep it short. A few sentences beats a page. No tables, no status matrices, no
+recaps of what you just did.
+
+- Answer the question asked. Do not volunteer adjacent concerns.
+- Do not list caveats, tradeoffs, or options unless asked. Pick one and say it.
+- Never claim something works until it has been verified against real bytes.
+  A fixture you wrote that fires an existing rule proves nothing.
+- If you were wrong, say so in one line and move on.
+
 ## Design principles
 
 - **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories. The `schedule` subcommand additionally runs `launchctl`, `systemctl --user`, and `notify-send`; this is outside detection entirely and is covered by the scheduling carve-out below.
@@ -32,6 +43,33 @@ read-only-ness:
 - **Roll up repeated diagnostics by cause.** Human-readable errors, coverage warnings, and scope notices must print each shared explanation once, followed by all affected paths in sorted order. Group coverage by category, then cause; normalize the affected path embedded in an explanation rather than repeating the same error for every filename. Preserve distinct evidence and causes. JSON retains the original individual records and exact details.
 - **Distinguish scope from failures.** Expected limits such as shallow Git history are informational scope notices, not scan errors or attack indicators. Actual inspection failures remain warnings and qualify the final result as incomplete coverage.
 - **Describe counters precisely.** Distinguish blobs considered by metadata from candidate blob bodies actually hashed. Zero candidate hashes must not imply that no Git objects were inspected.
+
+## Naming in program output
+
+Every name a finding prints must be one the reader can search for and land on a
+public writeup: the campaign, the package, the landing. Private incident
+codenames, internal document titles, and mechanic-level shorthand
+(`cls`, `clb`, `A9-9034`) mean nothing outside this repo and belong in source
+comments, where the provenance pointer is useful. Where two variants of one
+campaign need distinguishing, name them by what the reader can see — the
+carrier or the landing (Fake Font, config-append) — not by wave, date, or
+attacker build tag. Attacker-internal strings may appear as evidence inside a
+detail, never as the label the finding is identified by.
+
+**Use the published name, not a paraphrase of it.** If a writeup already named
+the landing or variant, that exact name is the one to print, because it is what
+the reader will search. Invent a descriptor only where no public name exists.
+`Fake Font` is OpenSourceMalware's name for the `tasks.json` `folderOpen` +
+`fa-solid-400.woff2` landing; writing "fake-font dropper" instead loses the
+search hit for no gain.
+
+**Scope a corroboration caveat to the thing that actually lacks support.** An
+indicator is usually a mix: a publicly documented technique plus one
+incident-sourced value. "No public corroboration" attached to the whole finding
+tells the reader the attack is unverified, which is false and invites them to
+dismiss it. Name the element — "this sample's hash is incident-sourced" — and
+say plainly that the surrounding mechanism is documented. The same precision
+applies in the README.
 
 ## Citation hygiene
 
@@ -70,6 +108,16 @@ Prefer inert fixtures or small, explicitly bounded directory samples. Do not
 repeat whole-home scans to benchmark changes without explicit user approval.
 Stop a live diagnostic run once it provides enough evidence; do not let a costly
 scan finish merely to collect totals.
+
+For a quick real run against the built binary, use `-only` with whatever roots
+you want to look at — `-root /tmp -only`, a fixture directory, a single project.
+`-only` restricts the scan to the named roots and skips every machine-wide phase
+(fixed artifact paths, persistence roots, live connections, temp dirs), so it
+finishes in milliseconds and never walks the user's home directory. Use it for
+rapid iteration and one-off checks. Do not use it to claim a machine is clean:
+a `-only` run that finds nothing says nothing about persistence, artifacts, or
+connections. Never point a default (non-`-only`) run at the user's home without
+being asked.
 
 Regression requirement: a package manifest or dotfiles `.git` directory at
 `HomeDir` must not implicitly classify its child trees (Documents, Library,

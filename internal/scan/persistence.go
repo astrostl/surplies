@@ -209,6 +209,18 @@ func persistenceRootsForOS(goos string, getenv func(string) string) []string {
 	return roots
 }
 
+// existingPersistenceRoots is the subset checkPersistenceRoots will actually
+// walk, so the run header promises only coverage the scan delivers.
+func existingPersistenceRoots() []string {
+	var present []string
+	for _, root := range DefaultPersistenceRoots() {
+		if _, err := os.Stat(root); err == nil {
+			present = append(present, root)
+		}
+	}
+	return present
+}
+
 func (s *Scanner) checkPersistenceRoots() {
 	for _, root := range DefaultPersistenceRoots() {
 		if _, err := os.Stat(root); os.IsNotExist(err) {

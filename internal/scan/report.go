@@ -52,7 +52,14 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 		if stats.GitRepositoriesFound == 0 {
 			// Zero is scope, not a failed Git scan: repositories kept outside the
 			// default root are invisible until -root names them.
-			fmt.Fprintf(out, "No Git repositories under the scanned roots; add -root for any kept outside %s.\n", homeLabel(runtime.GOOS))
+			// Under -only home was never walked, so advice about what lies
+			// outside it describes a scan that did not happen.
+			if stats.HomeRoot == "" {
+				fmt.Fprint(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** none found under the -root path(s) given\n")
+			} else {
+				fmt.Fprintf(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** add -root for any kept outside %s (%s)\n",
+					homeLabel(runtime.GOOS), stats.HomeRoot)
+			}
 		}
 	}
 	if context > 0 {

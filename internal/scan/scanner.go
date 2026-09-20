@@ -83,14 +83,24 @@ type Scanner struct {
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
-	persistenceWalked  map[string]bool
-	packageChecked     map[string]bool
-	scriptChecked      map[string]bool
-	contentIO          *contentReadStats
-	nextReadReport     int64
-	debug              *scanDebug
-	discovery          *scanDiscovery
-	reads              *contentCache
+	// Only restricts the run to the roots the user named: the machine-wide
+	// phases (fixed artifact paths, persistence roots, live connections, temp
+	// dirs) are skipped entirely, because none of them is anchored in the
+	// requested directory. Intended for one-off checks of a single tree and
+	// for rapid iteration on fixtures, where a full home walk is the cost.
+	Only bool
+	// Invocation labels the run with the build version and the flags it was
+	// given. Printed when the scan starts as well as in the final summary, so
+	// a captured log says what produced it without reading to the end.
+	Invocation        string
+	persistenceWalked map[string]bool
+	packageChecked    map[string]bool
+	scriptChecked     map[string]bool
+	contentIO         *contentReadStats
+	nextReadReport    int64
+	debug             *scanDebug
+	discovery         *scanDiscovery
+	reads             *contentCache
 }
 
 // ScanStats tracks scan progress.
@@ -120,7 +130,11 @@ type ScanStats struct {
 	// Deep records whether the scan read inside dependency directories. Kept
 	// in stats so output can state it plainly: a fast scan that found nothing
 	// must not be reported the same way as a deep one that found nothing.
-	Deep     bool
+	Deep bool
+	// HomeRoot is the home directory when the run actually walked it, so the
+	// zero-repository notice can expand `~` to a real path. Empty under -only,
+	// where home is not a scan root and naming it would mislead.
+	HomeRoot string
 	Duration time.Duration
 }
 
@@ -149,28 +163,57 @@ func (s *Scanner) log(format string, args ...any) {
 	s.progress("  [scan] "+format+"\n", args...)
 }
 
+// printRunHeader states what this run is before it produces any finding: the
+// same version-and-flags label the final summary ends with, then the scope it
+// was pointed at. A captured log then says what produced it from its first
+// line, not only its last.
+func (s *Scanner) printRunHeader() {
+	if s.Invocation != "" {
+		s.progress("%s\n", s.Invocation)
+	}
+	label := "Scanning home directory"
+	if s.Only {
+		label = "Scanning only"
+	}
+	s.progress("%s: %s\n", label, s.HomeDir)
+	for _, root := range s.ExtraRoots {
+		s.progress("Additional scan root: %s\n", root)
+	}
+	// These roots are walked for persistence on every run without being asked
+	// for, so a header that named only the home directory understated the
+	// scope. Absent roots are skipped by the walk and so go unlisted here.
+	if s.Only {
+		s.progress("Machine-wide checks skipped: artifact paths, persistence roots, connections, temp dirs\n")
+	} else if present := existingPersistenceRoots(); len(present) > 0 {
+		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
+	}
+	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
+}
+
 // Run executes all checks and returns findings.
 func (s *Scanner) Run() ([]Finding, ScanStats) {
 	start := time.Now()
 	defer s.debug.summary()
 
-	s.progress("Scanning home directory: %s\n", s.HomeDir)
-	for _, root := range s.ExtraRoots {
-		s.progress("Additional scan root: %s\n", root)
-	}
-	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
+	s.printRunHeader()
 
 	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
 	// global npm CLI entrypoint, which lives outside the home directory.
-	s.progress("[1/5] Checking known malicious artifacts...\n")
-	s.debug.stage("artifacts/persistence")
-	s.checkArtifacts()
-	s.checkNpmCLI()
-	s.checkApplicationPersistence()
-	s.checkPersistenceRoots()
-	s.checkRuntimeStaging()
-	s.checkExtraToolchains()
-	s.checkStartupFiles()
+	// Every check here is anchored at a fixed system or home path, so -only
+	// skips the phase rather than reporting coverage it did not deliver.
+	if s.Only {
+		s.progress("[1/5] Known malicious artifacts — skipped (-only)\n")
+	} else {
+		s.progress("[1/5] Checking known malicious artifacts...\n")
+		s.debug.stage("artifacts/persistence")
+		s.checkArtifacts()
+		s.checkNpmCLI()
+		s.checkApplicationPersistence()
+		s.checkPersistenceRoots()
+		s.checkRuntimeStaging()
+		s.checkExtraToolchains()
+		s.checkStartupFiles()
+	}
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
 	mode := "selected injection candidates, dependency metadata and lifecycle targets"
@@ -192,15 +235,24 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
-	// Phase 4: Check for network IOCs in shell history/config
-	s.progress("[4/5] Checking active connections for network IOCs...\n")
-	s.debug.stage("network")
-	s.checkNetworkIOCs()
+	// Phase 4: Check for network IOCs in shell history/config. A connection
+	// snapshot describes the machine, not a directory, so -only skips it.
+	if s.Only {
+		s.progress("[4/5] Active connections — skipped (-only)\n")
+	} else {
+		s.progress("[4/5] Checking active connections for network IOCs...\n")
+		s.debug.stage("network")
+		s.checkNetworkIOCs()
+	}
 
 	// Phase 5: Check tmp directories for suspicious payload remnants
-	s.progress("[5/5] Checking temp directories for payload remnants...\n")
-	s.debug.stage("temp")
-	s.checkTempArtifacts()
+	if s.Only {
+		s.progress("[5/5] Temp directories — skipped (-only)\n")
+	} else {
+		s.progress("[5/5] Checking temp directories for payload remnants...\n")
+		s.debug.stage("temp")
+		s.checkTempArtifacts()
+	}
 
 	if s.Git {
 		s.progress("[git] Checking locally available refs and history against known payload hashes...\n")
@@ -215,6 +267,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	}
 	s.stats.Deep = s.Deep
 	s.stats.Git = s.Git
+	if !s.Only {
+		s.stats.HomeRoot = s.HomeDir
+	}
 	s.stats.Duration = time.Since(start)
 	s.stats.Debug = s.debug.snapshot()
 	return s.Findings, s.stats

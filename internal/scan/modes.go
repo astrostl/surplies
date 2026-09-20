@@ -18,7 +18,7 @@ func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
 	m := &ScanModes{Deep: true, Git: true, Coverage: true}
 	fs.BoolVar(&m.Broad, "broad", false, "include unrelated text/data (slow)")
 	fs.BoolVar(&m.BrowserCache, "browser-cache", false, "include browser cache contents (slow)")
-	fs.BoolVar(&m.Debug, "debug", false, "save detailed diagnostics to a log and report; -q suppresses terminal debug output")
+	fs.BoolVar(&m.Debug, "debug", false, "save detailed diagnostics to a log and report")
 	fs.BoolVar(&m.NpmCache, "npm-cache", false, "include raw npm cache contents (slow)")
 	return m
 }
@@ -41,7 +41,7 @@ func DefaultScanHelp(goos string, roots []string) string {
 	if system == "" {
 		system = "none configured"
 	}
-	return fmt.Sprintf("Default full scan: %s\nDefault persistence-only scans: %s\n\nFull scans select manifests, execution targets, and documented injection candidates.\nContent: below 100 MB, five-second read/inspection deadline; recognized assets get header checks.\nInternal directory symlinks are not followed; archives are not unpacked.\n\nExample: surplies -root %s -root %s", home, system, example, tempExample)
+	return fmt.Sprintf("Default full scan: %s\nDefault persistence-only scans: %s\n\nFull scans select manifests, execution targets, and documented injection candidates.\nContent: below 100 MB, five-second read/inspection deadline; recognized assets get header checks.\nInternal directory symlinks are not followed; archives are not unpacked.\n\nExample: surplies -root %s -root %s\n         surplies -root %s -only", home, system, example, tempExample, example)
 }
 
 // How the default root is spelled for the reader's shell. Help text and the
