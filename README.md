@@ -6,9 +6,9 @@
 
 A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Git-history checks require Git.
 
-**Currently detects indicators from seven documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [Endor Labs](https://www.endorlabs.com/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)). The [active hash list](#active-payload-hashes) also includes an explicitly requested, locally verified DUNE incident sample within the existing PolinRider campaign; its exact hash is incident-sourced, not independently publicly corroborated:
+**Currently detects indicators from seven documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [Endor Labs](https://www.endorlabs.com/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Acknowledgments](#acknowledgments)). The [active hash list](#active-payload-hashes) also includes explicitly requested, locally verified incident samples within the existing PolinRider campaign; those exact hashes are incident-sourced rather than published by a vendor:
 
-- **[GlassWorm Unicode concealment](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode)** — contextual source warnings for long variation-selector sequences and related Unicode concealment. These warnings do not attribute a file to GlassWorm or DUNE.
+- **[GlassWorm Unicode concealment](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode)** — contextual source warnings for long variation-selector sequences and related Unicode concealment. These warnings do not attribute a file to GlassWorm or PolinRider.
 - **[axios npm compromise](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan)** — compromised maintainer account published `axios@1.14.1` and `axios@0.30.4` with a phantom dependency (`plain-crypto-js`) that deployed a cross-platform RAT
 - **[litellm PyPI compromise](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel)** — malicious `litellm@1.82.7` and `1.82.8` harvested credentials (SSH, AWS, GCP, Azure, env files) and installed a persistent C2 backdoor via systemd
 - **[TrapDoor crypto-stealer campaign](https://socket.dev/blog/trapdoor-crypto-stealer-npm-pypi-crates)** (attributed to GitHub actor `ddjidd564`, campaign marker `P-2024-001`, May 2026) — 34 purpose-built phantom packages across npm (21), PyPI (7), and Crates.io (6) impersonating crypto / DeFi / AI developer tooling. npm packages drop `trap-core.js` (48 KB, XOR-encrypted with key `cargo-build-helper-2026`) via `postinstall`, which writes `.cursorrules` and `CLAUDE.md` into the project directory for AI-assistant-driven persistence and pulls runtime config from `ddjidd564.github.io/defi-security-best-practices/`. surplies covers the npm and PyPI phantoms; Crates.io is out of scope (no Cargo scanner today).
@@ -58,7 +58,16 @@ surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
+surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
 ```
+
+`-only` narrows the scan to the `-root` paths given and skips every
+machine-wide phase — fixed artifact paths, persistence roots, live
+connections and temp directories. It refuses without `-root` rather than
+falling back to home, and both the run header and the phase lines name what
+was skipped. It is for one-off checks of a single tree, not for concluding a
+machine is clean: a `-only` run that finds nothing says nothing about
+persistence, artifacts or connections.
 
 ### Scheduled scans
 
@@ -138,14 +147,20 @@ Where a source publishes a Git object identity, the blob's object ID is compared
 | Payload | Raw-file SHA-256 | Exact bytes | Source |
 |---|---|---:|---|
 | keyv `Math_Symbol.js` | `9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc` | 727,680 | [Snyk keyv analysis](https://snyk.io/blog/inside-keyv-npm-compromise-preinstall-malware-trusted-provenance-ide-hooks/) |
-| DUNE `fa-solid-400.woff2` | `11570a86f8a19cd20bc5e1df112f43c52bc939f18b51c37e902d312fd62f6d27` | 37,566 | Local DUNE incident record; exact quarantined bytes verified 2026-09-19, explicitly requested for inclusion |
+| PolinRider Fake Font `fa-solid-400.woff2` | `11570a86f8a19cd20bc5e1df112f43c52bc939f18b51c37e902d312fd62f6d27` | 37,566 | Incident-sourced; exact quarantined bytes verified 2026-09-19, explicitly requested for inclusion |
+| PolinRider config-append payload | `85d1294bd225c6fdf938bdc2e2cab392140ac97baccd25442d8c2a0cb015b57d` | 8,626 | Incident-sourced; recovered from responder transcripts, verified 2026-09-20, explicitly requested for inclusion |
+| PolinRider config-append injected segment | `a2bb666327ef2345871e42d6f354123f16bfbdfe16e5a928dd5afd8c144b7138` | 9,133 | Incident-sourced; the payload behind its 507-space prefix, verified 2026-09-20, explicitly requested for inclusion |
 | PolinRider `tailwind.config.js` | `7d47c430e6e404dc2fa8b4837678d1cbdb4d0aeacec9b405655cab79d54a2ad9` | not published | [Socket PolinRider GitHub/Packagist](https://socket.dev/blog/polinrider-github-packagist) |
 | PolinRider `tailwind.config.js` | `b7ede935d4979146b55f12b9eec7c83b61962b478f5dc9b8db251e539ec2abd3` | not published | [Socket PolinRider GitHub/Packagist](https://socket.dev/blog/polinrider-github-packagist) |
 | PolinRider `tailwind.config.js` | `ccb187dc9de0cc7477c9817ae53365d273e121407c0305f863e2ab67c35d6395` | not published | [Socket PolinRider GitHub/Packagist](https://socket.dev/blog/polinrider-github-packagist) |
 | PolinRider `tailwind.config.js` | `139ea03dcddf4aa810d55740be3cf6c92ce7a9f3cbcbbb35440e25b769a87683` | not published | [Socket PolinRider GitHub/Packagist](https://socket.dev/blog/polinrider-github-packagist) |
 | PolinRider `tailwind.config.js` | `515a53291d25d229e1f9fa72e66407e1cfd7e77c91478400b24d5185af68531a` | not published | [Socket PolinRider GitHub/Packagist](https://socket.dev/blog/polinrider-github-packagist) |
 
-DUNE's corresponding SHA-1 Git blob identity is `9b2e3a349e377ba2985c593cb3e619f84a0ea1dc`. Git object IDs include an object header and are distinct from raw-file hashes. Its provenance is the local `../battlestation/DUNE.md` record (document SHA-256 at verification: `9a71e4d42c1bda110044e44b9b8ab7a1e55ce29e7f514199cdcc00cd764d58f2`); that private incident document and the payload are not distributed with Surplies. No independent public report of this exact sample hash was found. This addition is not a new campaign or a claim of public corroboration.
+The Fake Font dropper's corresponding SHA-1 Git blob identity is `9b2e3a349e377ba2985c593cb3e619f84a0ea1dc`. Git object IDs include an object header and are distinct from raw-file hashes.
+
+The three incident-sourced hashes above come from a private incident record; neither that document nor the payloads are distributed with Surplies. No independent public report of these exact sample hashes was found, which is the norm for this campaign rather than a mark against them — neither the [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) nor [ByteGuard](https://github.com/n0m4dz/ByteGuard) publishes a single SHA-256, because the payload varies per victim and defenders match strings instead. These additions are not a new campaign; the landings they belong to are publicly documented, and the hashes are additional evidence within them.
+
+**The two config-append hashes describe a span inside a file, not a file.** That variant appends its payload to the last line of a build config the project already loads, so the carrier is the victim's own config and its file hash is unique per victim. Surplies carves the span out of the padded line and hashes that; the 8,626-byte entry is the payload alone and the 9,133-byte entry is the payload behind the injector's constant 507-space prefix.
 
 ### Exit codes
 
@@ -566,7 +581,7 @@ Checks for known artifact filenames during the home-directory walk rather than a
 | `router_init.js` | Payload loader | Mini Shai-Hulud |
 | `tanstack_runner.js` | Bun-loaded payload | Mini Shai-Hulud |
 | `Math_Symbol.js` | Second-stage payload, confirmed by SHA-256 `9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc` | keyv npm compromise |
-| `fa-solid-400.woff2` | Exact dropper bytes, confirmed by SHA-256 in the active hash list | PolinRider (DUNE incident-specific IOC) |
+| `fa-solid-400.woff2` | Exact dropper bytes, confirmed by SHA-256 in the active hash list | PolinRider (incident-sourced hash) |
 
 **How it works:** Exact basename match for the named files except the SHA-256-confirmed `Math_Symbol.js` and `fa-solid-400.woff2`; suffix match for the `.inz` modules, because the stem varies with whichever file was patched. A legitimate `build.bat` is not flagged.
 
@@ -650,7 +665,7 @@ Source attack: PolinRider (DPRK / Contagious Interview).
 
 ### 25. `git-payload-hash` (CRITICAL)
 
-Matches blobs against the sized entries in the [active hash list](#active-payload-hashes), independent of names and the checked-out branch. Where a published Git object identity exists, the blob's object ID is matched directly with no body read; otherwise a blob whose size matches a sized entry is hashed and verified by raw-content SHA-256. Size-less entries are excluded from Git candidates by design. Source attacks: keyv npm compromise and PolinRider (DUNE incident-specific IOC). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings.
+Matches blobs against the sized entries in the [active hash list](#active-payload-hashes), independent of names and the checked-out branch. Where a published Git object identity exists, the blob's object ID is matched directly with no body read; otherwise a blob whose size matches a sized entry is hashed and verified by raw-content SHA-256. Size-less entries are excluded from Git candidates by design. Source attacks: keyv npm compromise and PolinRider (incident-sourced hashes). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings.
 
 ### 26. `scan-limited` (INFO)
 
@@ -658,7 +673,7 @@ Reports expected scope limits, currently shallow Git repositories whose older hi
 
 ## Acknowledgments
 
-Checks draw on public incident analyses, community scanner implementations, and the explicitly authorized local DUNE hash. Broader heuristics are review warnings, with their provenance and limits documented separately. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs for local inspection of a developer machine.
+Checks draw on public incident analyses, community scanner implementations, and explicitly authorized incident-sourced hashes. Broader heuristics are review warnings, with their provenance and limits documented separately. Their researchers did the actual reverse engineering, payload extraction, and infrastructure attribution — surplies is just a thin Go wrapper that mechanizes their IOCs for local inspection of a developer machine.
 
 Sources, in rough order of how much of the IOC set they contribute:
 
@@ -675,9 +690,9 @@ Sources, in rough order of how much of the IOC set they contribute:
 
 - **[Snyk](https://snyk.io/)** — the August 4, 2026 keyv npm compromise writeup: full 11-package malicious release list under maintainer `jaredwray`, `setup.mjs` / `Math_Symbol.js` payload hashes, the `"preinstall": "node setup.mjs"` lifecycle pattern, `.claude/math_init.js` and IDE-hook (SessionStart / folderOpen) persistence path, and trusted-provenance attestation of the malicious build.
 
-- **Local DUNE incident investigation** — the exact fake-font dropper SHA-256, Git blob identity and size in the [active hash list](#active-payload-hashes). Independently verified locally and explicitly requested by the developer; not an independent public campaign source.
+- **Local incident investigation** — the exact Fake Font dropper SHA-256 and Git blob identity, and the config-append payload and segment hashes, in the [active hash list](#active-payload-hashes). Independently verified locally and explicitly requested by the developer; not an independent public campaign source.
 
-The public writeups below support the public indicators; the incident-specific DUNE exception is documented separately above:
+The public writeups below support the public indicators; the incident-sourced hashes are documented separately above:
 
 - [axios Compromised on npm: Malicious Versions Drop Remote Access Trojan](https://www.stepsecurity.io/blog/axios-compromised-on-npm-malicious-versions-drop-remote-access-trojan) (StepSecurity)
 - [LiteLLM Credential Stealer Hidden in PyPI Wheel](https://www.stepsecurity.io/blog/litellm-credential-stealer-hidden-in-pypi-wheel) (StepSecurity)
@@ -725,7 +740,7 @@ MIT
 | `loader-variant`, `loader-structure`, `correlated-loader-markers` | Quote/spacing variants, immediate local-CJS loader calls, and markers correlated with loader/decode structure produce WARN. Generic `createRequire`, dates, and extra marker names alone do not. | [ByteGuard rules](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json); community-pattern evidence. |
 | Additional toolchains | Targeted npm `bin/npm-cli.js`, Yarn `lib/cli.js`, Corepack `dist/pnpm.js`, pnpm `bin/pnpm.cjs`, npx-cached `pnpm.cjs`, and Claude version files are inspected by default, within home, added roots, and existing system persistence roots. Presence/size alone is not a finding for these added targets. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts); defensive discovery, not independent infection confirmation for every product. |
 | `disguised-file-execution-task`, `workspace-setting-context` | Broader interpreters and binary-named targets warn, including manual tasks and platform overrides. Automatic Node-to-font remains CRITICAL. Ordinary automatic builds and hidden output alone are not flagged. Settings are context; invalid values are INFO. Multiple risky/contextual preferences warn without claiming a trust bypass. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts), [Microsoft task semantics](https://code.visualstudio.com/docs/debugtest/tasks#_run-behavior). |
-| `startup-content`, `hosts-c2-entry` | Inspect shell startup files, macOS launch directories, Linux systemd/cron locations, and the system hosts file for contextual known indicators. Comments are ignored. Binary plists produce an explicit scope notice; no plist decoder or external command is invoked. Windows startup APIs/registry enumeration remain outside scope. | [NIK macOS](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_macos.sh), [NIK Linux](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_linux.sh); community hunts, not DUNE attribution. |
+| `startup-content`, `hosts-c2-entry` | Inspect shell startup files, macOS launch directories, Linux systemd/cron locations, and the system hosts file for contextual known indicators. Comments are ignored. Binary plists produce an explicit scope notice; no plist decoder or external command is invoked. Windows startup APIs/registry enumeration remain outside scope. | [NIK macOS](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_macos.sh), [NIK Linux](https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/7bd74b580639c7eae5ccc0930521c6e7d6da8d6d/scan_linux.sh); community hunts, not PolinRider attribution. |
 | `asset-format-mismatch` | WARN for unsupported/truncated headers or text in PNG/JPEG/GIF/WebP/ICO/WASM/PDF/ZIP/MP3/MP4. Headers are format hints, not full validators. Bounded whitespace/NUL padding is removed for script inspection. Existing font magics and HTML/XML download-error exclusions remain. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts). |
 | `unicode-concealment`, `escaped-execution`, `suspicious-source-execution` | WARN for unbalanced bidi controls, ASCII-identifier joiners, runs of at least eight variation selectors in either Unicode range, correlated escaped execution, decode/execute, download-to-shell, or hidden detached spawn structure. No long-line cutoff. Ordinary emoji, balanced RTL, international joiners, private-use glyphs, `eval` alone and public RPC URLs alone do not trigger these general-source checks. | [Endor Labs](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode), [Aikido](https://www.aikido.dev/blog/glassworm-returns-unicode-attack-github-npm-vscode), [ByteGuard rules](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json). |
 
