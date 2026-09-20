@@ -163,7 +163,7 @@ func printUsage() {
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  surplies [flags]                  scan now")
 	fmt.Fprintln(out, "  surplies schedule [-time HH:MM]   schedule a daily scan + notification (default 09:00)")
-	fmt.Fprintln(out, "  surplies schedule disable|remove  turn the daily scan off")
+	fmt.Fprintln(out, "  surplies schedule disable|remove  turn off the daily scan")
 	fmt.Fprintln(out)
 	// The flags below belong to the scan, not to `schedule`. Naming the
 	// section says so; an unlabelled list under a sentence about scheduling

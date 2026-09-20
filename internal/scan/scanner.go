@@ -602,10 +602,7 @@ func (s *Scanner) inspectPackageScripts(pkgDir, pkgName string, pkg *packageJSON
 
 		// If the script references a JS file, check it for obfuscation
 		if jsFile := extractScriptTarget(script); jsFile != "" {
-			jsPath := filepath.Join(pkgDir, jsFile)
-			buildOnly := hook == "prepare" || hook == "prepublish" || hook == "prepack" || hook == "postpack"
-			installed := strings.Contains(filepath.ToSlash(pkgDir), "/node_modules/")
-			s.checkScriptFileMode(jsPath, pkgName, buildOnly && installed)
+			s.checkScriptTarget(filepath.Join(pkgDir, jsFile), pkgName, hook)
 		}
 	}
 }
@@ -684,11 +681,18 @@ func extractScriptTarget(script string) string {
 }
 
 // checkFileObfuscation reads a JS file and checks for obfuscation patterns.
-func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptFileMode(path, pkgName, false) }
-func (s *Scanner) checkScriptFileMode(path, pkgName string, optionalBuild bool) {
-	if optionalBuild {
+func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptTarget(path, pkgName, "") }
+
+// A lifecycle script naming a file that is not on disk is an upstream packaging
+// defect, not a failed read: build hooks are commonly stripped from published
+// tarballs, and pruned installs drop install helpers. Saying so plainly beats
+// reporting it as a path surplies could not inspect. It is informational, not
+// a warning: the absence is normal and nearly always benign, and the reader has
+// nothing to review beyond the packaging itself.
+func (s *Scanner) checkScriptTarget(path, pkgName, hook string) {
+	if hook != "" {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
-			s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: path, Detail: "Declared build/pack hook target is absent from the installed package; no target content available to inspect"})
+			s.addFinding(Finding{Check: "missing-script-target", Severity: SevInfo, Path: path, Detail: fmt.Sprintf("%s declares a %s script that runs this file, but no such file is installed; npm would execute anything later written to this path", pkgName, hook)})
 			return
 		}
 	}
