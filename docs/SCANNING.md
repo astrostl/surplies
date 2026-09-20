@@ -1,15 +1,8 @@
 # Scanning behavior and scope
 
 What a default scan reads, what it deliberately does not read, and the reasoning
-behind each limit. For the checks themselves see [Checks](CHECKS.md).
-
-## Design principles
-
-- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
-- **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](../README.md#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
-- **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
-- **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
-- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
+behind each limit. The principles these follow from are in the
+[README](../README.md#design-principles); for the checks themselves see [Checks](CHECKS.md).
 
 ## Scan phases
 

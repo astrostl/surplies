@@ -87,11 +87,11 @@ Go layout: the root is a thin `package main` so `go install github.com/astrostl/
 - `internal/scan/testdata/` — benign fixtures, notably the genuine `Math_Symbol.js` whose filename collides with the keyv payload
 
 Documentation: `README.md` is the human-legible overview (what it is, what it
-detects, install, usage, a one-line-per-check table). Detail lives under `docs/`
-— `ATTACKS.md` (campaigns and the active hash list), `CHECKS.md` (all 26 checks),
-`SCANNING.md` (design principles, scan phases, selection and scope decisions,
-performance diagnostics), `ATTRIBUTION.md` (sources). Keep the README short; new
-detail belongs in the matching `docs/` file.
+detects, install, usage, the design principles, a one-line-per-check table).
+Detail lives under `docs/` — `ATTACKS.md` (campaigns and the active hash list),
+`CHECKS.md` (all 26 checks), `SCANNING.md` (scan phases, selection and scope
+decisions, performance diagnostics), `ATTRIBUTION.md` (sources). Keep the README
+short; new detail belongs in the matching `docs/` file.
 
 ### Payload hash tiers
 
