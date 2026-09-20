@@ -69,11 +69,11 @@ incident-sourced value. "No public corroboration" attached to the whole finding
 tells the reader the attack is unverified, which is false and invites them to
 dismiss it. Name the element — "this sample's hash is incident-sourced" — and
 say plainly that the surrounding mechanism is documented. The same precision
-applies in the README.
+applies in the README and under `docs/`.
 
 ## Citation hygiene
 
-When adding or revising IOCs, keep the `ioc.go` block comments and all four README locations in sync. See the `citation-hygiene` skill.
+When adding or revising IOCs, keep the `ioc.go` block comments and all four documentation locations in sync. See the `citation-hygiene` skill.
 
 ## Reaching sources
 
@@ -85,6 +85,13 @@ Go layout: the root is a thin `package main` so `go install github.com/astrostl/
 
 - `embed.go` — `//go:embed` of `scripts/notify/*.sh`; the root owns these because an embed pattern cannot traverse up out of its own directory, and the scripts stay at the repo root for documented manual installation
 - `internal/scan/testdata/` — benign fixtures, notably the genuine `Math_Symbol.js` whose filename collides with the keyv payload
+
+Documentation: `README.md` is the human-legible overview (what it is, what it
+detects, install, usage, a one-line-per-check table). Detail lives under `docs/`
+— `ATTACKS.md` (campaigns and the active hash list), `CHECKS.md` (all 26 checks),
+`SCANNING.md` (design principles, scan phases, selection and scope decisions,
+performance diagnostics), `ATTRIBUTION.md` (sources). Keep the README short; new
+detail belongs in the matching `docs/` file.
 
 ### Payload hash tiers
 

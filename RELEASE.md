@@ -14,25 +14,25 @@
 
 Use [semantic versioning](https://semver.org/). For IOC-only additions (new packages/hashes), bump the patch version. For new check types, bump minor.
 
-### 2. Sync the README with changes since the last release
+### 2. Sync the documentation with changes since the last release
 
-Diff the scanner package against the previous release tag to enumerate everything that needs to be reflected in `README.md`:
+Diff the scanner package against the previous release tag to enumerate everything that needs to be reflected in `README.md` and `docs/`:
 
 ```sh
 git diff $(git describe --tags --abbrev=0) -- internal/scan main.go
 ```
 
-For each change, update the matching section of `README.md`:
+For each change, update the matching section:
 
-- **New IOC source / writeup** — update the intro bullet list and the **Acknowledgments** section so every cited researcher is credited.
-- **New attack covered** — add an intro bullet, and confirm the "N documented major supply chain attacks" count at the top of the README still matches.
-- **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table.
-- **New `KnownPhantomPackages` entries** — update the `phantom-dependency` table.
-- **New `KnownC2Domains` / `KnownC2IPs` entries** — update the `network-ioc-active-connection` table.
-- **New `KnownProjectArtifacts` / `KnownNpmPayloadFiles` / `KnownMaliciousPthFiles` / `ArtifactsTmp` entries** — update the corresponding `project-artifact` / `npm-payload-file` / `malicious-pth-file` / `suspicious-temp-file` table.
-- **New check function or new `Check:` string** — add a new numbered section under **Checks** and, if it changed scanner phasing, update the **Scan phases** list.
+- **New IOC source / writeup** — update the README's "What it detects" list, the matching section of `docs/ATTACKS.md`, and `docs/ATTRIBUTION.md` so every cited researcher is credited.
+- **New attack covered** — add a one-line README bullet plus a `## ` section in `docs/ATTACKS.md`, and confirm the "N documented major supply chain attacks" count in the README still matches.
+- **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table in `docs/CHECKS.md`.
+- **New `KnownPhantomPackages` entries** — update the `phantom-dependency` table in `docs/CHECKS.md`.
+- **New `KnownC2Domains` / `KnownC2IPs` entries** — update the `network-ioc-active-connection` table in `docs/CHECKS.md`.
+- **New `KnownProjectArtifacts` / `KnownNpmPayloadFiles` / `KnownMaliciousPthFiles` / `ArtifactsTmp` entries** — update the corresponding `project-artifact` / `npm-payload-file` / `malicious-pth-file` / `suspicious-temp-file` table in `docs/CHECKS.md`.
+- **New check function or new `Check:` string** — add a new numbered section to `docs/CHECKS.md`, a row to the README check table, and, if it changed scanner phasing, update the **Scan phases** list in `docs/SCANNING.md` and the summary in the README's **How it works**.
 
-Commit the README updates as part of the release commit in step 4.
+Commit the documentation updates as part of the release commit in step 4.
 
 ### 3. Smoke-test detection end-to-end
 
@@ -69,7 +69,7 @@ This will:
 ### 5. Commit and tag
 
 ```sh
-git add README.md Formula/surplies.rb
+git add README.md docs Formula/surplies.rb
 git commit -m "Release v1.2.3"
 git tag v1.2.3
 git push origin main v1.2.3
