@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -48,6 +49,11 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 	}
 	if stats.Git {
 		fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
+		if stats.GitRepositoriesFound == 0 {
+			// Zero is scope, not a failed Git scan: repositories kept outside the
+			// default root are invisible until -root names them.
+			fmt.Fprintf(out, "No Git repositories under the scanned roots; add -root for any kept outside %s.\n", homeLabel(runtime.GOOS))
+		}
 	}
 	if context > 0 {
 		fmt.Fprintf(out, "Context: %d informational observation(s), not attack indicators.\n", context)
@@ -125,6 +131,8 @@ func scopeReportCategory(f Finding) string {
 		return "Shallow Git repositories"
 	case strings.HasPrefix(f.Detail, "Binary plist"):
 		return "Binary startup plists not decoded"
+	case strings.HasPrefix(f.Detail, "Directory link"):
+		return "Directory links not followed"
 	case strings.HasPrefix(f.Detail, "Non-npm"):
 		return "Non-npm manifests"
 	case f.Path == "content" || f.Path == "dependencies":

@@ -13,6 +13,7 @@ import (
 // path spelling in findings. Internal directory symlinks are not followed.
 func (s *Scanner) walkScanRoots(visit fs.WalkDirFunc) {
 	roots := append([]string{s.HomeDir}, s.ExtraRoots...)
+	targets := resolvedScanRoots(roots)
 	walked := make(map[string]bool)
 	for _, root := range roots {
 		absolute, resolved, err := resolveScanRoot(root)
@@ -23,23 +24,34 @@ func (s *Scanner) walkScanRoots(visit fs.WalkDirFunc) {
 		if rootCovered(resolved, walked) {
 			continue
 		}
-		_ = s.walkClassified(resolved, absolute, func(path string, entry os.DirEntry, err error) error {
-			if err == nil && entry.IsDir() && walked[path] {
-				return filepath.SkipDir
-			}
-			display := path
-			if absolute != resolved {
-				display = absolute + strings.TrimPrefix(path, resolved)
-			}
-			if err == nil && entry.IsDir() && (s.skipNpmCache(display) || s.skipBrowserStorage(display)) {
-				return filepath.SkipDir
-			}
-			if err == nil && entry.IsDir() {
-				s.debug.event("walk", display, 0, 0)
-			}
-			return visit(display, entry, err)
-		})
+		_ = s.walkClassified(resolved, absolute, s.rootVisitor(absolute, resolved, walked, targets, visit))
 		walked[resolved] = true
+	}
+}
+
+// One walk callback per root: translate the resolved path back to the caller's
+// spelling, apply the traversal boundaries, then hand the entry to the caller.
+func (s *Scanner) rootVisitor(absolute, resolved string, walked map[string]bool, targets []string, visit fs.WalkDirFunc) fs.WalkDirFunc {
+	return func(path string, entry os.DirEntry, err error) error {
+		display := path
+		if absolute != resolved {
+			display = absolute + strings.TrimPrefix(path, resolved)
+		}
+		if err != nil {
+			return visit(display, entry, err)
+		}
+		if entry.IsDir() && walked[path] {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() {
+			if s.skipNpmCache(display) || s.skipBrowserStorage(display) {
+				return filepath.SkipDir
+			}
+			s.debug.event("walk", display, 0, 0)
+		} else if entry.Type()&(fs.ModeSymlink|fs.ModeIrregular) != 0 {
+			s.noteUnfollowedDirLink(display, path, targets)
+		}
+		return visit(display, entry, err)
 	}
 }
 
@@ -65,12 +77,56 @@ func resolveScanRoot(root string) (absolute, resolved string, err error) {
 
 func rootCovered(root string, walked map[string]bool) bool {
 	for prior := range walked {
-		rel, err := filepath.Rel(prior, root)
-		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		if pathWithin(prior, root) {
 			return true
 		}
 	}
 	return false
+}
+
+func pathWithin(prior, path string) bool {
+	rel, err := filepath.Rel(prior, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// Roots that resolve; an unresolvable root reports its own error during the walk.
+func resolvedScanRoots(roots []string) []string {
+	targets := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if _, resolved, err := resolveScanRoot(root); err == nil {
+			targets = append(targets, resolved)
+		}
+	}
+	return targets
+}
+
+// Directory symlinks and Windows junctions are not followed, so a tree reachable
+// only through one is absent from the scan with nothing on screen to say so.
+// That is scope, not a failure: report it once per link, and only when the
+// target sits outside every scan root, since a link pointing back inside a root
+// hides no coverage.
+func (s *Scanner) noteUnfollowedDirLink(display, path string, targets []string) {
+	if s.linkNotices[display] {
+		return
+	}
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return // broken or unreadable link: no tree was in scope to miss
+	}
+	info, err := os.Stat(target)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	for _, root := range targets {
+		if pathWithin(root, target) {
+			return
+		}
+	}
+	if s.linkNotices == nil {
+		s.linkNotices = make(map[string]bool)
+	}
+	s.linkNotices[display] = true
+	s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: display, Detail: "Directory link not followed: this path is a symlink or junction pointing outside every scan root, so the tree behind it was not scanned; pass that target with -root to include it"})
 }
 
 // Raw npm object stores are not installed packages; archive contents are not

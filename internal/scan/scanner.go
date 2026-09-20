@@ -73,6 +73,7 @@ type Scanner struct {
 	contentDirs     map[string]bool
 	dependencyDirs  map[string]bool
 	rawCacheSkipped map[string]bool
+	linkNotices     map[string]bool
 	stats           ScanStats
 	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
 	// is abandoned after StallThreshold strikes instead of costing
