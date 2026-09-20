@@ -4,7 +4,7 @@
 
 > **Disclaimer:** This tool is vibe coded and provided as-is, without warranty or guarantee of any kind. It may produce false positives, miss indicators, or behave unexpectedly. Use it as one signal among many, not as a definitive security verdict. Testing primarily performed on macOS — some Windows/WSL, no Linux.
 
-A cross-platform CLI tool that scans your home directory (and well-known system Python paths) for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Git-history checks require Git.
+A cross-platform CLI tool that scans your home directory and other well-known system paths for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Git-history checks require Git.
 
 ## What it detects
 
