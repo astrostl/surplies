@@ -829,7 +829,10 @@ Native Mach-O/ELF headers are recognized before applying the text-file size limi
 the binary bodies are outside source-signature inspection, rather than oversized
 source failures. Known exact-hash candidates still receive full candidate reads.
 A lifecycle script whose target file is not installed is reported as
-informational context, not as a read failure: published tarballs routinely strip
-build hooks and pruned installs drop install helpers. Actual read failures remain
+`missing-script-target` informational context, not as a read failure: published
+tarballs routinely strip build hooks and pruned installs drop install helpers.
+Because it fires across dozens of packages on an ordinary machine, the human
+report prints the explanation once and counts the packages; every individual
+path stays in `-json` and the saved report. Actual read failures remain
 coverage errors. Non-npm update manifests are not parsed as npm versions merely because
 they are named `package.json`.
