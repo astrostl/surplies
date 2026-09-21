@@ -86,7 +86,7 @@ surplies schedule remove         # stop and remove the schedule and helper
 
 Installs a daily scan using launchd on macOS or a systemd user timer on Linux, along with the notification helper, for the current user. Run it from your normal account without `sudo`, using an installed binary you intend to keep. Rerunning updates the same schedule rather than adding another. The helper records the executable's absolute path, so it does not depend on your interactive shell's `PATH`. Windows is not supported.
 
-Scheduled scans use the default options plus `-q`. A clean scan is silent; any nonzero exit, including incomplete coverage, raises a desktop notification. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
+Scheduled scans use the default options plus `-q`. A clean scan is silent. Warning-level findings, incomplete coverage, or scan errors raise a warning notification; only critical findings (exit code 2) use the critical title and attack-indicator message. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
 
 `disable` also stops a scan that is running at the time, and the setting survives logout and reboot. Run `surplies schedule` again to re-enable at 09:00, or pass `-time`. `remove` keeps the `surplies` binary and existing scan logs.
 

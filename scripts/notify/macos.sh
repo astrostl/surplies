@@ -1,5 +1,5 @@
 #!/bin/sh
-# Send a macOS notification when surplies finds supply chain attack indicators.
+# Send a macOS notification when surplies reports a warning or critical finding.
 # Silent on clean scans. Intended for use with launchd or cron.
 # See scripts/README.md for setup instructions.
 
@@ -8,9 +8,7 @@ code=$?
 [ "$code" -eq 0 ] && exit 0
 
 if [ "$code" -eq 2 ]; then
-    title="Surplies: Critical Finding"
+    osascript -e "display notification \"Critical supply chain attack indicators detected. Run 'surplies' for details.\" with title \"Surplies: Critical Finding\" sound name \"Basso\""
 else
-    title="Surplies: Warning"
+    osascript -e "display notification \"The scan found warnings, incomplete coverage, or an error. Run 'surplies' for details.\" with title \"Surplies: Warning\""
 fi
-
-osascript -e "display notification \"Supply chain attack indicators detected. Run 'surplies' for details.\" with title \"$title\" sound name \"Basso\""

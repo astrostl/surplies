@@ -130,7 +130,7 @@ func TestInstalledNotificationScript(t *testing.T) {
 		t.Skip("requires POSIX shell")
 	}
 	for _, goos := range []string{"darwin", "linux"} {
-		for _, code := range []int{0, 1, 2} {
+		for _, code := range []int{0, 1, 2, 3, 127} {
 			t.Run(fmt.Sprintf("%s/%d", goos, code), func(t *testing.T) {
 				home := t.TempDir()
 				binary := filepath.Join(home, "scan ' $HOME; & executable")
@@ -152,17 +152,26 @@ func TestInstalledNotificationScript(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", output, err)
 				}
-				if code == 0 && len(output) != 0 {
-					t.Fatalf("clean scan notified: %s", output)
-				}
-				if code == 1 && !strings.Contains(string(output), "Surplies: Warning") {
-					t.Fatalf("no warning: %s", output)
-				}
-				if code == 2 && !strings.Contains(string(output), "Surplies: Critical Finding") {
-					t.Fatalf("no critical notification: %s", output)
-				}
+				checkNotificationOutput(t, code, output)
 			})
 		}
+	}
+}
+
+func checkNotificationOutput(t *testing.T, code int, output []byte) {
+	t.Helper()
+	text := string(output)
+	if code == 0 && len(output) != 0 {
+		t.Fatalf("clean scan notified: %s", output)
+	}
+	if code == 2 && (!strings.Contains(text, "Surplies: Critical Finding") || !strings.Contains(text, "Critical supply chain attack indicators detected")) {
+		t.Fatalf("no critical notification: %s", output)
+	}
+	if code != 0 && code != 2 && (!strings.Contains(text, "Surplies: Warning") || !strings.Contains(text, "warnings, incomplete coverage, or an error")) {
+		t.Fatalf("wrong warning notification for exit %d: %s", code, output)
+	}
+	if code != 2 && strings.Contains(text, "Critical") {
+		t.Fatalf("exit %d produced a critical notification: %s", code, output)
 	}
 }
 

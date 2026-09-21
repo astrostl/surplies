@@ -41,9 +41,9 @@ be removed separately.
 
 ## notify/
 
-Scripts that run `surplies` and send a desktop notification **when a scan exits nonzero**, including findings or incomplete coverage. Silent on clean scans.
+Scripts that run `surplies` and send a desktop notification when a scan exits nonzero. Warning-level findings, incomplete coverage, and scan errors use neutral warning text; only exit code 2 uses the critical attack-indicator message. Clean scans are silent.
 
-Severity maps to notification urgency using `surplies`' exit codes:
+Notification behavior follows `surplies`' exit codes:
 
 | Exit code | Meaning | Notification title |
 |-----------|---------|-------------------|
@@ -147,6 +147,6 @@ Each notify script should:
 
 1. Run `surplies -q >/dev/null 2>&1` and capture the exit code
 2. Exit silently if the code is `0`
-3. Fire the platform's native notification mechanism with an appropriate urgency/title based on whether the code is `1` (warning) or `2` (critical)
+3. Fire the platform's native critical notification for code `2`; use neutral warning text for other nonzero codes
 
 Use `#!/bin/sh` for shell scripts where possible (POSIX-portable). No JSON parsing needed — the exit code is the reliable interface.
