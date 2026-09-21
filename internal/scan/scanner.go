@@ -87,13 +87,19 @@ type Scanner struct {
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
+	// TempRoots are the temp directories to walk, normally DefaultTempRoots().
+	TempRoots []string
+	// tempRoots caches the resolved temp directories this run covers, and
+	// tempSpellings every path prefix they can be reached under.
+	tempRoots     []string
+	tempSpellings []string
 	// scopeRoots caches the resolved roots pathInScope compares against.
 	scopeRoots []string
 	// phaseNum counts the progress lines printed so far.
 	phaseNum int
 	// Only restricts the run to the roots the user named: the machine-wide
 	// phases (fixed artifact paths, persistence roots, system Python paths,
-	// live connections, temp dirs) are skipped entirely, because none of them is anchored in the
+	// live connections) are skipped entirely, because none of them is anchored in the
 	// requested directory. Intended for one-off checks of a single tree and
 	// for rapid iteration on fixtures, where a full home walk is the cost.
 	Only bool
@@ -179,19 +185,21 @@ func (s *Scanner) printRunHeader() {
 	if s.Invocation != "" {
 		s.progress("%s\n", s.Invocation)
 	}
-	label := "Scanning home directory"
+	// Every directory this run walks on one line. Naming only the home
+	// directory understated the scope: requested roots and the temp
+	// directories are walked the same way and belong in the same list.
+	label := "Scanning directories"
 	if s.Only {
 		label = "Scanning only"
 	}
-	s.progress("%s: %s\n", label, s.HomeDir)
-	for _, root := range s.ExtraRoots {
-		s.progress("Additional scan root: %s\n", root)
-	}
+	dirs := append([]string{s.HomeDir}, s.ExtraRoots...)
+	dirs = append(dirs, s.tempWalkRoots()...)
+	s.progress("%s: %s\n", label, quotedPathList(dirs))
 	// These roots are walked for persistence on every run without being asked
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if present := existingPersistenceRoots(); !s.Only && len(present) > 0 {
-		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
+		s.progress("Persistence-only roots: %s\n", quotedPathList(present))
 	}
 	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 	// The one statement that changes what the phase lines below mean, so it
@@ -205,7 +213,7 @@ func (s *Scanner) printRunHeader() {
 // connection snapshot, so that run counts five phases rather than printing a
 // sixth the reader would have to discount.
 func (s *Scanner) phase(label string) {
-	total := 4 // artifacts, projects, python, temp
+	total := 3 // artifacts, directories, python
 	if !s.Only {
 		total++ // the connection snapshot
 	}
@@ -268,15 +276,6 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
 	}
-
-	// Phase 5: Check tmp directories for suspicious payload remnants. A temp
-	// dir is a fixed machine path, but naming one with -root puts it in scope,
-	// so the set is whichever of them the run is allowed to read — possibly
-	// none. The header already says the run stays inside the given roots, so
-	// the line does not make the reader work out which case they are in.
-	s.phase("Scanning temp directories")
-	s.debug.stage("temp")
-	s.checkTempArtifacts()
 
 	if s.Git {
 		s.phase("Scanning locally available Git refs and history")
@@ -778,49 +777,6 @@ func obfuscationFlags(data []byte) []string {
 	}
 
 	return flags
-}
-
-// inScopeTempDirs is the deduplicated temp-directory list this run may read:
-// every one of them by default, and only those inside a requested root under
-// -only.
-func (s *Scanner) inScopeTempDirs() []string {
-	candidates := []string{os.TempDir()}
-	if runtime.GOOS != "windows" {
-		candidates = append(candidates, "/tmp", "/var/tmp")
-	}
-	seen := make(map[string]bool)
-	dirs := make([]string, 0, len(candidates))
-	for _, dir := range candidates {
-		if seen[dir] || !s.pathInScope(dir) {
-			continue
-		}
-		seen[dir] = true
-		dirs = append(dirs, dir)
-	}
-	return dirs
-}
-
-// checkTempArtifacts looks for suspicious files in temp directories.
-func (s *Scanner) checkTempArtifacts() {
-	for _, dir := range s.inScopeTempDirs() {
-		s.log("checking temp dir: %s", dir)
-
-		for _, sp := range ArtifactsTmp {
-			matches, err := filepath.Glob(filepath.Join(dir, sp.Glob))
-			if err != nil {
-				continue
-			}
-			for _, m := range matches {
-				s.stats.FilesChecked++
-				s.addFinding(Finding{
-					Check:    "suspicious-temp-file",
-					Severity: SevWarn,
-					Path:     m,
-					Detail:   sp.Desc,
-				})
-			}
-		}
-	}
 }
 
 func truncate(s string, n int) string {

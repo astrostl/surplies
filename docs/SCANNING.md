@@ -6,14 +6,13 @@ behind each limit. The principles these follow from are in the
 
 ## Scan phases
 
-The scanner runs six phases sequentially:
+The scanner runs five phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
-2. **Project directory scanning** — walk home and each additional `-root` directory, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases; dependency checks select declared entrypoints and known payload candidates
+2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root; dependency checks select declared entrypoints and known payload candidates
 3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
-5. **Temp directory artifacts** — check temp dirs for payload remnants
-6. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
+5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
 
 ## Default dependency checks
 

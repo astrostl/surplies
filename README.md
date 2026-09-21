@@ -59,6 +59,11 @@ surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
 ```
 
+A default scan walks your home directory and your own temp directories —
+`$TMPDIR` (`/var/folders/<xx>/<hash>/T` on macOS), `/tmp`, `/var/tmp`, and the
+platform equivalents — recursively, the same way. The run header lists every
+directory it walks. Other users' temp directories require root and are not read.
+
 `-only` confines the scan to the `-root` paths given. Every check is filtered
 by that scope rather than switched off wholesale: the only thing genuinely
 skipped is the live-connection snapshot, which describes the machine and has no

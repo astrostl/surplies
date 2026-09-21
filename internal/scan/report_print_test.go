@@ -244,6 +244,11 @@ func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
 	s := New("/home/example", false)
 	s.Invocation = invocation
 	s.ExtraRoots = []string{"/custom apps"}
+	temp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.TempRoots = []string{temp}
 	s.debug = newScanDebug(&out)
 	s.printRunHeader()
 	header := out.String()
@@ -254,7 +259,9 @@ func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
 	if got := ResultSummary(invocation, nil); !strings.HasPrefix(got, invocation+" ") {
 		t.Fatalf("summary %q does not carry the same label", got)
 	}
-	for _, want := range []string{"Scanning home directory: /home/example", "Additional scan root: /custom apps", "Platform: "} {
+	// Every walked directory on one line: home, the requested roots, and the
+	// temp directories, which are walked on every run.
+	for _, want := range []string{`Scanning directories: /home/example, "/custom apps", ` + temp + "\n", "Platform: "} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("missing %q in %q", want, header)
 		}

@@ -265,13 +265,19 @@ The Ethereum JSON-RPC endpoints the loader queries (`1rpc.io`, `eth.drpc.org`, `
 
 ## 12. `suspicious-temp-file` (WARN)
 
-Checks system temp directories for files matching patterns associated with supply chain attack payloads.
+Walks the temp directories, at every depth, for files matching patterns associated with supply chain attack payloads.
 
 **Directories checked:**
 
-- `os.TempDir()` (platform default)
-- `/tmp` (Linux/macOS)
-- `/var/tmp` (Linux/macOS)
+- `os.TempDir()` — `$TMPDIR` / `%TEMP%`; on macOS `/var/folders/<xx>/<hash>/T`
+- `/var/folders/<xx>/<hash>/Cleanup At Startup` (macOS; contents are deleted at boot)
+- `/tmp` and `/var/tmp` (Linux/macOS)
+- `/dev/shm` and `$XDG_RUNTIME_DIR` — `/run/user/<uid>` (Linux)
+- `%TMP%` and `%SystemRoot%\Temp` (Windows)
+
+Only the invoking user's temp directories are in scope. Other users'
+(`/var/folders/*/*/T`, `/run/user/*`, `C:\Users\*\AppData\Local\Temp`) require
+root and are not read.
 
 **Patterns:**
 
@@ -285,7 +291,7 @@ Checks system temp directories for files matching patterns associated with suppl
 | `tmp.0987654321.lock` | Bun loader execution lock file | mini-shai-hulud (Red Hat Cloud Services wave, June 1 2026) |
 | `b-*/b.zip` | Bun loader staged payload archive, extracted under `/tmp/b-*` | mini-shai-hulud (Red Hat Cloud Services wave, June 1 2026) |
 
-**How it works:** Uses `filepath.Glob` to match patterns in each temp directory. Deduplicates directories (e.g., if `os.TempDir()` returns `/tmp`).
+**How it works:** Temp directories are walked like the home directory, on the same discovery pass, and each pattern is matched against the trailing path components of every file found. A published staging path names where one run happened to land, not the only place the name can appear: `pglog` is reported at `/tmp/pglog` and at `/tmp/npm-install-3f2a/nested/pglog` alike. Roots are resolved before walking, so `/tmp` and `/private/tmp` — or `%TEMP%` and `%TMP%` — are one walk, not two.
 
 **Why this matters:** Temp directories are common staging grounds for supply chain payloads because they're writable without elevated privileges and often excluded from security monitoring. The axios attack staged a VBScript dropper (`%TEMP%\{campaignID}.vbs`) and a PowerShell payload (`%TEMP%\{campaignID}.ps1`) on Windows; both are self-deleting. The litellm attack used `/tmp/.pg_state` to track which C2 commands had been executed, `/tmp/pglog` for downloaded binaries, and assembled stolen credentials into `/tmp/tpcp.tar.gz` before exfiltration.
 

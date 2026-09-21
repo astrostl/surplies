@@ -102,6 +102,7 @@ func runScan() int {
 		}
 	}
 	s.ExtraRoots = extraRoots
+	s.TempRoots = scan.DefaultTempRoots()
 	findings, stats := s.Run()
 	if debugLog != nil {
 		if err := debugLog.Close(); err != nil {

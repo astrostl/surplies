@@ -29,6 +29,9 @@ func (v *discoveryVisitor) apply(path string, entry os.DirEntry, err error) bool
 func (s *Scanner) scanSharedDiscovery() {
 	s.discovery = &scanDiscovery{}
 	visitors := []*discoveryVisitor{{visit: s.visitProject}, {visit: s.discoverPython}}
+	if len(s.tempScanRoots()) > 0 {
+		visitors = append(visitors, &discoveryVisitor{visit: s.visitTempArtifact})
+	}
 	if s.Git {
 		visitors = append(visitors, &discoveryVisitor{visit: s.discoverGit})
 	}

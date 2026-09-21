@@ -8,11 +8,14 @@ import (
 	"strings"
 )
 
-// Shared discovery walks home plus explicitly requested roots. Resolve root
-// symlinks (e.g. /tmp), deduplicate overlapping roots, and retain the caller's
-// path spelling in findings. Internal directory symlinks are not followed.
+// Shared discovery walks home, explicitly requested roots, and the temp
+// directories, which are walked on every run rather than probed at their top
+// level. Resolve root symlinks (e.g. /tmp), deduplicate overlapping roots, and
+// retain the caller's path spelling in findings. Internal directory symlinks
+// are not followed.
 func (s *Scanner) walkScanRoots(visit fs.WalkDirFunc) {
 	roots := append([]string{s.HomeDir}, s.ExtraRoots...)
+	roots = append(roots, s.tempWalkRoots()...)
 	targets := resolvedScanRoots(roots)
 	walked := make(map[string]bool)
 	for _, root := range roots {
