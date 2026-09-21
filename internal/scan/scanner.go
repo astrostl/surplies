@@ -251,13 +251,10 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 
 	// Phase 5: Check tmp directories for suspicious payload remnants. A temp
 	// dir is a fixed machine path, but naming one with -root puts it in scope,
-	// so the phase runs whenever one of them is inside a requested root and
-	// says "skipped" only when none is.
-	if len(s.inScopeTempDirs()) > 0 {
-		s.progress("[5/5] Checking temp directories for payload remnants...\n")
-	} else {
-		s.progress("[5/5] Temp directories — skipped\n")
-	}
+	// so the set is whichever of them the run is allowed to read — possibly
+	// none. The header already says the run stays inside the given roots, so
+	// the line does not make the reader work out which case they are in.
+	s.progress("[5/5] Checking temp directories for payload remnants...\n")
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
 
