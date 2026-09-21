@@ -222,19 +222,17 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.checkExtraToolchains()
 	s.checkStartupFiles()
 
-	// Phase 2: Walk home for node_modules and project-local payload artifacts
-	mode := "selected injection candidates, dependency metadata and lifecycle targets"
-	if s.Deep {
-		mode = "deep: checking declared dependency entrypoints and known payload candidates"
-	}
-	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — %s...\n", mode)
+	// Phase 2: Walk home for node_modules and project-local payload artifacts.
+	// Deep is always on and has no flag to turn it off, so the line describes
+	// what is inspected rather than naming a mode the reader cannot change.
+	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — manifests, lifecycle targets, declared entrypoints and known payload candidates...\n")
 	s.debug.stage("projects")
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
 	}
 	s.scanSharedDiscovery()
 	if s.Deep {
-		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Deep dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
 	}
 
 	// Phase 3: Find and scan Python site-packages directories. The phase still
