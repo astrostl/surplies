@@ -6,20 +6,6 @@
 
 A cross-platform CLI tool that scans key parts of your system for evidence of supply chain attacks via compromised dependencies. Pure Go, no third-party Go modules. Git-history checks require Git.
 
-## What it detects
-
-**Currently detects indicators from seven documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [Endor Labs](https://www.endorlabs.com/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Attribution](docs/ATTRIBUTION.md)). The [active hash list](docs/ATTACKS.md#active-payload-hashes) also includes incident-sourced samples within the existing PolinRider campaign; those exact hashes are not published by a vendor:
-
-- **[GlassWorm Unicode concealment](docs/ATTACKS.md#glassworm-unicode-concealment)** — invisible variation-selector payloads hidden in source, reported as contextual warnings rather than attribution
-- **[axios npm compromise](docs/ATTACKS.md#axios-npm-compromise)** — `axios@1.14.1` and `0.30.4` shipped a phantom dependency that deployed a cross-platform RAT
-- **[litellm PyPI compromise](docs/ATTACKS.md#litellm-pypi-compromise)** — `litellm@1.82.7` and `1.82.8` harvested credentials and installed a persistent C2 backdoor
-- **[TrapDoor crypto-stealer campaign](docs/ATTACKS.md#trapdoor-crypto-stealer-campaign)** — 34 purpose-built phantom packages across npm, PyPI, and Crates.io impersonating crypto / DeFi / AI developer tooling
-- **[Mini Shai-Hulud campaign](docs/ATTACKS.md#mini-shai-hulud-campaign)** — a self-spreading credential-theft worm across npm, PyPI, and Composer, in four waves totaling 400+ packages
-- **[keyv npm compromise](docs/ATTACKS.md#keyv-npm-compromise)** — 11 malicious releases under one maintainer, with a preinstall loader and injected Claude Code / VS Code hooks
-- **[PolinRider campaign](docs/ATTACKS.md#polinrider-campaign)** — a DPRK worm that spreads through developer machines: padded config appends, fake web fonts, `folderOpen` tasks, patched npm and editors
-
-Every campaign, with the full technical detail, is in [Attacks covered](docs/ATTACKS.md).
-
 ## Install
 
 **Homebrew (macOS):**
@@ -29,6 +15,8 @@ brew tap astrostl/surplies https://github.com/astrostl/surplies
 brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
+
+**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.11.1) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
 
 **Go:**
 
@@ -42,6 +30,20 @@ go install github.com/astrostl/surplies@latest
 make build       # local binary
 make all         # all platforms: darwin/linux/windows x amd64/arm64
 ```
+
+## What it detects
+
+**Currently detects indicators from seven documented major supply chain attacks**, sourced from incident writeups by [StepSecurity](https://www.stepsecurity.io/), [Socket](https://socket.dev/), [OpenSourceMalware](https://opensourcemalware.com/), [Aikido](https://www.aikido.dev/), [Endor Labs](https://www.endorlabs.com/), [SafeDep](https://safedep.io/), [Snyk](https://snyk.io/), and the [TanStack](https://tanstack.com/) team, plus registry advisory data from [OSV](https://osv.dev/) and the community [NullReceiver IR kit](https://github.com/OsamaCodes62/nullreceiver-ir-kit) and [ByteGuard](https://github.com/n0m4dz/ByteGuard) (see [Attribution](docs/ATTRIBUTION.md)). The [active hash list](docs/ATTACKS.md#active-payload-hashes) also includes incident-sourced samples within the existing PolinRider campaign; those exact hashes are not published by a vendor:
+
+- **[GlassWorm Unicode concealment](docs/ATTACKS.md#glassworm-unicode-concealment)** — invisible variation-selector payloads hidden in source, reported as contextual warnings rather than attribution
+- **[axios npm compromise](docs/ATTACKS.md#axios-npm-compromise)** — `axios@1.14.1` and `0.30.4` shipped a phantom dependency that deployed a cross-platform RAT
+- **[litellm PyPI compromise](docs/ATTACKS.md#litellm-pypi-compromise)** — `litellm@1.82.7` and `1.82.8` harvested credentials and installed a persistent C2 backdoor
+- **[TrapDoor crypto-stealer campaign](docs/ATTACKS.md#trapdoor-crypto-stealer-campaign)** — 34 purpose-built phantom packages across npm, PyPI, and Crates.io impersonating crypto / DeFi / AI developer tooling
+- **[Mini Shai-Hulud campaign](docs/ATTACKS.md#mini-shai-hulud-campaign)** — a self-spreading credential-theft worm across npm, PyPI, and Composer, in four waves totaling 400+ packages
+- **[keyv npm compromise](docs/ATTACKS.md#keyv-npm-compromise)** — 11 malicious releases under one maintainer, with a preinstall loader and injected Claude Code / VS Code hooks
+- **[PolinRider campaign](docs/ATTACKS.md#polinrider-campaign)** — a DPRK worm that spreads through developer machines: padded config appends, fake web fonts, `folderOpen` tasks, patched npm and editors
+
+Every campaign, with the full technical detail, is in [Attacks covered](docs/ATTACKS.md).
 
 ## Usage
 

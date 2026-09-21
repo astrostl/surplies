@@ -24,6 +24,7 @@ git diff $(git describe --tags --abbrev=0) -- internal/scan main.go
 
 For each change, update the matching section:
 
+- **Every release** — point the README's **Install** prebuilt-binary link at the new tag (`https://github.com/astrostl/surplies/releases/tag/vX.Y.Z`); it is a fixed tag URL, so it goes stale silently.
 - **New IOC source / writeup** — update the README's "What it detects" list, the matching section of `docs/ATTACKS.md`, and `docs/ATTRIBUTION.md` so every cited researcher is credited.
 - **New attack covered** — add a one-line README bullet plus a `## ` section in `docs/ATTACKS.md`, and confirm the "N documented major supply chain attacks" count in the README still matches.
 - **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table in `docs/CHECKS.md`.
