@@ -1,5 +1,32 @@
 # Releasing surplies
 
+## Rule zero: `main` is the Homebrew tap
+
+There is no separate tap repo. `brew tap astrostl/surplies` clones **this repo**,
+and `brew update` **rebases that clone onto `origin/main`**. The consequence:
+
+> Once a commit is pushed to `main`, it is published. Never `--amend`, `rebase`,
+> `reset`, or force-push `main`. Fix forward with a new commit, always.
+
+A force-push does not just inconvenience the next `git pull`. Every tap that
+already cloned the old commit keeps it as a local commit on its `main`. From then
+on, *every* `brew update` replays that orphan onto the new `origin/main`, it
+conflicts on `Formula/surplies.rb`, and Homebrew writes `<<<<<<<` / `=======` /
+`>>>>>>>` markers into the live formula. The formula stops being valid Ruby, so
+`brew update`, `brew upgrade`, `brew install` and `brew info` all fail with a
+parser dump — for that user, forever, on every single invocation, until they
+untap and retap. Nothing you push later repairs it.
+
+This has already happened once. On 2026-09-19, `Release v0.9.1` was pushed as
+`900f7c1`, amended (the amend touched `Formula/surplies.rb`), and force-pushed as
+`d3bd328`. Both commits share the same parent and the same timestamp and differ
+only in tree. `900f7c1` is still resolvable on GitHub and is still sitting on
+every tap clone made before the amend.
+
+So: get the release commit right *before* pushing it. `git status` must be clean
+and `Formula/surplies.rb` must already be correct at commit time, because after
+the push there is no taking it back.
+
 ## Prerequisites
 
 - `gh` CLI authenticated (`gh auth status`)
@@ -69,12 +96,30 @@ This will:
 
 ### 5. Commit and tag
 
+Stage, commit, then **review the commit before pushing it**. This is the last
+moment a mistake is cheap; see [Rule zero](#rule-zero-main-is-the-homebrew-tap).
+
 ```sh
 git add README.md docs Formula/surplies.rb
 git commit -m "Release v1.2.3"
+
+git status --short          # must be empty
+git show --stat HEAD        # must include Formula/surplies.rb
+ruby -c Formula/surplies.rb # must print "Syntax OK"
+grep -c v1.2.3 Formula/surplies.rb  # must print 3 (version + two URLs)
+```
+
+If any of those is wrong, amend **now**, while the commit is still local. Once
+the next command runs, amending is off the table permanently.
+
+```sh
 git tag v1.2.3
 git push origin main v1.2.3
 ```
+
+If you discover a problem after this push, fix it with a *new* commit and a new
+patch release. Do not force-push `main` to tidy it up — that is precisely the
+action that bricks every existing tap.
 
 ### 6. Create the GitHub release and upload artifacts
 
@@ -90,17 +135,37 @@ gh release create v1.2.3 \
   --notes "Brief description of what changed."
 ```
 
-### 7. Upgrade the local Homebrew installation (required for every release)
+### 7. Verify the tap, then upgrade the local Homebrew installation
 
-After publishing the release assets and updated formula, upgrade the local Homebrew installation of surplies. A release is not complete until the installed binary reports the newly released version. Run the Homebrew-installed `surplies`, not `./surplies` from the checkout.
+Two separate things have to be true, and only the first one catches the failure
+mode in Rule zero.
+
+**7a. The tap must rebase cleanly.** `brew update` rebases the tap clone onto
+`origin/main`. Prove that it did, rather than assuming it:
 
 ```sh
 brew update
-brew upgrade surplies
-surplies -version
+TAP=$(brew --repository astrostl/surplies)
+git -C "$TAP" status --short          # must be empty — no U/AA entries
+git -C "$TAP" rev-parse HEAD          # must equal the v1.2.3 tag commit
+grep -c '^<<<<<<<\|^=======\|^>>>>>>>' "$TAP/Formula/surplies.rb"  # must print 0
 ```
 
-Confirm that the reported version matches the release tag. If the upgrade fails or still reports the previous version, resolve it before declaring the release complete.
+A non-empty `status`, a mismatched HEAD, or any conflict marker means the tap
+carries a commit `origin/main` no longer has. Do not paper over it — find out
+what rewrote history, because every other user's tap is in the same state.
+
+**7b. The installed binary must report the new version.** Run the
+Homebrew-installed `surplies`, not `./surplies` from the checkout.
+
+```sh
+brew upgrade surplies
+/opt/homebrew/bin/surplies -version
+```
+
+Confirm the reported version matches the release tag. If the upgrade fails or
+still reports the previous version, resolve it before declaring the release
+complete.
 
 If testing from scratch:
 
@@ -110,6 +175,26 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 surplies -version
 ```
+
+## If a tap is already broken
+
+Symptom: any `brew` command dumps a Ruby parse error naming
+`Formula/surplies.rb`, with `unexpected <<, ignoring it` / `unexpected '='` /
+`unexpected >>`, often alongside `Warning: Some taps are not on the default git
+origin branch`. The formula on GitHub is fine; the *local clone* has conflict
+markers in it.
+
+Nothing pushed to `main` can fix this. The user has to discard the poisoned
+clone:
+
+```sh
+brew untap astrostl/surplies
+brew tap astrostl/surplies https://github.com/astrostl/surplies
+brew update
+```
+
+`brew untap` removes only the tap clone under
+`$(brew --repository astrostl/surplies)`; it does not uninstall the binary.
 
 ## What the Makefile targets do
 
