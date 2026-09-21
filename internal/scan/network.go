@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +18,22 @@ const networkTimeout = 5 * time.Second
 type networkCollector func(context.Context) ([]byte, error)
 type hostResolver func(context.Context, string) ([]string, error)
 
+// macOS truncates the address column by default, cutting link-local IPv6 peers
+// mid-address (fe80::1caa:a604:.55584), which parses as neither host nor port.
+// Every Mac near another Apple device holds such connections open via rapportd,
+// so the default flags cost a coverage warning on essentially every scan. -l is
+// documented as "Print full IPv6 address" on macOS only; on Linux -l means
+// "listening sockets", which would empty the snapshot.
+func netstatArgs() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"-n", "-l"}
+	}
+	return []string{"-n"}
+}
+
 func (s *Scanner) checkNetworkIOCs() {
 	s.inspectNetwork(func(ctx context.Context) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "netstat", "-n")
+		cmd := exec.CommandContext(ctx, "netstat", netstatArgs()...)
 		cmd.WaitDelay = time.Second
 		return cmd.Output()
 	}, net.DefaultResolver.LookupHost, networkTimeout)

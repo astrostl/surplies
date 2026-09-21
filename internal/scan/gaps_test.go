@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -39,6 +40,15 @@ func TestNetworkEndpoints(t *testing.T) {
 	}
 	if _, err := remoteEndpoints("tcp malformed"); err == nil {
 		t.Fatal("malformed collector output accepted")
+	}
+	// What macOS prints without -l: the address column is cut, so the peer is
+	// neither host nor port. It must still read as a gap, because the fix is
+	// passing -l, not learning to accept half an address.
+	if _, err := remoteEndpoints("tcp6 0 0 fe80::182b:e436:.61643 fe80::1caa:a604:.55584 ESTABLISHED"); err == nil {
+		t.Fatal("truncated peer address accepted")
+	}
+	if runtime.GOOS == "darwin" && !slices.Contains(netstatArgs(), "-l") {
+		t.Fatal("macOS collector must ask for full IPv6 addresses")
 	}
 }
 func TestNetworkFailuresAndDNS(t *testing.T) {
