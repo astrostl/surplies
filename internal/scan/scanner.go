@@ -89,6 +89,8 @@ type Scanner struct {
 	ExtraRoots         []string
 	// scopeRoots caches the resolved roots pathInScope compares against.
 	scopeRoots []string
+	// phaseNum counts the progress lines printed so far.
+	phaseNum int
 	// Only restricts the run to the roots the user named: the machine-wide
 	// phases (fixed artifact paths, persistence roots, system Python paths,
 	// live connections, temp dirs) are skipped entirely, because none of them is anchored in the
@@ -199,6 +201,21 @@ func (s *Scanner) printRunHeader() {
 	}
 }
 
+// phase numbers the progress lines as they print. -only never takes the
+// connection snapshot, so that run counts five phases rather than printing a
+// sixth the reader would have to discount.
+func (s *Scanner) phase(label string) {
+	total := 4 // artifacts, projects, python, temp
+	if !s.Only {
+		total++ // the connection snapshot
+	}
+	if s.Git {
+		total++
+	}
+	s.phaseNum++
+	s.progress("[%d/%d] %s...\n", s.phaseNum, total, label)
+}
+
 // Run executes all checks and returns findings.
 func (s *Scanner) Run() ([]Finding, ScanStats) {
 	start := time.Now()
@@ -212,7 +229,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// home-anchored half — which resolves inside the requested root — still
 	// runs and the machine-anchored half does not. The header states the
 	// scope, so the phase line reads the same either way.
-	s.progress("[1/6] Scanning known malicious artifact paths...\n")
+	s.phase("Scanning known malicious artifact paths")
 	s.debug.stage("artifacts/persistence")
 	s.checkArtifacts()
 	s.checkNpmCLI()
@@ -225,7 +242,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 2: Walk home for node_modules and project-local payload artifacts.
 	// What gets selected for reading is already stated by the scope notice
 	// below, so the phase line names the directories and stops there.
-	s.progress("[2/6] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
+	s.phase("Scanning project directories (node_modules, vendor, .claude, .vscode)")
 	s.debug.stage("projects")
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
@@ -236,18 +253,18 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	}
 
 	// Phase 3: Find and scan Python site-packages directories. The phase still
-	// runs under -only — a virtualenv inside a requested root is in scope —
-	// but the fixed system paths are not, so the line says which half ran.
-	s.progress("[3/6] Scanning Python site-packages...\n")
+	// runs under -only: a virtualenv inside a requested root is in scope, and
+	// the fixed system paths are filtered out by the same scope rule.
+	s.phase("Scanning Python site-packages")
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
-	// Phase 4: Check for network IOCs in shell history/config. A connection
-	// snapshot describes the machine, not a directory, so -only does not take
-	// it. The header says so; the phase line stays the same either way rather
-	// than making the reader work out which run they are looking at.
-	s.progress("[4/6] Scanning active network connections...\n")
+	// Phase 4: Check for network IOCs. A connection snapshot describes the
+	// machine, not a directory, so it is the one phase -only cannot run at
+	// all — and therefore the one phase it does not count or print. The
+	// banner already says connections are not scanned.
 	if !s.Only {
+		s.phase("Scanning active network connections")
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
 	}
@@ -257,12 +274,12 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// so the set is whichever of them the run is allowed to read — possibly
 	// none. The header already says the run stays inside the given roots, so
 	// the line does not make the reader work out which case they are in.
-	s.progress("[5/6] Scanning temp directories...\n")
+	s.phase("Scanning temp directories")
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
 
 	if s.Git {
-		s.progress("[6/6] Scanning locally available Git refs and history...\n")
+		s.phase("Scanning locally available Git refs and history")
 		s.debug.stage("git")
 		s.scanGitRepositories()
 	}
