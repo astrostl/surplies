@@ -78,7 +78,7 @@ func Command(args []string, out io.Writer, scripts Scripts) error {
 	if err := inst.install(hour, minute); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Daily scans scheduled for %02d:%02d local time. Desktop notifications report nonzero scan results, including incomplete coverage.\n", hour, minute)
+	fmt.Fprintf(out, "Daily scans scheduled for %02d:%02d local time. Desktop notifications report critical findings.\n", hour, minute)
 	return nil
 }
 

@@ -1,19 +1,11 @@
 #!/bin/sh
-# Send a desktop notification when surplies finds supply chain attack indicators.
-# Requires libnotify (notify-send). Silent on clean scans.
+# Send a desktop notification when surplies finds a critical supply chain attack indicator.
+# Requires libnotify (notify-send). Silent unless the scan exits 2.
 # Intended for use with cron or a systemd timer.
 # See scripts/README.md for setup instructions.
 
 surplies -q >/dev/null 2>&1
 code=$?
-[ "$code" -eq 0 ] && exit 0
+[ "$code" -ne 2 ] && exit 0
 
-if [ "$code" -eq 2 ]; then
-    title="Surplies: Critical Finding"
-    urgency="critical"
-else
-    title="Surplies: Warning"
-    urgency="normal"
-fi
-
-notify-send -u "$urgency" "$title" "Supply chain attack indicators detected. Run 'surplies' for details."
+notify-send -u critical "Surplies: Critical Finding" "Supply chain attack indicators detected. Run 'surplies' for details."

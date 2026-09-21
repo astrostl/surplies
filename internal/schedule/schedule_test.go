@@ -130,7 +130,7 @@ func TestInstalledNotificationScript(t *testing.T) {
 		t.Skip("requires POSIX shell")
 	}
 	for _, goos := range []string{"darwin", "linux"} {
-		for _, code := range []int{0, 1, 2} {
+		for _, code := range []int{0, 1, 2, 3, 127} {
 			t.Run(fmt.Sprintf("%s/%d", goos, code), func(t *testing.T) {
 				home := t.TempDir()
 				binary := filepath.Join(home, "scan ' $HOME; & executable")
@@ -152,11 +152,8 @@ func TestInstalledNotificationScript(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", output, err)
 				}
-				if code == 0 && len(output) != 0 {
-					t.Fatalf("clean scan notified: %s", output)
-				}
-				if code == 1 && !strings.Contains(string(output), "Surplies: Warning") {
-					t.Fatalf("no warning: %s", output)
+				if code != 2 && len(output) != 0 {
+					t.Fatalf("exit %d notified: %s", code, output)
 				}
 				if code == 2 && !strings.Contains(string(output), "Surplies: Critical Finding") {
 					t.Fatalf("no critical notification: %s", output)
