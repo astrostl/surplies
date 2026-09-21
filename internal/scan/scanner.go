@@ -234,8 +234,14 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Deep dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
 	}
 
-	// Phase 3: Find and scan Python site-packages directories
-	s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
+	// Phase 3: Find and scan Python site-packages directories. The phase still
+	// runs under -only — a virtualenv inside a requested root is in scope —
+	// but the fixed system paths are not, so the line says which half ran.
+	if s.Only {
+		s.progress("[3/5] Scanning Python site-packages under the given roots — system paths skipped (-only)...\n")
+	} else {
+		s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
+	}
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
