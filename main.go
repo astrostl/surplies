@@ -64,7 +64,7 @@ func runScan() int {
 		return nil
 	})
 	flag.BoolVar(&only, "only", false, "confine the scan to only the given -root(s)")
-	flag.BoolVar(&noPause, "no-pause", false, "never wait for ENTER before exiting (Windows double-click only; "+PauseDisabledEnv+" does the same)")
+	flag.BoolVar(&noPause, "no-pause", false, "never wait for ENTER before exiting (Windows only, "+PauseDisabledEnv+" equivalent)")
 	flag.Usage = printUsage
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -106,6 +106,7 @@ func runScan() int {
 	}
 	s.ExtraRoots = extraRoots
 	s.TempRoots = scan.DefaultTempRoots()
+	s.SkipTempRoots = modes.SkipTempRoots
 	findings, stats := s.Run()
 	if debugLog != nil {
 		if err := debugLog.Close(); err != nil {

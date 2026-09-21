@@ -509,4 +509,4 @@ Reports an installed Git older than 2.45 when the scan found at least one reposi
 
 ## 27. `scan-limited` (INFO)
 
-Reports expected scope limits, currently shallow Git repositories whose older history is not available locally. These notices are grouped by shared explanation in human output and retained individually in JSON. They are not attack indicators or scan failures and do not change the exit status. Actual inspection failures remain `scan-incomplete` warnings.
+Reports expected scope limits, such as shallow Git repositories whose older history is not available locally, or the temp directories a `-skip-tmproots` run did not walk. These notices are grouped by shared explanation in human output and retained individually in JSON. They are not attack indicators or scan failures and do not change the exit status. Actual inspection failures remain `scan-incomplete` warnings.

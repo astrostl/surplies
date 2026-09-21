@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -138,6 +139,66 @@ func TestDefaultTempRootsCoverThePlatform(t *testing.T) {
 	for _, w := range want {
 		if !strings.Contains(joined, w) {
 			t.Errorf("DefaultTempRoots() = %v, missing %s", roots, w)
+		}
+	}
+}
+
+// -skip-tmproots drops the default temp directories from the walk. It narrows
+// traversal rather than putting temp out of scope, so the run has to say what
+// it stopped looking for.
+func TestSkipTempRootsDropsDefaultTempWalk(t *testing.T) {
+	home := evalDir(t, t.TempDir())
+	temp := evalDir(t, t.TempDir())
+	writeFixture(t, filepath.Join(temp, "npm-install-3f2a", "tpcp.tar.gz"), "payload")
+
+	s := New(home, false)
+	s.TempRoots = []string{temp}
+	s.SkipTempRoots = true
+	s.Run()
+
+	if got := s.tempScanRoots(); len(got) != 0 {
+		t.Errorf("tempScanRoots() with -skip-tmproots = %v, want none", got)
+	}
+	if found := findingsFor(s, "suspicious-temp-file"); len(found) != 0 {
+		t.Errorf("temp artifacts reported with -skip-tmproots: %v", found)
+	}
+	notices := findingsFor(s, "scan-limited")
+	if !slices.ContainsFunc(notices, func(f Finding) bool { return f.Path == "temp" }) {
+		t.Errorf("no temp scope notice with -skip-tmproots; got %v", notices)
+	}
+}
+
+// An explicit -root is a directory the user asked for by name. -skip-tmproots
+// drops the defaults, so suppressing the staging-name matching inside a tree
+// that was named anyway would silently remove a check from requested scope.
+func TestSkipTempRootsKeepsRequestedTempRoot(t *testing.T) {
+	temp := evalDir(t, t.TempDir())
+	writeFixture(t, filepath.Join(temp, "npm-install-3f2a", "tpcp.tar.gz"), "payload")
+
+	s := New(evalDir(t, t.TempDir()), false)
+	s.ExtraRoots = []string{temp}
+	s.TempRoots = []string{temp}
+	s.SkipTempRoots = true
+	s.Run()
+
+	if got := s.tempScanRoots(); len(got) != 1 || got[0] != temp {
+		t.Fatalf("requested temp root with -skip-tmproots = %v, want [%s]", got, temp)
+	}
+	want := filepath.Join(temp, "npm-install-3f2a", "tpcp.tar.gz")
+	if !slices.ContainsFunc(findingsFor(s, "suspicious-temp-file"), func(f Finding) bool { return f.Path == want }) {
+		t.Errorf("missed staging artifact under a requested temp root: %v", s.Findings)
+	}
+}
+
+// The scope notice belongs to the flag, not to the platform: a default run
+// walks temp and must not claim otherwise.
+func TestDefaultRunHasNoTempScopeNotice(t *testing.T) {
+	s := New(evalDir(t, t.TempDir()), false)
+	s.TempRoots = []string{evalDir(t, t.TempDir())}
+	s.Run()
+	for _, f := range findingsFor(s, "scan-limited") {
+		if f.Path == "temp" {
+			t.Errorf("temp scope notice on a default run: %+v", f)
 		}
 	}
 }

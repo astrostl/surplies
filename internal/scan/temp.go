@@ -67,6 +67,9 @@ func (s *Scanner) tempScanRoots() []string {
 		if seen[resolved] || !s.pathInScope(absolute) {
 			continue
 		}
+		if s.SkipTempRoots && !s.rootRequested(absolute, resolved) {
+			continue
+		}
 		seen[resolved] = true
 		s.tempRoots = append(s.tempRoots, resolved)
 		// The walk reports each path under the spelling its own root was given,
@@ -78,6 +81,25 @@ func (s *Scanner) tempScanRoots() []string {
 		}
 	}
 	return s.tempRoots
+}
+
+// rootRequested reports whether a temp directory was named on the command line
+// rather than added by default. -skip-tmproots drops the default temp roots, but
+// -root names a directory explicitly and an explicit root has to keep its
+// checks: a run given -root /tmp asked for that tree, so the staging-name
+// matching still applies inside it. Under -only the first -root stands in for
+// home, so HomeDir is an explicit root there and only there.
+func (s *Scanner) rootRequested(absolute, resolved string) bool {
+	requested := s.ExtraRoots
+	if s.Only {
+		requested = append([]string{s.HomeDir}, requested...)
+	}
+	for _, root := range resolvedScanRoots(requested) {
+		if pathWithin(root, absolute) || pathWithin(root, resolved) {
+			return true
+		}
+	}
+	return false
 }
 
 // tempWalkRoots are the temp directories this run has to walk itself: one

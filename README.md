@@ -58,6 +58,7 @@ surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
+surplies -skip-tmproots # do not walk the temp directories (staging names still checked)
 surplies -no-pause    # never wait for ENTER before exiting (Windows only; see below)
 ```
 
@@ -65,6 +66,12 @@ A default scan walks your home directory and your own temp directories —
 `$TMPDIR` (`/var/folders/<xx>/<hash>/T` on macOS), `/tmp`, `/var/tmp`, and the
 platform equivalents — recursively, the same way. The run header lists every
 directory it walks. Other users' temp directories require root and are not read.
+
+`-skip-tmproots` drops those directories from the walk, for a machine where
+build and installer debris dominates the report. It narrows traversal rather
+than putting temp out of scope: the documented staging filenames are still
+checked, a temp directory named with `-root` is still walked in full, and the
+run prints a scope notice saying what it stopped looking for.
 
 `-only` confines the scan to the `-root` paths given. Every check is filtered
 by that scope rather than switched off wholesale: the only thing genuinely

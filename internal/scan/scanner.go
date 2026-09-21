@@ -94,6 +94,12 @@ type Scanner struct {
 	ExtraRoots         []string
 	// TempRoots are the temp directories to walk, normally DefaultTempRoots().
 	TempRoots []string
+	// SkipTempRoots drops those directories from the walk, for a run that
+	// does not want its report dominated by build and installer debris. The
+	// fixed staging-name probes in checkRuntimeStaging still run, so temp
+	// directories are traversed no longer rather than unscanned, and the run
+	// says so with a scope notice.
+	SkipTempRoots bool
 	// tempRoots caches the resolved temp directories this run covers, and
 	// tempSpellings every path prefix they can be reached under.
 	tempRoots     []string
@@ -265,6 +271,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.debug.stage("projects")
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
+	}
+	if s.SkipTempRoots {
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "temp", Detail: "Temp directories were not walked (-skip-tmproots): a payload unpacked into a subdirectory of one was not looked for. The documented staging filenames are still checked at the top of each temp directory, and a temp directory named with -root is still walked in full"})
 	}
 	s.scanSharedDiscovery()
 	if s.Deep {

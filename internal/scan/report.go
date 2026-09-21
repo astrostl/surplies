@@ -220,6 +220,8 @@ func scopeReportCategory(f Finding) string {
 		return "Directory links not followed"
 	case strings.HasPrefix(f.Detail, "Non-npm"):
 		return "Non-npm manifests"
+	case strings.HasPrefix(f.Detail, "Temp directories"):
+		return "Temp directories not walked"
 	case strings.Contains(f.Detail, "binary files excluded"):
 		return "Binary files excluded from text inspection"
 	case f.Path == "content" || f.Path == "dependencies":

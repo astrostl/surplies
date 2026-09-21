@@ -12,6 +12,10 @@ import (
 
 type ScanModes struct {
 	Deep, Git, Coverage, NpmCache, Debug, Broad, BrowserCache, Resolve bool
+	// SkipTempRoots drops the temp directories from the walk. The fixed
+	// staging-name probes still run there, so this narrows traversal rather
+	// than putting temp directories out of scope entirely.
+	SkipTempRoots bool
 }
 
 func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
@@ -21,6 +25,7 @@ func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
 	fs.BoolVar(&m.Debug, "debug", false, "save detailed diagnostics to a log and report")
 	fs.BoolVar(&m.NpmCache, "npm-cache", false, "include raw npm cache contents (slow)")
 	fs.BoolVar(&m.Resolve, "resolve", false, "resolve and scan for known C2 domains (queries attacker-controlled nameservers)")
+	fs.BoolVar(&m.SkipTempRoots, "skip-tmproots", false, "do not walk the temp directories (documented staging names are still checked)")
 	return m
 }
 
