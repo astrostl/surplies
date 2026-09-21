@@ -283,8 +283,8 @@ root and are not read.
 
 | Pattern | Description | Source attack |
 |---------|-------------|---------------|
-| `*.vbs` | VBScript dropper — axios stages `%TEMP%\{campaignID}.vbs` on Windows | axios 1.14.1/0.30.4 |
-| `*.ps1` | PowerShell payload — axios stages `%TEMP%\{campaignID}.ps1` on Windows | axios 1.14.1/0.30.4 |
+| `*.vbs` | A VBScript file staged in a temp directory. Matches the file type, not a payload identity: axios dropped its loader as `%TEMP%\{campaignID}.vbs` on Windows | axios 1.14.1/0.30.4 |
+| `*.ps1` | A PowerShell file staged in a temp directory. Matches the file type, not a payload identity: axios dropped its payload as `%TEMP%\{campaignID}.ps1` on Windows | axios 1.14.1/0.30.4 |
 | `.pg_state` | C2 state tracking file (last-downloaded URL) | litellm 1.82.7/1.82.8 |
 | `pglog` | Downloaded payload staging directory | litellm 1.82.7/1.82.8 |
 | `tpcp.tar.gz` | AES-256+RSA-4096 encrypted credential exfiltration archive | litellm 1.82.7/1.82.8 |
