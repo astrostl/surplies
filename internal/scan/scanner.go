@@ -195,7 +195,7 @@ func (s *Scanner) printRunHeader() {
 	// The one statement that changes what the phase lines below mean, so it
 	// gets its own paragraph instead of a clause among the scope lines.
 	if s.Only {
-		s.progress("ONLY MODE: Nothing outside the given root(s) is read, and live connections are not checked!\n\n")
+		s.progress("ONLY MODE: nothing outside the given root(s) is read, and active network connections are not scanned!\n\n")
 	}
 }
 
