@@ -5,3 +5,9 @@ surplies
 # `make fp` smoke-test fixtures
 node_modules/
 site-packages/
+
+# Local detection gap analysis
+/GAPS.md
+
+# macOS
+.DS_Store

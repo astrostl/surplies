@@ -1,9 +1,10 @@
-package main
+package scan
 
 import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 )
 
 // IOCs in this file come from public incident analyses — primarily
@@ -1101,6 +1102,7 @@ var KnownPayloadSignatures = []PayloadSignature{
 	{Signature: `global['!']=`, Desc: "PolinRider global injection marker", Attack: "polinrider (DPRK)"},
 	{Signature: `global['_V']=`, Desc: "PolinRider global injection marker (rotated April 2026 variant)", Attack: "polinrider (DPRK)"},
 	{Signature: `global.i="A8-`, Desc: "PolinRider campaign-tag marker (fake-font and babel.config.cjs variants)", Attack: "polinrider (DPRK)"},
+	{Signature: `global.i="A9-`, Desc: "PolinRider campaign-tag marker (config-append variant; payload appended to the last line of a build config)", Attack: "polinrider (DPRK)"},
 
 	// The NullReceiver loader's own constants, from the OSV records for the two
 	// trojanized npm carriers. These are a different class of indicator from the
@@ -1122,16 +1124,13 @@ var KnownPayloadSignatures = []PayloadSignature{
 	//   https://osv.dev/vulnerability/MAL-2026-11136  (fluid-type-ui; GHSA-4w4v-pw3v-q85q)
 	//   https://osv.dev/vulnerability/MAL-2026-11132  (bianira-ui)
 	//
-	// Known blind spot: bianira-ui's own plugin.js writes every one of these
-	// identifiers as \uXXXX escapes specifically to defeat a literal scan, so
-	// these signatures do not match that sample. It is covered by version pin
-	// instead (KnownBadNpmVersions). No escaped form is listed here, because the
-	// exact escaping is not documented in either record and guessing at it would
-	// be inventing an IOC.
+	// General source inspection normalizes fixed-width ASCII escapes before
+	// matching these existing literals; it never evaluates or unpacks code.
+
 	{Signature: `0xa322e5f3d311d3080e6f0121063e9adc2490ef1a`, Desc: "NullReceiver C2-resolver wallet address (lowercase form)", Attack: "polinrider (DPRK)"},
 	{Signature: `0xa322E5f3D311D3080e6f0121063e9aDC2490Ef1a`, Desc: "NullReceiver C2-resolver wallet address (EIP-55 checksummed form)", Attack: "polinrider (DPRK)"},
-	{Signature: `/0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
-	{Signature: `/0x/ls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+	{Signature: `0x/cls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
+	{Signature: `0x/ls`, Desc: "NullReceiver second-stage fetch path (XOR-encrypted payload, eval'd or spawned via node -e)", Attack: "polinrider (DPRK)"},
 
 	// Application persistence markers and additional stage paths recovered in
 	// the Joyfill analysis. Match published literals, not arbitrary date tags.
@@ -1144,7 +1143,7 @@ var KnownPayloadSignatures = []PayloadSignature{
 	{Signature: `/*C250620A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
 	{Signature: `/*C260511A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
 	{Signature: `/*C260512A*/`, Desc: "PolinRider application persistence marker", Attack: "polinrider (DPRK)"},
-	{Signature: `/0x/js`, Desc: "PolinRider additional JavaScript fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `0x/js`, Desc: "PolinRider additional JavaScript fetch path", Attack: "polinrider (DPRK)"},
 	{Signature: `ThZG+0jfXE6VAGOJ`, Desc: "DEV#POPPER boot-stage XOR key", Attack: "polinrider (DPRK)"},
 
 	// Community corroboration of the exact markers, including the backup suffix.
@@ -1157,12 +1156,12 @@ var KnownPayloadSignatures = []PayloadSignature{
 	// Inspector. The lowercase header is matched case-insensitively below.
 	// https://osv.dev/vulnerability/MAL-2026-15636
 	// https://osv.dev/vulnerability/MAL-2026-12324
-	{Signature: `q4FZkxX{!h,Sr3=@`, Desc: "NullReceiver cls-stage XOR key", Attack: "polinrider (DPRK)"},
-	{Signature: `y-p_>d$0B&@^1aQk`, Desc: "NullReceiver ls-stage XOR key", Attack: "polinrider (DPRK)"},
+	{Signature: `q4FZkxX{!h,Sr3=@`, Desc: "NullReceiver second-stage loader XOR key (eval'd and spawned stage)", Attack: "polinrider (DPRK)"},
+	{Signature: `y-p_>d$0B&@^1aQk`, Desc: "NullReceiver second-stage loader XOR key (spawned stage)", Attack: "polinrider (DPRK)"},
 	{Signature: `x-payload-b64`, Desc: "NullReceiver payload response header", Attack: "polinrider (DPRK)"},
 
 	// https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/iocs/iocs.csv
-	{Signature: `/0x/clb`, Desc: "NullReceiver RAT fetch path", Attack: "polinrider (DPRK)"},
+	{Signature: `0x/clb`, Desc: "NullReceiver RAT fetch path", Attack: "polinrider (DPRK)"},
 	{Signature: `/$/boot`, Desc: "NullReceiver boot-stage fetch path", Attack: "polinrider (DPRK)"},
 	{Signature: `/verify-human/`, Desc: "NullReceiver status beacon path", Attack: "polinrider (DPRK)"},
 	{Signature: `helloipbot!!`, Desc: "NullReceiver dead-drop recipient marker", Attack: "polinrider (DPRK)"},
@@ -1174,12 +1173,14 @@ var KnownPayloadSignatures = []PayloadSignature{
 }
 
 // SignatureScannedExtensions are file extensions worth reading for
-// KnownPayloadSignatures during the project walk. Kept deliberately narrow:
-// the campaign injects into JS-family build configs and into asset files it
-// expects reviewers to skip as binary.
+// KnownPayloadSignatures during the project walk. Traversal boundaries remain
+// separate. Additional contextual rules and their citations live in heuristics.go:
+// https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json
+// Unicode coverage: https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode
 var SignatureScannedExtensions = []string{
 	".js", ".mjs", ".cjs", ".ts", ".mts", ".cts",
-	".woff2", ".woff", ".dict", ".json",
+	".woff2", ".woff", ".dict", ".json", ".jsonc",
+	".jsx", ".tsx", ".py", ".sh", ".bash", ".zsh", ".ps1", ".cmd", ".bat", ".yaml", ".yml", ".toml", ".ini", ".conf", ".xml", ".plist", ".service", ".txt", ".md", ".html", ".vue", ".svelte", ".php", ".rb", ".dart",
 }
 
 // SignatureScanMaxBytes is the exclusive whole-file content limit (100 MB).
@@ -1232,12 +1233,16 @@ var KnownRepoArtifacts = []ProjectArtifact{
 	{Filename: "tanstack_runner.js", Desc: "mini-shai-hulud Bun-loaded payload", Attack: "mini-shai-hulud (May 2026)"},
 }
 
-// RepoPayloadHash requires both a candidate filename and verified file content.
+// RepoPayloadHash identifies raw payload bytes. Filesystem checks use Filename;
+// Git history inspection ignores filenames and uses Size as an exact-byte candidate optimization.
+// GitBlobSHA1 is the Git object identity, not a raw-file SHA-1 or SHA-256.
 type RepoPayloadHash struct {
-	Filename string
-	SHA256   string
-	Desc     string
-	Attack   string
+	Filename    string
+	SHA256      string
+	Size        int64
+	GitBlobSHA1 string
+	Desc        string
+	Attack      string
 }
 
 // KnownRepoPayloadHashes disambiguates payload names also used by legitimate
@@ -1250,9 +1255,87 @@ var KnownRepoPayloadHashes = []RepoPayloadHash{
 	{
 		Filename: "Math_Symbol.js",
 		SHA256:   "9fc2570b7cef51c1b8df116d144d11ff4096357be7d2c4c6367cfc2509cf1bcc",
+		Size:     727680,
 		Desc:     "keyv second-stage payload (SHA-256 verified)",
 		Attack:   "keyv npm compromise (August 2026)",
 	},
+	{
+		// Sample bytes verified 2026-09-19.
+		// No independent public report of this exact hash was found; do not
+		// present it as an IOC supplied by the public campaign writeups.
+		Filename:    "fa-solid-400.woff2",
+		SHA256:      "11570a86f8a19cd20bc5e1df112f43c52bc939f18b51c37e902d312fd62f6d27",
+		Size:        37566,
+		GitBlobSHA1: "9b2e3a349e377ba2985c593cb3e619f84a0ea1dc",
+		// Desc names the landing a reader can search for, not shorthand.
+		Desc:   "Fake Font dropper: JavaScript disguised as a FontAwesome font, run by a .vscode/tasks.json folderOpen task; hash is incident-sourced",
+		Attack: "polinrider (DPRK)",
+	},
+	{
+		// Config-append variant of the same campaign: the payload is appended
+		// to the last line of a build config the project already loads, so it
+		// executes on any lint, dev server or build rather than only on a
+		// folder open. Two sizes are published because the attacker's tool
+		// writes a constant whitespace run ahead of the payload: 8,626 bytes
+		// is the payload blob, 9,133 is that blob behind its 507-space prefix.
+		// The prefix is identical across every observed carrier, which makes
+		// the segment the more reliable of the two.
+		//
+		// Plain ASCII, so the hash describes real bytes. No independent
+		// public report of these hashes was found.
+		SHA256: "85d1294bd225c6fdf938bdc2e2cab392140ac97baccd25442d8c2a0cb015b57d",
+		Size:   8626,
+		Desc:   "PolinRider config-append payload, appended to the last line of a build config so any lint or build runs it; hash is incident-sourced",
+		Attack: "polinrider (DPRK)",
+	},
+	{
+		// The same payload behind the 507-space prefix its injector writes.
+		SHA256: "a2bb666327ef2345871e42d6f354123f16bfbdfe16e5a928dd5afd8c144b7138",
+		Size:   9133,
+		Desc:   "PolinRider config-append injected segment (507-space prefix plus payload), the invariant the injector writes; hash is incident-sourced",
+		Attack: "polinrider (DPRK)",
+	},
+	// PolinRider payload files published by Socket, all delivered under the
+	// name tailwind.config.js. Socket does not publish sizes, so these stay
+	// filename-gated on disk and are excluded from Git blob candidates; see
+	// knownPayloadSize below for why a size-less entry cannot be name-free.
+	// https://socket.dev/blog/polinrider-github-packagist
+	{Filename: "tailwind.config.js", SHA256: "7d47c430e6e404dc2fa8b4837678d1cbdb4d0aeacec9b405655cab79d54a2ad9", Desc: "PolinRider injected tailwind.config.js payload", Attack: "polinrider (DPRK)"},
+	{Filename: "tailwind.config.js", SHA256: "b7ede935d4979146b55f12b9eec7c83b61962b478f5dc9b8db251e539ec2abd3", Desc: "PolinRider injected tailwind.config.js payload", Attack: "polinrider (DPRK)"},
+	{Filename: "tailwind.config.js", SHA256: "ccb187dc9de0cc7477c9817ae53365d273e121407c0305f863e2ab67c35d6395", Desc: "PolinRider injected tailwind.config.js payload", Attack: "polinrider (DPRK)"},
+	{Filename: "tailwind.config.js", SHA256: "139ea03dcddf4aa810d55740be3cf6c92ce7a9f3cbcbbb35440e25b769a87683", Desc: "PolinRider injected tailwind.config.js payload", Attack: "polinrider (DPRK)"},
+	{Filename: "tailwind.config.js", SHA256: "515a53291d25d229e1f9fa72e66407e1cfd7e77c91478400b24d5185af68531a", Desc: "PolinRider injected tailwind.config.js payload", Attack: "polinrider (DPRK)"},
+}
+
+// knownPayloadSize reports an exact length match against a sized hash entry.
+// Size is what buys filename independence: a known length is a cheap candidate
+// filter, so any file or Git blob of exactly that length can be hashed no
+// matter what it is called. Entries published without a size stay filename-
+// gated, because the alternative — hashing every blob and every file — is not
+// an acceptable default cost.
+func knownPayloadSize(size int64) bool {
+	for _, h := range KnownRepoPayloadHashes {
+		if h.Size != 0 && h.Size == size {
+			return true
+		}
+	}
+	return false
+}
+
+// knownPayloadName reports whether a basename is a published payload filename.
+func knownPayloadName(name string) bool {
+	return slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == name })
+}
+
+// knownPayloadBlob reports a Git object ID published as a payload blob identity.
+// Matching this needs no body read at all: the object ID is already in hand.
+func knownPayloadBlob(id string) (RepoPayloadHash, bool) {
+	for _, h := range KnownRepoPayloadHashes {
+		if h.GitBlobSHA1 != "" && h.GitBlobSHA1 == id {
+			return h, true
+		}
+	}
+	return RepoPayloadHash{}, false
 }
 
 // GitignoreInjectedLines are exact .gitignore entries a documented attack adds

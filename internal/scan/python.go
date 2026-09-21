@@ -1,4 +1,4 @@
-package main
+package scan
 
 import (
 	"fmt"
@@ -18,11 +18,16 @@ var distInfoVersionRe = regexp.MustCompile(`^(.+)-(\d+\..+)\.dist-info$`)
 // and checks them for compromised packages and malicious .pth files.
 func (s *Scanner) scanPythonPackages() {
 	// Also check well-known system paths outside home dir for .pth files and bad versions.
-	systemPaths := pythonSystemPaths()
-
-	for _, sp := range systemPaths {
-		entries, err := os.ReadDir(sp)
+	// These are fixed machine-wide paths, so under -only they are filtered by
+	// scope like every other fixed path: read only where one falls inside a
+	// requested root.
+	for _, sp := range pythonSystemPaths() {
+		if !s.pathInScope(sp) {
+			continue
+		}
+		entries, err := s.readDir(sp)
 		if err != nil {
+			s.persistenceError(sp, err)
 			continue
 		}
 		s.log("found site-packages: %s", sp)
@@ -30,29 +35,38 @@ func (s *Scanner) scanPythonPackages() {
 		s.checkSitePackagesDir(sp, entries)
 	}
 
-	// Walk home dir for virtualenvs and ~/.local site-packages
-	s.walkScanRoots(func(path string, d os.DirEntry, err error) error {
+	if s.discovery != nil {
+		for _, path := range s.discovery.python {
+			s.visitPython(path, nil, nil)
+		}
+		return
+	}
+	s.walkScanRoots(s.visitPython)
+}
+
+func (s *Scanner) visitPython(path string, d os.DirEntry, err error) error {
+
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	if d != nil && !d.IsDir() {
+		return nil
+	}
+	if filepath.Base(path) == "site-packages" {
+		s.stats.SitePackagesFound++
+		s.log("found site-packages: %s", path)
+		entries, err := s.readDir(path)
 		if err != nil {
 			s.scanError(path, err)
-			return nil
+			return filepath.SkipDir
 		}
-		if !d.IsDir() {
-			return nil
-		}
-		if d.Name() == "site-packages" {
-			s.stats.SitePackagesFound++
-			s.log("found site-packages: %s", path)
-			entries, err := os.ReadDir(path)
-			if err != nil {
-				return filepath.SkipDir
-			}
-			s.checkSitePackagesDir(path, entries)
-			// Package metadata is checked in either mode; deep also discovers
-			// nested environments. The project walk handles content checks.
-			return s.descendOrSkip()
-		}
-		return nil
-	})
+		s.checkSitePackagesDir(path, entries)
+		// Package metadata is checked in either mode; deep also discovers
+		// nested environments. The project walk handles content checks.
+		return s.descendOrSkip()
+	}
+	return nil
 }
 
 // checkSitePackagesDir runs all Python-related checks on a single site-packages directory.
@@ -77,10 +91,10 @@ func (s *Scanner) checkSitePackagesDir(spDir string, entries []os.DirEntry) {
 // checkPthFile checks a .pth file for known malicious filenames and suspicious content.
 func (s *Scanner) checkPthFile(spDir, filename string) {
 	path := filepath.Join(spDir, filename)
-	s.stats.FilesChecked++
 
 	// Check against known malicious .pth filenames
 	if slices.Contains(KnownMaliciousPthFiles, filename) {
+		s.stats.FilesChecked++
 		s.addFinding(Finding{
 			Check:    "malicious-pth-file",
 			Severity: SevCritical,
@@ -93,20 +107,16 @@ func (s *Scanner) checkPthFile(spDir, filename string) {
 	// Heuristic: check .pth content for suspicious patterns.
 	// Legitimate .pth files contain import paths (one per line) or "import" statements
 	// for simple path setup. Malicious ones contain encoded payloads and shell commands.
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return
-	}
-	content := string(data)
-
-	issues := analyzePthContent(content)
-	if len(issues) > 1 {
-		s.addFinding(Finding{
-			Check:    "suspicious-pth-file",
-			Severity: SevWarn,
-			Path:     path,
-			Detail:   fmt.Sprintf("Suspicious .pth file content (flags: %s)", strings.Join(issues, ", ")),
-		})
+	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
+		if local.Deep {
+			local.inspectGeneralContent(path, data)
+		}
+		issues := analyzePthContent(string(data))
+		if len(issues) > 1 {
+			local.addFinding(Finding{Check: "suspicious-pth-file", Severity: SevWarn, Path: path, Detail: fmt.Sprintf("Suspicious .pth file content (flags: %s)", strings.Join(issues, ", "))})
+		}
+	}) != nil {
+		s.stats.FilesChecked++
 	}
 }
 
@@ -152,6 +162,9 @@ func analyzePthContent(content string) []string {
 // (entirely malicious — any version is bad) and known compromised versions
 // (legitimate package, specific bad versions).
 func (s *Scanner) checkDistInfo(spDir, dirName string) {
+	if s.Deep {
+		s.inspectPythonEntrypoints(spDir, dirName)
+	}
 	m := distInfoVersionRe.FindStringSubmatch(dirName)
 	if m == nil {
 		return

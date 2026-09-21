@@ -1,4 +1,4 @@
-package main
+package scan
 
 import (
 	"path/filepath"
@@ -10,7 +10,7 @@ func TestFakeFontTasksWithoutPayloadSignature(t *testing.T) {
 		name, data string
 		want       bool
 	}{
-		{"dune", `{"tasks":[{"command":"(command -v node >/dev/null 2>&1 && node ./public/fonts/fa-solid-400.woff2) || (where node >nul 2>&1 && node ./public/fonts/fa-solid-400.woff2) || echo ''","runOptions":{"runOn":"folderOpen"}}]}`, true},
+		{"fake-font", `{"tasks":[{"command":"(command -v node >/dev/null 2>&1 && node ./public/fonts/fa-solid-400.woff2) || (where node >nul 2>&1 && node ./public/fonts/fa-solid-400.woff2) || echo ''","runOptions":{"runOn":"folderOpen"}}]}`, true},
 		{"jsonc", `{// comment
 "tasks":[{"command":"node './fonts/my font.woff2'", "runOptions":{"runOn":"folderOpen",},},],}`, true},
 		{"process", `{"tasks":[{"command":"C:\\Program Files\\nodejs\\node.exe","args":["fonts/payload.woff2"],"runOptions":{"runOn":"folderOpen"}}]}`, true},

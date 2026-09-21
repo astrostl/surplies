@@ -1,4 +1,4 @@
-package main
+package scan
 
 import (
 	"os"
@@ -16,7 +16,12 @@ func TestExtraRootRunsNormalChecksAndHonorsDeep(t *testing.T) {
 	for _, dependency := range []string{"node_modules/demo", "vendor/demo", "venv/site-packages/demo"} {
 		writeFixture(t, filepath.Join(extra, dependency, "index.js"), "/*RS260605*/")
 	}
-	writeFixture(t, filepath.Join(extra, "vendor", "composer", "installed.json"), `{"packages":[]}`)
+	writeFixture(t, filepath.Join(extra, "vendor", "composer", "installed.json"), `{"packages":[{"name":"demo","autoload":{"files":["index.js"]}}]}`)
+	writeFixture(t, filepath.Join(extra, "node_modules/demo/package.json"), `{"main":"index.js"}`)
+	writeFixture(t, filepath.Join(extra, "venv/site-packages/demo-1.0.dist-info/entry_points.txt"), "[console_scripts]\ndemo = demo.index:main\n")
+	// Python entrypoints use Python modules, not unrelated JavaScript files.
+	writeFixture(t, filepath.Join(extra, "venv/site-packages/demo/index.py"), "/*RS260605*/")
+
 	for _, deep := range []bool{false, true} {
 		s := New(home, false)
 		s.ExtraRoots = []string{extra, extra, filepath.Join(extra, "repo")}
@@ -71,16 +76,53 @@ func TestPlatformDefaultRootsAndHelp(t *testing.T) {
 	getenv := func(key string) string { return env[key] }
 	for _, goos := range []string{"windows", "darwin", "linux"} {
 		roots := persistenceRootsForOS(goos, getenv)
-		help := defaultScanHelp(goos, roots)
+		help := DefaultScanHelp(goos, roots)
 		if goos == "windows" {
 			if len(roots) != 2 || roots[0] != env["ProgramFiles"] || !strings.Contains(help, "%USERPROFILE%") || strings.Contains(help, "/Applications") {
 				t.Fatalf("bad Windows defaults: %s", help)
 			}
-		} else if !strings.Contains(help, "Default normal scan: ~") || strings.Contains(help, "D:") {
+		} else if !strings.Contains(help, "Default full scan: ~") || strings.Contains(help, "D:") {
 			t.Fatalf("bad Unix defaults: %s", help)
 		}
 		if strings.Contains(help, "/Applications") != (goos == "darwin") {
 			t.Fatalf("wrong application root: %s", help)
 		}
+	}
+}
+
+// A tree reachable only through a directory link is absent from the scan.
+// Say so once, for links that leave every root, and stay quiet for links that
+// point back inside one (no coverage is lost) or resolve to a file.
+func TestUnfollowedDirectoryLinksReportScope(t *testing.T) {
+	home := t.TempDir()
+	outside := t.TempDir()
+	writeFixture(t, filepath.Join(outside, "repo", "index.js"), "/*RS260605*/")
+	writeFixture(t, filepath.Join(home, "inside", "index.js"), "/*RS260605*/")
+	writeFixture(t, filepath.Join(home, "file.txt"), "fixture")
+	links := map[string]string{
+		"away":     outside,
+		"internal": filepath.Join(home, "inside"),
+		"tofile":   filepath.Join(home, "file.txt"),
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(home, name)); err != nil {
+			t.Skip(err)
+		}
+	}
+	s := New(home, false)
+	s.scanProjectDirs()
+	s.scanProjectDirs() // repeated walks must not repeat the notice
+	notices := findingsFor(s, "scan-limited")
+	var reported []string
+	for _, f := range notices {
+		if strings.Contains(f.Detail, "Directory link not followed") {
+			reported = append(reported, f.Path)
+		}
+	}
+	if len(reported) != 1 || reported[0] != filepath.Join(home, "away") {
+		t.Fatalf("wrong unfollowed-link notices: %+v", notices)
+	}
+	if reported := findingsFor(s, "scan-incomplete"); len(reported) != 0 {
+		t.Fatalf("scope reported as failure: %+v", reported)
 	}
 }

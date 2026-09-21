@@ -1,4 +1,4 @@
-package main
+package scan
 
 import (
 	"errors"
@@ -21,6 +21,9 @@ func (s *Scanner) checkApplicationPatterns(patterns []string) {
 		// entrypoint, and must still be reported in that case.
 		dirs := s.persistenceDirs(filepath.Dir(pattern))
 		for _, dir := range dirs {
+			if !s.pathInScope(dir) {
+				continue
+			}
 			s.checkPersistenceSiblings(dir)
 			s.checkApplicationFile(filepath.Join(dir, filepath.Base(pattern)))
 		}
@@ -35,7 +38,7 @@ func (s *Scanner) persistenceDirs(pattern string) []string {
 	}
 	var matches []string
 	for _, parent := range s.persistenceDirs(filepath.Dir(pattern)) {
-		entries, err := os.ReadDir(parent)
+		entries, err := s.readDir(parent)
 		if err != nil {
 			s.persistenceError(parent, err)
 			continue
@@ -79,7 +82,7 @@ func (s *Scanner) checkPersistenceSiblings(dir string) {
 	if !s.markPersistenceChecked(dir) {
 		return
 	}
-	entries, err := os.ReadDir(dir)
+	entries, err := s.readDir(dir)
 	if err != nil {
 		s.persistenceError(dir, err)
 		return
@@ -127,9 +130,11 @@ func (s *Scanner) checkApplicationFile(path string) {
 		return
 	}
 	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
-		if sig, ok := persistenceSignature(data); ok {
+		if sig, ok := persistenceSignature(normalizeASCII(data)); ok {
 			local.addFinding(Finding{Check: "patched-application", Severity: SevCritical, Path: path,
 				Detail: fmt.Sprintf("%s (attack: %s)", sig.Desc, sig.Attack)})
+		} else {
+			local.inspectGeneralContent(path, data)
 		}
 	}) != nil {
 		s.stats.FilesChecked++
@@ -156,7 +161,7 @@ func (s *Scanner) checkRuntimeStaging() {
 func (s *Scanner) checkStagingPaths(paths []string) {
 	seen := make(map[string]bool)
 	for _, path := range paths {
-		if seen[path] {
+		if seen[path] || !s.pathInScope(path) {
 			continue
 		}
 		seen[path] = true
@@ -186,7 +191,7 @@ func (s *Scanner) scanError(path string, err error) {
 // depending on product directory names. Roots select coverage, not new IOCs.
 // https://github.com/OsamaCodes62/nullreceiver-ir-kit/blob/main/scan_macos.sh
 // https://www.stepsecurity.io/blog/joyfill-npm-supply-chain-compromise
-func defaultPersistenceRoots() []string {
+func DefaultPersistenceRoots() []string {
 	return persistenceRootsForOS(runtime.GOOS, os.Getenv)
 }
 
@@ -207,8 +212,23 @@ func persistenceRootsForOS(goos string, getenv func(string) string) []string {
 	return roots
 }
 
+// existingPersistenceRoots is the subset checkPersistenceRoots will actually
+// walk, so the run header promises only coverage the scan delivers.
+func existingPersistenceRoots() []string {
+	var present []string
+	for _, root := range DefaultPersistenceRoots() {
+		if _, err := os.Stat(root); err == nil {
+			present = append(present, root)
+		}
+	}
+	return present
+}
+
 func (s *Scanner) checkPersistenceRoots() {
-	for _, root := range defaultPersistenceRoots() {
+	for _, root := range DefaultPersistenceRoots() {
+		if !s.pathInScope(root) {
+			continue
+		}
 		if _, err := os.Stat(root); os.IsNotExist(err) {
 			continue
 		}
@@ -234,37 +254,7 @@ func (s *Scanner) walkPersistenceRoot(root string) {
 		return
 	}
 	_ = filepath.WalkDir(resolved, func(path string, entry os.DirEntry, err error) error {
-		if err != nil {
-			s.scanError(path, err)
-			return nil
-		}
-		if entry.IsDir() {
-			if s.persistenceWalked[path] {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		// Most files cannot be persistence entrypoints. Reject them before
-		// allocating or normalizing full paths.
-		if !isPersistenceSidecar(entry.Name()) && !persistenceEntrypointName(entry.Name()) {
-			return nil
-		}
-		// Preserve the caller's path spelling so the ordinary home walk and
-		// fixed-path checks share deduplication keys (e.g. macOS /var aliases).
-		rel, err := filepath.Rel(resolved, path)
-		if err != nil {
-			s.scanError(path, err)
-			return nil
-		}
-		path = filepath.Join(absolute, rel)
-		if isPersistenceSidecar(entry.Name()) {
-			if s.markPersistenceChecked(path) {
-				s.checkRepoArtifactName(path, entry.Name())
-			}
-		} else if discoveredPersistenceEntrypoint(path) {
-			s.checkApplicationFile(path)
-		}
-		return nil
+		return s.visitPersistencePath(absolute, resolved, path, entry, err)
 	})
 	s.persistenceWalked[resolved] = true
 }
@@ -285,4 +275,41 @@ func discoveredPersistenceEntrypoint(path string) bool {
 		}
 	}
 	return false
+}
+
+func (s *Scanner) visitPersistencePath(absolute, resolved, path string, entry os.DirEntry, err error) error {
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	if entry.IsDir() {
+		if s.skipNpmCache(path) || s.skipBrowserStorage(path) {
+			return filepath.SkipDir
+		}
+		if s.persistenceWalked[path] {
+			return filepath.SkipDir
+		}
+		return nil
+	}
+	// Most files cannot be persistence entrypoints. Reject them before
+	// allocating or normalizing full paths.
+	if !isPersistenceSidecar(entry.Name()) && !persistenceEntrypointName(entry.Name()) && !extraToolchainPath(path) {
+		return nil
+	}
+	// Preserve the caller's path spelling so the ordinary home walk and
+	// fixed-path checks share deduplication keys (e.g. macOS /var aliases).
+	rel, err := filepath.Rel(resolved, path)
+	if err != nil {
+		s.scanError(path, err)
+		return nil
+	}
+	path = filepath.Join(absolute, rel)
+	if isPersistenceSidecar(entry.Name()) {
+		if s.markPersistenceChecked(path) {
+			s.checkRepoArtifactName(path, entry.Name())
+		}
+	} else if discoveredPersistenceEntrypoint(path) || extraToolchainPath(path) {
+		s.checkApplicationFile(path)
+	}
+	return nil
 }

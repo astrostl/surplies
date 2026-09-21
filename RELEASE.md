@@ -1,5 +1,32 @@
 # Releasing surplies
 
+## Rule zero: `main` is the Homebrew tap
+
+There is no separate tap repo. `brew tap astrostl/surplies` clones **this repo**,
+and `brew update` **rebases that clone onto `origin/main`**. The consequence:
+
+> Once a commit is pushed to `main`, it is published. Never `--amend`, `rebase`,
+> `reset`, or force-push `main`. Fix forward with a new commit, always.
+
+A force-push does not just inconvenience the next `git pull`. Every tap that
+already cloned the old commit keeps it as a local commit on its `main`. From then
+on, *every* `brew update` replays that orphan onto the new `origin/main`, it
+conflicts on `Formula/surplies.rb`, and Homebrew writes `<<<<<<<` / `=======` /
+`>>>>>>>` markers into the live formula. The formula stops being valid Ruby, so
+`brew update`, `brew upgrade`, `brew install` and `brew info` all fail with a
+parser dump — for that user, forever, on every single invocation, until they
+untap and retap. Nothing you push later repairs it.
+
+This has already happened once. On 2026-09-19, `Release v0.9.1` was pushed as
+`900f7c1`, amended (the amend touched `Formula/surplies.rb`), and force-pushed as
+`d3bd328`. Both commits share the same parent and the same timestamp and differ
+only in tree. `900f7c1` is still resolvable on GitHub and is still sitting on
+every tap clone made before the amend.
+
+So: get the release commit right *before* pushing it. `git status` must be clean
+and `Formula/surplies.rb` must already be correct at commit time, because after
+the push there is no taking it back.
+
 ## Prerequisites
 
 - `gh` CLI authenticated (`gh auth status`)
@@ -14,25 +41,26 @@
 
 Use [semantic versioning](https://semver.org/). For IOC-only additions (new packages/hashes), bump the patch version. For new check types, bump minor.
 
-### 2. Sync the README with changes since the last release
+### 2. Sync the documentation with changes since the last release
 
-Diff `ioc.go`, `scanner.go`, `python.go`, `composer.go`, and `main.go` against the previous release tag to enumerate everything that needs to be reflected in `README.md`:
+Diff the scanner package against the previous release tag to enumerate everything that needs to be reflected in `README.md` and `docs/`:
 
 ```sh
-git diff $(git describe --tags --abbrev=0) -- ioc.go scanner.go python.go composer.go main.go
+git diff $(git describe --tags --abbrev=0) -- internal/scan main.go
 ```
 
-For each change, update the matching section of `README.md`:
+For each change, update the matching section:
 
-- **New IOC source / writeup** — update the intro bullet list and the **Acknowledgments** section so every cited researcher is credited.
-- **New attack covered** — add an intro bullet, and confirm the "N documented major supply chain attacks" count at the top of the README still matches.
-- **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table.
-- **New `KnownPhantomPackages` entries** — update the `phantom-dependency` table.
-- **New `KnownC2Domains` / `KnownC2IPs` entries** — update the `network-ioc-active-connection` table.
-- **New `KnownProjectArtifacts` / `KnownNpmPayloadFiles` / `KnownMaliciousPthFiles` / `ArtifactsTmp` entries** — update the corresponding `project-artifact` / `npm-payload-file` / `malicious-pth-file` / `suspicious-temp-file` table.
-- **New check function or new `Check:` string** — add a new numbered section under **Checks** and, if it changed scanner phasing, update the **Scan phases** list.
+- **Every release** — point the README's **Install** prebuilt-binary link at the new tag (`https://github.com/astrostl/surplies/releases/tag/vX.Y.Z`); it is a fixed tag URL, so it goes stale silently.
+- **New IOC source / writeup** — update the README's "What it detects" list, the matching section of `docs/ATTACKS.md`, and `docs/ATTRIBUTION.md` so every cited researcher is credited.
+- **New attack covered** — add a one-line README bullet plus a `## ` section in `docs/ATTACKS.md`, and confirm the "N documented major supply chain attacks" count in the README still matches.
+- **New `KnownBadNpmVersions` / `KnownBadPythonVersions` / `KnownBadComposerVersions` entries** — update the corresponding `compromised-*` check table in `docs/CHECKS.md`.
+- **New `KnownPhantomPackages` entries** — update the `phantom-dependency` table in `docs/CHECKS.md`.
+- **New `KnownC2Domains` / `KnownC2IPs` entries** — update the `network-ioc-active-connection` table in `docs/CHECKS.md`.
+- **New `KnownProjectArtifacts` / `KnownNpmPayloadFiles` / `KnownMaliciousPthFiles` / `ArtifactsTmp` entries** — update the corresponding `project-artifact` / `npm-payload-file` / `malicious-pth-file` / `suspicious-temp-file` table in `docs/CHECKS.md`.
+- **New check function or new `Check:` string** — add a new numbered section to `docs/CHECKS.md`, a row to the README check table, and, if it changed scanner phasing, update the **Scan phases** list in `docs/SCANNING.md` and the summary in the README's **How it works**.
 
-Commit the README updates as part of the release commit in step 4.
+Commit the documentation updates as part of the release commit in step 4.
 
 ### 3. Smoke-test detection end-to-end
 
@@ -68,12 +96,30 @@ This will:
 
 ### 5. Commit and tag
 
+Stage, commit, then **review the commit before pushing it**. This is the last
+moment a mistake is cheap; see [Rule zero](#rule-zero-main-is-the-homebrew-tap).
+
 ```sh
-git add README.md Formula/surplies.rb
+git add README.md docs Formula/surplies.rb
 git commit -m "Release v1.2.3"
+
+git status --short          # must be empty
+git show --stat HEAD        # must include Formula/surplies.rb
+ruby -c Formula/surplies.rb # must print "Syntax OK"
+grep -c v1.2.3 Formula/surplies.rb  # must print 3 (version + two URLs)
+```
+
+If any of those is wrong, amend **now**, while the commit is still local. Once
+the next command runs, amending is off the table permanently.
+
+```sh
 git tag v1.2.3
 git push origin main v1.2.3
 ```
+
+If you discover a problem after this push, fix it with a *new* commit and a new
+patch release. Do not force-push `main` to tidy it up — that is precisely the
+action that bricks every existing tap.
 
 ### 6. Create the GitHub release and upload artifacts
 
@@ -89,13 +135,37 @@ gh release create v1.2.3 \
   --notes "Brief description of what changed."
 ```
 
-### 7. Verify Homebrew
+### 7. Verify the tap, then upgrade the local Homebrew installation
+
+Two separate things have to be true, and only the first one catches the failure
+mode in Rule zero.
+
+**7a. The tap must rebase cleanly.** `brew update` rebases the tap clone onto
+`origin/main`. Prove that it did, rather than assuming it:
 
 ```sh
 brew update
-brew upgrade surplies
-surplies -version
+TAP=$(brew --repository astrostl/surplies)
+git -C "$TAP" status --short          # must be empty — no U/AA entries
+git -C "$TAP" rev-parse HEAD          # must equal the v1.2.3 tag commit
+grep -c '^<<<<<<<\|^=======\|^>>>>>>>' "$TAP/Formula/surplies.rb"  # must print 0
 ```
+
+A non-empty `status`, a mismatched HEAD, or any conflict marker means the tap
+carries a commit `origin/main` no longer has. Do not paper over it — find out
+what rewrote history, because every other user's tap is in the same state.
+
+**7b. The installed binary must report the new version.** Run the
+Homebrew-installed `surplies`, not `./surplies` from the checkout.
+
+```sh
+brew upgrade surplies
+/opt/homebrew/bin/surplies -version
+```
+
+Confirm the reported version matches the release tag. If the upgrade fails or
+still reports the previous version, resolve it before declaring the release
+complete.
 
 If testing from scratch:
 
@@ -105,6 +175,26 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 surplies -version
 ```
+
+## If a tap is already broken
+
+Symptom: any `brew` command dumps a Ruby parse error naming
+`Formula/surplies.rb`, with `unexpected <<, ignoring it` / `unexpected '='` /
+`unexpected >>`, often alongside `Warning: Some taps are not on the default git
+origin branch`. The formula on GitHub is fine; the *local clone* has conflict
+markers in it.
+
+Nothing pushed to `main` can fix this. The user has to discard the poisoned
+clone:
+
+```sh
+brew untap astrostl/surplies
+brew tap astrostl/surplies https://github.com/astrostl/surplies
+brew update
+```
+
+`brew untap` removes only the tap clone under
+`$(brew --repository astrostl/surplies)`; it does not uninstall the binary.
 
 ## What the Makefile targets do
 
