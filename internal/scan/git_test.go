@@ -401,3 +401,134 @@ func TestGitCoverageVerdictThresholds(t *testing.T) {
 		})
 	}
 }
+
+// gitShim puts a stand-in for git first on PATH. It answers --version and
+// rejects everything else with 129 and the message an older git prints,
+// which is exactly how git < 2.45 behaves against --no-lazy-fetch: the
+// option is top-level, so the whole command line fails before any repository
+// is opened.
+func gitShim(t *testing.T, version string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH shim needs a shell script; the comparison itself is covered by TestGitVersionComparison")
+	}
+	bin := t.TempDir()
+	path := filepath.Join(bin, "git")
+	script := "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then echo '" + version + "'; exit 0; fi\n" +
+		"echo 'error: unknown option: --no-lazy-fetch' >&2\nexit 129\n"
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	return path
+}
+
+// The failure this guards against is not a scan that breaks. It is a scan
+// that completes, reports its file half, exits 0, and reads like a verdict
+// while no repository was ever opened.
+func TestGitTooOldIsCriticalAndNotAnIndicator(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "repo", ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shim := gitShim(t, "git version 2.39.5 (Apple Git-154)")
+	s := New(home, false)
+	s.scanGitRepositories()
+
+	// Recorded on every run: without these the cause is only inferable from
+	// an error string, and PATH differs between a hand-run and a daemon.
+	if s.stats.GitPath != shim || s.stats.GitVersion != "2.39.5 (Apple Git-154)" {
+		t.Fatalf("resolved git not recorded: %+v", s.stats)
+	}
+	old := findingsFor(s, "git-too-old")
+	if len(old) != 1 || old[0].Severity != SevCritical || old[0].Path != shim {
+		t.Fatalf("old git not reported critical: %+v", s.Findings)
+	}
+	for _, want := range []string{"2.39.5 (Apple Git-154)", "2.45 or newer is required", "covers files only"} {
+		if !strings.Contains(old[0].Detail, want) {
+			t.Fatalf("detail missing %q: %s", want, old[0].Detail)
+		}
+	}
+	// Critical, but not a sign of an attack: it must be filed as coverage so
+	// the report never claims this machine shows an indicator.
+	indicators, coverage := splitFindings(s.Findings)
+	if len(indicators) != 0 {
+		t.Fatalf("coverage failure counted as an indicator: %+v", indicators)
+	}
+	if len(coverage) == 0 {
+		t.Fatalf("no coverage records: %+v", s.Findings)
+	}
+	var summary strings.Builder
+	s.stats.Git = true
+	PrintReportSummary(&summary, s.Findings, s.stats, "surplies dev")
+	if !strings.Contains(summary.String(), "*** GIT IS TOO OLD TO INSPECT REPOSITORIES! ***") {
+		t.Fatalf("old git is not prominent: %s", summary.String())
+	}
+	if !strings.Contains(summary.String(), "Git binary: "+shim+" (version 2.39.5 (Apple Git-154))") {
+		t.Fatalf("resolved git not stated: %s", summary.String())
+	}
+	if strings.Contains(summary.String(), "critical indicator(s)") {
+		t.Fatalf("old git counted as an indicator: %s", summary.String())
+	}
+}
+
+// A machine with no repositories needed no Git, and must not be failed over
+// a Git it never called.
+func TestGitTooOldWithoutRepositoriesIsNotCritical(t *testing.T) {
+	gitShim(t, "git version 2.39.5 (Apple Git-154)")
+	s := New(t.TempDir(), false)
+	s.scanGitRepositories()
+	if len(findingsFor(s, "git-too-old")) != 0 {
+		t.Fatalf("failed a machine with no repositories: %+v", s.Findings)
+	}
+	if s.stats.GitVersion != "2.39.5 (Apple Git-154)" {
+		t.Fatalf("version not recorded on a passing run: %+v", s.stats)
+	}
+}
+
+// The real git on this machine has to be recorded too, and must not be
+// reported as too old unless it is.
+func TestGitVersionRecordedForTheInstalledGit(t *testing.T) {
+	home := t.TempDir()
+	initGitFixture(t, home, "repo")
+	s := New(home, false)
+	s.scanGitRepositories()
+	if s.stats.GitPath == "" || s.stats.GitVersion == "" {
+		t.Fatalf("installed git not recorded: %+v", s.stats)
+	}
+	old, known := gitTooOld(s.stats.GitVersion)
+	if !known {
+		t.Fatalf("unparseable version from the installed git: %q", s.stats.GitVersion)
+	}
+	if got := len(findingsFor(s, "git-too-old")); (got != 0) != old {
+		t.Fatalf("version %q reported old=%v but produced %d finding(s)", s.stats.GitVersion, old, got)
+	}
+}
+
+func TestGitVersionComparison(t *testing.T) {
+	for _, c := range []struct {
+		version    string
+		old, known bool
+	}{
+		{version: "2.39.5 (Apple Git-154)", old: true, known: true},
+		{version: "2.24.3 (Apple Git-128)", old: true, known: true},
+		{version: "1.9.5", old: true, known: true},
+		{version: "2.44.99", old: true, known: true},
+		{version: "2.45.0", known: true},
+		{version: "2.45.1.windows.1", known: true},
+		{version: "2.50.1 (Apple Git-155)", known: true},
+		{version: "3.0.0", known: true},
+		{version: "10.0.0", known: true},
+		{version: ""},
+		{version: "2"},
+		{version: "banana.split.1"},
+		{version: "2.x.1"},
+	} {
+		t.Run(c.version, func(t *testing.T) {
+			old, known := gitTooOld(c.version)
+			if old != c.old || known != c.known {
+				t.Fatalf("got old=%v known=%v, want old=%v known=%v", old, known, c.old, c.known)
+			}
+		})
+	}
+}

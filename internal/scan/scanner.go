@@ -124,8 +124,14 @@ type Scanner struct {
 
 // ScanStats tracks scan progress.
 type ScanStats struct {
-	Debug                   *DebugReport `json:"debug,omitempty"`
-	Git                     bool
+	Debug *DebugReport `json:"debug,omitempty"`
+	Git   bool
+	// GitPath and GitVersion are recorded on every Git-enabled run, whether
+	// it worked or not. Without them the reason a fleet machine scanned no
+	// repositories is only inferable from an error string, and only by
+	// someone who reads the coverage rows.
+	GitPath                 string
+	GitVersion              string
 	GitRepositoriesFound    int
 	GitRepositoriesScanned  int
 	GitBlobsChecked         int

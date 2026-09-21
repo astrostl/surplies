@@ -43,11 +43,20 @@ func PrintResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 	}
 }
 
+// isCoverageCheck reports whether a check describes the scan rather than the
+// machine. These carry severities and drive the exit status like any other
+// finding -- a Git too old to inspect a single repository is critical -- but
+// counting one as an indicator would tell the reader this machine shows signs
+// of an attack, which is a different and false statement.
+func isCoverageCheck(check string) bool {
+	return check == "scan-incomplete" || check == "git-too-old"
+}
+
 // Coverage limitations are diagnostics, not indicators of compromise. Keep
 // scan-incomplete records in JSON and the nonzero exit status for automation.
 func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	for _, f := range findings {
-		if f.Check == "scan-incomplete" {
+		if isCoverageCheck(f.Check) {
 			coverage = append(coverage, f)
 		} else if f.Check != "scan-limited" {
 			indicators = append(indicators, f)

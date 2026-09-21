@@ -77,10 +77,19 @@ func (d *gitDiagnostic) Write(p []byte) (int, error) {
 }
 
 func (s *Scanner) scanGitRepositories() {
-	if _, err := exec.LookPath("git"); err != nil {
+	// PATH only. Hunting for another copy -- Homebrew, MacPorts, a vendored
+	// one -- would mean a scan running as root executing a binary out of a
+	// directory an unprivileged account can write to (/usr/local/bin is
+	// world-writable by default on macOS), in a tool whose whole job is
+	// looking for a local compromise. A too-old git is reported, not
+	// worked around.
+	path, err := exec.LookPath("git")
+	if err != nil {
 		s.gitScanError("git", fmt.Errorf("Git history inspection requires Git: %w", err))
 		return
 	}
+	s.stats.GitPath = path
+	s.recordGitVersion(path)
 	seen := make(map[string]bool)
 	if s.discovery != nil {
 		for _, path := range s.discovery.git {
@@ -114,6 +123,99 @@ func (s *Scanner) scanGitRepositories() {
 	s.reportGitCoverage()
 }
 
+// MinimumGitVersion is the first release carrying --no-lazy-fetch, which
+// every command in this file passes. An older Git rejects the whole command
+// line with exit 129 before it does anything, so repository discovery itself
+// fails and not one repository is inspected -- while the file half of the
+// scan completes normally and the report still looks like a verdict.
+// GIT_NO_LAZY_FETCH is no substitute; it landed in the same release.
+// https://github.com/git/git/blob/master/Documentation/RelNotes/2.45.0.adoc
+var MinimumGitVersion = [2]int{2, 45}
+
+// recordGitVersion runs the one Git command that predates every option this
+// file relies on. It must stay a bare `git --version`: adding the hardening
+// flags would make the probe fail on exactly the Git it exists to identify.
+// Nothing is read, written or configured, so there is nothing to harden
+// beyond dropping inherited GIT_* redirection.
+func (s *Scanner) recordGitVersion(path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), GitScanTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "LC_ALL=C")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		s.gitScanError(path, fmt.Errorf("Git version could not be determined: %w", err))
+		return
+	}
+	s.stats.GitVersion = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "git version "))
+}
+
+// parseGitVersion reads the leading major.minor out of a reported version.
+// Everything after them is build identity -- "2.39.5 (Apple Git-154)",
+// "2.45.1.windows.1" -- which is worth recording and not worth comparing.
+func parseGitVersion(version string) ([2]int, bool) {
+	fields := strings.SplitN(version, ".", 3)
+	if len(fields) < 2 {
+		return [2]int{}, false
+	}
+	var parsed [2]int
+	for i, field := range fields[:2] {
+		n, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil || n < 0 {
+			return [2]int{}, false
+		}
+		parsed[i] = n
+	}
+	return parsed, true
+}
+
+// gitTooOld reports whether a recorded version predates the minimum. known
+// is false when the version string could not be read at all, which is a
+// coverage failure rather than a verdict either way.
+func gitTooOld(version string) (old, known bool) {
+	parsed, ok := parseGitVersion(version)
+	if !ok {
+		return false, false
+	}
+	if parsed[0] != MinimumGitVersion[0] {
+		return parsed[0] < MinimumGitVersion[0], true
+	}
+	return parsed[1] < MinimumGitVersion[1], true
+}
+
+// reportGitVersion is the loud half of the version check. It is deliberately
+// gated on having found a repository: a machine with no repositories needed
+// no Git, and failing it over a Git it never called would be noise.
+//
+// This is CRITICAL rather than a warning because of how it fails. The file
+// half of the scan completes, the report reads like any other, and the exit
+// status was clean -- a files-only verdict presented as a whole one. A scan
+// that is trusted while its Git half never ran is worse than one that fails
+// outright, so it is made impossible to miss.
+func (s *Scanner) reportGitVersion() {
+	if s.stats.GitRepositoriesFound == 0 || s.stats.GitVersion == "" {
+		return
+	}
+	old, known := gitTooOld(s.stats.GitVersion)
+	if !known {
+		s.gitScanError(s.stats.GitPath, fmt.Errorf("Git version %q could not be compared against the required %d.%d", s.stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1]))
+		return
+	}
+	if !old {
+		return
+	}
+	s.addFinding(Finding{Check: "git-too-old", Severity: SevCritical, Path: s.stats.GitPath,
+		coverageCategory: "Git errors",
+		Detail: fmt.Sprintf("%s reports Git %s, and Git %d.%d or newer is required: every Git command this scan runs passes --no-lazy-fetch, which an older Git rejects before doing anything. No repository history was inspected. The rest of this report covers files only. Install a newer Git (on macOS, update the Xcode Command Line Tools) and scan again.",
+			s.stats.GitPath, s.stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1])})
+}
+
 // A Git scan that reached only some of the repositories it found is already a
 // list of per-repository warnings, but nothing in that list says how much of
 // the machine they add up to. GitUnscannableCriticalPercent is where the two
@@ -127,6 +229,9 @@ func (s *Scanner) scanGitRepositories() {
 const GitUnscannableCriticalPercent = 25
 
 func (s *Scanner) reportGitCoverage() {
+	// Named before the ratio: "the installed Git cannot run these commands"
+	// is the cause of the 0/N the ratio is about to report.
+	s.reportGitVersion()
 	found, scanned := s.stats.GitRepositoriesFound, s.stats.GitRepositoriesScanned
 	if found == 0 {
 		// Not an error: repositories kept outside the scanned roots are

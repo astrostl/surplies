@@ -497,6 +497,16 @@ Source attack: PolinRider (DPRK / Contagious Interview).
 
 Matches blobs against the sized entries in the [active hash list](ATTACKS.md#active-payload-hashes), independent of names and the checked-out branch. Where a published Git object identity exists, the blob's object ID is matched directly with no body read; otherwise a blob whose size matches a sized entry is hashed and verified by raw-content SHA-256. Size-less entries are excluded from Git candidates by design. Source attacks: keyv npm compromise and PolinRider (incident-sourced hashes). A hit can be confined to historical commits; inspect the reported object before drawing conclusions about current files or execution. Git collection failures are `scan-incomplete` warnings, not malware findings; when they account for more than 25% of the repositories found, the run-wide coverage verdict is critical.
 
-## 26. `scan-limited` (INFO)
+## 26. `git-too-old` (CRITICAL)
+
+Reports an installed Git older than 2.45 when the scan found at least one repository. `git` is resolved from `PATH` only.
+
+**How it works:** Every Git command this scanner runs passes `--no-lazy-fetch`, a top-level option added in [Git 2.45](https://github.com/git/git/blob/master/Documentation/RelNotes/2.45.0.adoc) (`GIT_NO_LAZY_FETCH` landed in the same release and is no substitute). An older Git rejects the whole command line with exit 129 before opening anything, so repository discovery itself fails and not one repository is inspected. A single bare `git --version` — the one command that predates every option used here, and which is never given the hardening flags that would make it fail on exactly the Git it exists to identify — records the resolved path and version on every Git-enabled run, pass or fail. Both appear in `stats` and on a `Git binary:` line in the summary. The critical finding is gated on having found a repository: a machine with no repositories needed no Git and is not failed over one it never called.
+
+**Why it is CRITICAL:** The file half of the scan is unaffected, so the run completes, prints a normal-looking report, and exits 0. A clean result in that state is a files-only verdict with nothing saying so. A scan that is trusted while its supply-chain half never ran is worse than one that fails outright. Like `scan-incomplete`, this describes the scan rather than the machine: it is never counted as an attack indicator, and the summary says coverage failed critically rather than reporting a critical indicator.
+
+**Why `PATH` only:** No fallback hunting for Homebrew or another copy. A fallback would mean a root-context scan executing a binary out of a user-writable directory — `/usr/local/bin` is world-writable by default on macOS — in a tool whose job is finding a local compromise. It is also easy to miss without the recorded path: an interactive shell with Homebrew first resolves a modern Git and scans fine, while a root daemon under a minimal `PATH` resolves Apple's `/usr/bin/git` and reports `0/N` on the same machine in the same minute. On a stock Mac that is decided by the Xcode Command Line Tools: Apple Git-155 is Git 2.50.1 and works; Apple Git-146/154 are Git 2.39.x and fail.
+
+## 27. `scan-limited` (INFO)
 
 Reports expected scope limits, currently shallow Git repositories whose older history is not available locally. These notices are grouped by shared explanation in human output and retained individually in JSON. They are not attack indicators or scan failures and do not change the exit status. Actual inspection failures remain `scan-incomplete` warnings.

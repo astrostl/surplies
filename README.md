@@ -140,7 +140,7 @@ Which files a scan actually reads — and which it deliberately does not — is 
 - **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64). Two things outside detection are deliberately platform-specific: [`schedule`](#scheduled-scans) supports macOS and Linux only, and the [ENTER wait](#usage) for a double-clicked window is Windows-only, because only Windows destroys the window on exit.
-- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
+- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git 2.45 or newer, resolved from `PATH` only; an older Git cannot inspect a single repository and is reported as a critical [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) finding rather than silently skipped.
 
 ## Checks
 
@@ -171,7 +171,8 @@ Which files a scan actually reads — and which it deliberately does not — is 
 | [`font-execution-task`](docs/CHECKS.md#23-font-execution-task-critical) | CRITICAL | A `.vscode/tasks.json` `folderOpen` task that runs a font file with Node |
 | [`runtime-staging-artifact`](docs/CHECKS.md#24-runtime-staging-artifact-warn) | WARN | Documented staging paths that also have legitimate explanations |
 | [`git-payload-hash`](docs/CHECKS.md#25-git-payload-hash-critical) | CRITICAL | A blob in local Git history matching an active payload hash |
-| [`scan-limited`](docs/CHECKS.md#26-scan-limited-info) | INFO | Expected scope limits, such as shallow Git history |
+| [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) | CRITICAL | An installed Git older than 2.45, which cannot inspect a single repository |
+| [`scan-limited`](docs/CHECKS.md#27-scan-limited-info) | INFO | Expected scope limits, such as shallow Git history |
 
 What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS.md).
 
@@ -181,12 +182,12 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 |------|---------|
 | 0 | Clean scan, no indicators found |
 | 1 | Warning-level findings only, including a Git scan that found no repositories at all |
-| 2 | At least one critical finding, or unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them) |
+| 2 | At least one critical finding; a Git older than 2.45 with repositories to scan; or unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them) |
 
 ## Documentation
 
 - [Attacks covered](docs/ATTACKS.md) — every campaign in detail, and the active payload hash list
-- [Checks](docs/CHECKS.md) — all 26 checks, their tables, and their reasoning
+- [Checks](docs/CHECKS.md) — all 27 checks, their tables, and their reasoning
 - [Scanning behavior](docs/SCANNING.md) — design principles, what gets read, scope decisions, and performance diagnostics
 - [Attribution](docs/ATTRIBUTION.md) — the researchers and writeups every indicator comes from
 - [Scheduling details](scripts/README.md) — the exact files `surplies schedule` installs

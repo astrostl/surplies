@@ -15,8 +15,8 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 	critical, warnings, context, criticalCoverage := 0, 0, 0, 0
 	_, coverage := splitFindings(findings)
 	for _, f := range findings {
-		if f.Check == "scan-incomplete" || f.Check == "scan-limited" {
-			if f.Check == "scan-incomplete" && f.Severity == SevCritical {
+		if isCoverageCheck(f.Check) || f.Check == "scan-limited" {
+			if isCoverageCheck(f.Check) && f.Severity == SevCritical {
 				criticalCoverage++
 			}
 			continue
@@ -62,13 +62,31 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 	}
 }
 
-// The Git counts and the two banners that qualify them. Split out of
+func gitVersionLabel(version string) string {
+	if version == "" {
+		return "unknown"
+	}
+	return version
+}
+
+// The Git counts and the banners that qualify them. Split out of
 // PrintReportSummary so the summary stays a summary.
 func printGitSummary(out io.Writer, stats ScanStats) {
 	if !stats.Git {
 		return
 	}
+	// The resolved binary and its version, on every run: which Git a scan
+	// found is the difference between a Git half that ran and one that could
+	// not start, and PATH differs between an interactive shell and a root
+	// daemon on the same machine.
+	if stats.GitPath != "" {
+		fmt.Fprintf(out, "Git binary: %s (version %s)\n", stats.GitPath, gitVersionLabel(stats.GitVersion))
+	}
 	fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
+	if old, _ := gitTooOld(stats.GitVersion); old && stats.GitRepositoriesFound > 0 {
+		fmt.Fprintf(out, "\n*** GIT IS TOO OLD TO INSPECT REPOSITORIES! *** %s is %s; %d.%d or newer is required, so this report covers files only\n",
+			stats.GitPath, stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1])
+	}
 	if unscannable := stats.GitRepositoriesFound - stats.GitRepositoriesScanned; unscannable*100 > stats.GitRepositoriesFound*GitUnscannableCriticalPercent {
 		// The per-repository failures are already listed, but a reader
 		// skimming a long report cannot add them up against the total.
@@ -98,7 +116,7 @@ func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, detail
 	}{{SevCritical, "CRITICAL INDICATORS"}, {SevWarn, "WARNINGS TO REVIEW — heuristics, not proof of compromise"}, {SevInfo, "INFORMATIONAL CONTEXT"}} {
 		var selected []Finding
 		for _, f := range findings {
-			if f.Check != "scan-incomplete" && f.Check != "scan-limited" && f.Severity == section.severity {
+			if !isCoverageCheck(f.Check) && f.Check != "scan-limited" && f.Severity == section.severity {
 				selected = append(selected, f)
 			}
 		}

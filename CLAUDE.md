@@ -17,7 +17,7 @@ recaps of what you just did.
 - **Report only, never remediate.** surplies is a read-only scanner. A scan must never delete files, uninstall packages, modify configs, or take any corrective action in response to a finding. Findings are reported; the user decides what to do. See the scheduling carve-out below for the single, explicitly invoked exception.
 - **No container/orchestrator checks.** Do not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem rooted at the user's home directory and explicitly added `-root` directories (plus well-known system paths for artifact checks).
 - **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS. Two things outside detection are deliberate exceptions. The `schedule` subcommand supports macOS and Linux only and refuses cleanly elsewhere, because Windows has no equivalent user-level scheduler already covered by the embedded helpers. The ENTER wait for a double-clicked window is Windows-only, because only Windows destroys the console window when the process exits; see the carve-out below.
-- **Zero dependencies.** stdlib only. No third-party Go modules. Git history inspection requires an installed Git supporting `--no-lazy-fetch`.
+- **Zero dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git 2.45 or newer (the release that added `--no-lazy-fetch`), resolved from `PATH` and never hunted for elsewhere: a fallback would have a root-context scan execute a binary out of a user-writable directory. An older Git inspects nothing, so it is a critical `git-too-old` finding when repositories were found, never a silent skip. The version probe must stay a bare `git --version` without the hardening flags, which the Git it identifies would reject.
 - **Citation-required IOCs.** Only add checks for attacks that the developer explicitly requests with a linked, referenced source. Never speculatively add IOCs or checks from general knowledge.
 
 ### Scheduling subcommand
@@ -109,7 +109,7 @@ Go layout: the root is a thin `package main` so `go install github.com/astrostl/
 Documentation: `README.md` is the human-legible overview (what it is, what it
 detects, install, usage, the design principles, a one-line-per-check table).
 Detail lives under `docs/` — `ATTACKS.md` (campaigns and the active hash list),
-`CHECKS.md` (all 26 checks), `SCANNING.md` (scan phases, selection and scope
+`CHECKS.md` (all 27 checks), `SCANNING.md` (scan phases, selection and scope
 decisions, performance diagnostics), `ATTRIBUTION.md` (sources). Keep the README
 short; new detail belongs in the matching `docs/` file.
 
