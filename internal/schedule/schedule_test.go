@@ -164,7 +164,7 @@ func checkNotificationOutput(t *testing.T, code int, output []byte) {
 	if code == 0 && len(output) != 0 {
 		t.Fatalf("clean scan notified: %s", output)
 	}
-	if code == 2 && (!strings.Contains(text, "Surplies: Critical Finding") || !strings.Contains(text, "Critical supply chain attack indicators detected")) {
+	if code == 2 && (!strings.Contains(text, "Surplies: Critical") || !strings.Contains(text, "Critical supply chain attack indicators, or a scan whose coverage failed")) {
 		t.Fatalf("no critical notification: %s", output)
 	}
 	if code != 0 && code != 2 && (!strings.Contains(text, "Surplies: Warning") || !strings.Contains(text, "warnings, incomplete coverage, or an error")) {

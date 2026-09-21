@@ -16,7 +16,7 @@ recaps of what you just did.
 - **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories. The `schedule` subcommand additionally runs `launchctl`, `systemctl --user`, and `notify-send`; this is outside detection entirely and is covered by the scheduling carve-out below.
 - **Report only, never remediate.** surplies is a read-only scanner. A scan must never delete files, uninstall packages, modify configs, or take any corrective action in response to a finding. Findings are reported; the user decides what to do. See the scheduling carve-out below for the single, explicitly invoked exception.
 - **No container/orchestrator checks.** Do not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem rooted at the user's home directory and explicitly added `-root` directories (plus well-known system paths for artifact checks).
-- **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS. The `schedule` subcommand is the one deliberate exception: it supports macOS and Linux only and refuses cleanly elsewhere, because Windows has no equivalent user-level scheduler already covered by the embedded helpers.
+- **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS. Two things outside detection are deliberate exceptions. The `schedule` subcommand supports macOS and Linux only and refuses cleanly elsewhere, because Windows has no equivalent user-level scheduler already covered by the embedded helpers. The ENTER wait for a double-clicked window is Windows-only, because only Windows destroys the console window when the process exits; see the carve-out below.
 - **Zero dependencies.** stdlib only. No third-party Go modules. Git history inspection requires an installed Git supporting `--no-lazy-fetch`.
 - **Citation-required IOCs.** Only add checks for attacks that the developer explicitly requests with a linked, referenced source. Never speculatively add IOCs or checks from general knowledge.
 
@@ -37,6 +37,25 @@ read-only-ness:
 - External commands are invoked through the injected `run` func so tests never touch the
   real scheduler.
 
+
+### Double-clicked window wait
+
+A double-clicked `surplies.exe` prints its whole report into a console window
+that conhost destroys on exit. The root `pause*.go` files wait for ENTER so
+the reader can see it. This is terminal UX, not detection, and a scanner that
+blocks forever on an unattended machine is worse than one whose window closes,
+so every condition below holds before anything waits:
+
+- This process is the only one attached to its console (`GetConsoleProcessList`
+  returns 1). A shell, a scheduled task and a service all fail that test, and
+  `ownsConsole` is a `false` stub on every platform but Windows.
+- stdin and stdout are both still character devices, so any redirected, piped
+  or `-json` run returns immediately.
+- Neither `-no-pause` nor `SURPLIES_NO_PAUSE` is set.
+- The wait itself is bounded at one minute. Do not make it unbounded.
+
+It stays in `package main` at the root, runs after the report is printed, and
+must never change the exit code or be reachable from `internal/scan`.
 
 ## Output rules
 
@@ -84,6 +103,7 @@ Writeups and tracker pages are often behind Cloudflare, and `WebFetch` garbles h
 Go layout: the root is a thin `package main` so `go install github.com/astrostl/surplies@latest` keeps working; detection lives in `internal/scan` and the scheduling subcommand in `internal/schedule`.
 
 - `embed.go` — `//go:embed` of `scripts/notify/*.sh`; the root owns these because an embed pattern cannot traverse up out of its own directory, and the scripts stay at the repo root for documented manual installation
+- `pause.go`, `pause_windows.go`, `pause_other.go` — the double-clicked window wait; terminal UX, so it belongs to the CLI and not to `internal/scan`
 - `internal/scan/testdata/` — benign fixtures, notably the genuine `Math_Symbol.js` whose filename collides with the keyv payload
 
 Documentation: `README.md` is the human-legible overview (what it is, what it

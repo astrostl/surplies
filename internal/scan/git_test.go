@@ -161,6 +161,19 @@ func TestGitBareWorktreeAndSHA256(t *testing.T) {
 	}
 }
 
+// Per-repository failures and the run-wide coverage verdict are both
+// scan-incomplete records. A test about one must not silently pass on the
+// other, so select by the category that distinguishes them.
+func coverageFor(s *Scanner, category string) []Finding {
+	var out []Finding
+	for _, f := range findingsFor(s, "scan-incomplete") {
+		if f.coverageCategory == category {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
 func TestGitEmptyAndBrokenRepositories(t *testing.T) {
 	fixtureHashList(t)
 	home := t.TempDir()
@@ -175,8 +188,13 @@ func TestGitEmptyAndBrokenRepositories(t *testing.T) {
 	}
 	s = New(home, false)
 	s.scanGitRepositories()
-	if len(findingsFor(s, "scan-incomplete")) != 1 || s.stats.GitRepositoriesScanned != 0 {
+	if len(coverageFor(s, "Git errors")) != 1 || s.stats.GitRepositoriesScanned != 0 {
 		t.Fatalf("broken ref swallowed: %+v %+v", s.Findings, s.stats)
+	}
+	// 0 of 1 is not a scan with a gap in it; nothing was covered.
+	verdict := coverageFor(s, "Git coverage")
+	if len(verdict) != 1 || verdict[0].Severity != SevCritical || !strings.Contains(verdict[0].Detail, "1 of 1 repositories (100%)") {
+		t.Fatalf("unscanned repository not escalated: %+v", s.Findings)
 	}
 }
 
@@ -205,7 +223,7 @@ func TestGitDoesNotFetchOrHonorEnvironmentRedirection(t *testing.T) {
 	}
 	s = New(home, false)
 	s.scanGitRepositories()
-	if len(findingsFor(s, "scan-incomplete")) != 1 {
+	if len(coverageFor(s, "Git errors")) != 1 {
 		t.Fatalf("missing blob swallowed: %+v", s.Findings)
 	}
 	if _, err := os.Stat(filepath.Join(repo, "SHOULD_NOT_EXIST")); !os.IsNotExist(err) {
@@ -299,7 +317,7 @@ func TestGitUVSentinelDoesNotHideRepositories(t *testing.T) {
 	}
 	s = New(home, false)
 	s.scanGitRepositories()
-	if len(findingsFor(s, "scan-incomplete")) != 1 || s.stats.GitCacheMarkersSkipped != 0 {
+	if len(coverageFor(s, "Git errors")) != 1 || s.stats.GitCacheMarkersSkipped != 0 {
 		t.Fatalf("nonempty corrupt gitfile suppressed: %+v", s.Findings)
 	}
 	if err := os.WriteFile(filepath.Join(home, ".git"), nil, 0600); err != nil {
@@ -325,8 +343,8 @@ func TestGitMissingObjectStillScansAvailableBlobs(t *testing.T) {
 	if len(findingsFor(s, "git-payload-hash")) != 1 {
 		t.Fatalf("available match missed: %+v", s.Findings)
 	}
-	coverage := findingsFor(s, "scan-incomplete")
-	if len(coverage) != 1 || coverage[0].coverageCategory != "Git errors" || !strings.Contains(coverage[0].Detail, oid) {
+	coverage := coverageFor(s, "Git errors")
+	if len(coverage) != 1 || !strings.Contains(coverage[0].Detail, oid) {
 		t.Fatalf("missing object not reported: %+v", coverage)
 	}
 	// The fixture publishes a blob identity, so the match is free: identified
@@ -345,5 +363,41 @@ func TestGitBlobsConsideredWithoutSizeCandidates(t *testing.T) {
 	s.scanGitRepositories()
 	if s.stats.GitBlobsConsidered != 1 || s.stats.GitBlobsChecked != 0 {
 		t.Fatalf("bad counts: %+v", s.stats)
+	}
+}
+
+// The share of repositories a scan could not complete decides whether the run
+// is a list of warnings or a result that describes nothing. The boundary is
+// exercised on both sides, and zero repositories found is its own case: no
+// history was inspected, so the run must not read as a clean Git scan.
+func TestGitCoverageVerdictThresholds(t *testing.T) {
+	for _, c := range []struct {
+		name            string
+		found, scanned  int
+		want            Severity
+		reported, exact string
+	}{
+		{name: "none found", want: SevWarn, reported: "Git coverage", exact: "No Git repositories were found"},
+		{name: "all scanned", found: 9, scanned: 9},
+		{name: "ordinary breakage", found: 9, scanned: 7},
+		{name: "at the threshold", found: 100, scanned: 75},
+		{name: "above the threshold", found: 100, scanned: 74, want: SevCritical, reported: "Git coverage", exact: "26 of 100 repositories (26%)"},
+		{name: "none scanned", found: 2, want: SevCritical, reported: "Git coverage", exact: "2 of 2 repositories (100%)"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := New(t.TempDir(), false)
+			s.stats.GitRepositoriesFound, s.stats.GitRepositoriesScanned = c.found, c.scanned
+			s.reportGitCoverage()
+			if c.reported == "" {
+				if len(s.Findings) != 0 {
+					t.Fatalf("completed coverage reported as a gap: %+v", s.Findings)
+				}
+				return
+			}
+			got := coverageFor(s, c.reported)
+			if len(got) != 1 || got[0].Severity != c.want || !strings.Contains(got[0].Detail, c.exact) {
+				t.Fatalf("want one %s %s containing %q: %+v", c.want, c.reported, c.exact, s.Findings)
+			}
+		})
 	}
 }

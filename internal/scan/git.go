@@ -86,6 +86,7 @@ func (s *Scanner) scanGitRepositories() {
 		for _, path := range s.discovery.git {
 			s.checkGitRepository(path, seen)
 		}
+		s.reportGitCoverage()
 		return
 	}
 	s.walkScanRoots(func(path string, entry os.DirEntry, err error) error {
@@ -110,6 +111,52 @@ func (s *Scanner) scanGitRepositories() {
 		}
 		return nil
 	})
+	s.reportGitCoverage()
+}
+
+// A Git scan that reached only some of the repositories it found is already a
+// list of per-repository warnings, but nothing in that list says how much of
+// the machine they add up to. GitUnscannableCriticalPercent is where the two
+// stop being the same kind of result. Across a deployed fleet, ordinary
+// breakage -- a broken ref, an unavailable object, a dead submodule -- sits
+// under about 10% of a machine's repositories, while the machines whose Git
+// scan meant nothing failed 80-100% of theirs. A quarter separates them with
+// room on both sides, and it makes any machine that scanned none of the
+// repositories it found critical regardless of how few it had: 0 of 2 is not
+// a scan with gaps, it is no Git coverage at all.
+const GitUnscannableCriticalPercent = 25
+
+func (s *Scanner) reportGitCoverage() {
+	found, scanned := s.stats.GitRepositoriesFound, s.stats.GitRepositoriesScanned
+	if found == 0 {
+		// Not an error: repositories kept outside the scanned roots are
+		// invisible until -root names them. It is still a warning, because a
+		// Git scan that inspected no history must not be reported as a Git
+		// scan that found nothing wrong.
+		s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: "git",
+			coverageCategory: "Git coverage",
+			Detail:           "No Git repositories were found, so no Git history was inspected. Add -root for any repositories kept outside the scanned directories."})
+		return
+	}
+	unscannable := found - scanned
+	if unscannable*100 <= found*GitUnscannableCriticalPercent {
+		return
+	}
+	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevCritical, Path: "git",
+		coverageCategory: "Git coverage",
+		Detail: fmt.Sprintf("Git history coverage is unusable: %d of %d repositories (%d%%) could not be scanned, above the %d%% critical threshold. The failures are listed individually above; this machine's Git result does not describe its repositories.",
+			unscannable, found, GitUnscannablePercent(found, scanned), GitUnscannableCriticalPercent)})
+}
+
+// GitUnscannablePercent is the share of the repositories found that the scan
+// could not complete. Truncating integer division is deliberate: it can only
+// understate the failure, and both callers already know a nonzero share is
+// nonzero. Zero repositories found is reported on its own terms, not as 0%.
+func GitUnscannablePercent(found, scanned int) int {
+	if found <= 0 {
+		return 0
+	}
+	return (found - scanned) * 100 / found
 }
 
 func looksLikeBareGit(path string) bool {

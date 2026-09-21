@@ -58,6 +58,7 @@ surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
+surplies -no-pause    # never wait for ENTER before exiting (Windows only; see below)
 ```
 
 A default scan walks your home directory and your own temp directories —
@@ -86,6 +87,17 @@ half of the indicator list its connection snapshot was compared against.
 
 `-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
 
+On Windows, double-clicking `surplies.exe` in Explorer gives it a console of
+its own, and that window is destroyed the instant the scan exits — the report
+is printed and then disappears unread. Such a run waits for ENTER before
+exiting. Nothing else does: the wait is entered only when this process is the
+only one attached to its console, which is true of a double-click and false of
+a run from `cmd.exe`, PowerShell, a scheduled task or a service, and only when
+stdin and stdout are both still that console, so anything redirected or piped
+(including `-json`) is unaffected. It also gives up after a minute rather than
+waiting forever. macOS and Linux never pause: their terminals already survive
+the process. Use `-no-pause` or set `SURPLIES_NO_PAUSE` to switch it off.
+
 ### Scheduled scans
 
 ```sh
@@ -97,7 +109,7 @@ surplies schedule remove         # stop and remove the schedule and helper
 
 Installs a daily scan using launchd on macOS or a systemd user timer on Linux, along with the notification helper, for the current user. Run it from your normal account without `sudo`, using an installed binary you intend to keep. Rerunning updates the same schedule rather than adding another. The helper records the executable's absolute path, so it does not depend on your interactive shell's `PATH`. Windows is not supported.
 
-Scheduled scans use the default options plus `-q`. A clean scan is silent. Warning-level findings, incomplete coverage, or scan errors raise a warning notification; only critical findings (exit code 2) use the critical title and attack-indicator message. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
+Scheduled scans use the default options plus `-q`. A clean scan is silent. Warning-level findings, incomplete coverage, or scan errors raise a warning notification; only a critical result (exit code 2) uses the critical title, which covers a critical finding and a scan whose Git coverage failed outright. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
 
 `disable` also stops a scan that is running at the time, and the setting survives logout and reboot. Run `surplies schedule` again to re-enable at 09:00, or pass `-time`. `remove` keeps the `surplies` binary and existing scan logs.
 
@@ -127,7 +139,7 @@ Which files a scan actually reads — and which it deliberately does not — is 
 - **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
 - **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
-- **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
+- **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64). Two things outside detection are deliberately platform-specific: [`schedule`](#scheduled-scans) supports macOS and Linux only, and the [ENTER wait](#usage) for a double-clicked window is Windows-only, because only Windows destroys the window on exit.
 - **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
 
 ## Checks
@@ -168,8 +180,8 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 | Code | Meaning |
 |------|---------|
 | 0 | Clean scan, no indicators found |
-| 1 | Warning-level findings only |
-| 2 | At least one critical finding |
+| 1 | Warning-level findings only, including a Git scan that found no repositories at all |
+| 2 | At least one critical finding, or unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them) |
 
 ## Documentation
 

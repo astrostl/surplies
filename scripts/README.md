@@ -41,7 +41,7 @@ be removed separately.
 
 ## notify/
 
-Scripts that run `surplies` and send a desktop notification when a scan exits nonzero. Warning-level findings, incomplete coverage, and scan errors use neutral warning text; only exit code 2 uses the critical attack-indicator message. Clean scans are silent.
+Scripts that run `surplies` and send a desktop notification when a scan exits nonzero. Warning-level findings, incomplete coverage, and scan errors use neutral warning text; exit code 2 uses the critical message, which covers both a critical finding and a scan whose Git coverage failed outright. Clean scans are silent.
 
 Notification behavior follows `surplies`' exit codes:
 
@@ -49,7 +49,7 @@ Notification behavior follows `surplies`' exit codes:
 |-----------|---------|-------------------|
 | `0` | Clean — no indicators found | *(none)* |
 | `1` | Warning-level findings, or incomplete coverage | `Surplies: Warning` |
-| `2` | Critical finding | `Surplies: Critical Finding` |
+| `2` | Critical finding, or unusable Git coverage | `Surplies: Critical` |
 | anything else | The scan errored or did not run | `Surplies: Warning` |
 
 Only `2` is an attack indicator. Every other nonzero code shares the neutral

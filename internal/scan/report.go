@@ -12,10 +12,13 @@ import (
 )
 
 func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invocation string) {
-	critical, warnings, context := 0, 0, 0
+	critical, warnings, context, criticalCoverage := 0, 0, 0, 0
 	_, coverage := splitFindings(findings)
 	for _, f := range findings {
 		if f.Check == "scan-incomplete" || f.Check == "scan-limited" {
+			if f.Check == "scan-incomplete" && f.Severity == SevCritical {
+				criticalCoverage++
+			}
 			continue
 		}
 		switch f.Severity {
@@ -28,10 +31,16 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 		}
 	}
 	fmt.Fprintf(out, "\n%s\n", invocation)
-	if critical == 0 {
-		fmt.Fprintf(out, "Result: no critical indicators; %d warning(s) need review.\n", warnings)
-	} else {
+	switch {
+	case critical > 0:
 		fmt.Fprintf(out, "Result: %d critical indicator(s); %d warning(s) need review.\n", critical, warnings)
+	case criticalCoverage > 0:
+		// A coverage failure is not an indicator, and counting it as one
+		// would say this machine shows signs of an attack. It still exits 2,
+		// so the line has to say why rather than reporting nothing critical.
+		fmt.Fprintf(out, "Result: no critical indicators, but coverage failed critically and the scan cannot be trusted; %d warning(s) need review.\n", warnings)
+	default:
+		fmt.Fprintf(out, "Result: no critical indicators; %d warning(s) need review.\n", warnings)
 	}
 	if len(coverage) > 0 {
 		fmt.Fprintln(out, coverageSummary(groupCoverage(coverage)))
@@ -47,24 +56,38 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 			fmt.Fprintf(out, "OS disk reads unavailable: %s\n", d.ScannerDiskIO.Error)
 		}
 	}
-	if stats.Git {
-		fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
-		if stats.GitRepositoriesFound == 0 {
-			// Zero is scope, not a failed Git scan: repositories kept outside the
-			// default root are invisible until -root names them.
-			// Under -only home was never walked, so advice about what lies
-			// outside it describes a scan that did not happen.
-			if stats.HomeRoot == "" {
-				fmt.Fprint(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** none found under the -root path(s) given\n")
-			} else {
-				fmt.Fprintf(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** add -root for any kept outside %s (%s)\n",
-					homeLabel(runtime.GOOS), stats.HomeRoot)
-			}
-		}
-	}
+	printGitSummary(out, stats)
 	if context > 0 {
 		fmt.Fprintf(out, "Context: %d informational observation(s), not attack indicators.\n", context)
 	}
+}
+
+// The Git counts and the two banners that qualify them. Split out of
+// PrintReportSummary so the summary stays a summary.
+func printGitSummary(out io.Writer, stats ScanStats) {
+	if !stats.Git {
+		return
+	}
+	fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
+	if unscannable := stats.GitRepositoriesFound - stats.GitRepositoriesScanned; unscannable*100 > stats.GitRepositoriesFound*GitUnscannableCriticalPercent {
+		// The per-repository failures are already listed, but a reader
+		// skimming a long report cannot add them up against the total.
+		fmt.Fprintf(out, "\n*** GIT COVERAGE IS UNUSABLE! *** %d of %d repositories (%d%%) could not be scanned; failures are listed above\n",
+			unscannable, stats.GitRepositoriesFound, GitUnscannablePercent(stats.GitRepositoriesFound, stats.GitRepositoriesScanned))
+	}
+	if stats.GitRepositoriesFound != 0 {
+		return
+	}
+	// Zero is scope, not a failed Git scan: repositories kept outside the
+	// default root are invisible until -root names them.
+	// Under -only home was never walked, so advice about what lies
+	// outside it describes a scan that did not happen.
+	if stats.HomeRoot == "" {
+		fmt.Fprint(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** none found under the -root path(s) given\n")
+		return
+	}
+	fmt.Fprintf(out, "\n*** NO GIT REPOSITORIES WERE SCANNED! *** add -root for any kept outside %s (%s)\n",
+		homeLabel(runtime.GOOS), stats.HomeRoot)
 }
 
 func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, details bool, invocation string) {

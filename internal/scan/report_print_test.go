@@ -306,3 +306,30 @@ func TestAbsentLifecycleTargetsRollUpInHumanReport(t *testing.T) {
 		t.Fatalf("records lost their paths: %+v", paths)
 	}
 }
+
+// A scan that could not read most of the repositories it found exits 2, so
+// the summary must not report nothing critical, and the totals must be
+// visible without adding up the individual failures in a long report.
+func TestCriticalGitCoverageIsStatedInTheSummary(t *testing.T) {
+	failures := []Finding{{Check: "scan-incomplete", Severity: SevCritical, Path: "git",
+		coverageCategory: "Git coverage", Detail: "Git history coverage is unusable"}}
+	var out strings.Builder
+	PrintReportSummary(&out, failures, ScanStats{Git: true, GitRepositoriesFound: 379, GitRepositoriesScanned: 67}, "surplies dev")
+	if !strings.Contains(out.String(), "*** GIT COVERAGE IS UNUSABLE! *** 312 of 379 repositories (82%)") {
+		t.Fatalf("unusable Git coverage is not prominent: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "no critical indicators, but coverage failed critically") {
+		t.Fatalf("exit-2 result reported as nothing critical: %s", out.String())
+	}
+	// A coverage failure is not an attack indicator and must not be counted
+	// as one, here or in the rest of the report.
+	if strings.Contains(out.String(), "critical indicator(s)") {
+		t.Fatalf("coverage counted as an indicator: %s", out.String())
+	}
+	// Failures under the threshold stay warnings, with no banner.
+	out.Reset()
+	PrintReportSummary(&out, nil, ScanStats{Git: true, GitRepositoriesFound: 9, GitRepositoriesScanned: 7}, "surplies dev")
+	if strings.Contains(out.String(), "GIT COVERAGE IS UNUSABLE") {
+		t.Fatalf("ordinary breakage banner-ed: %s", out.String())
+	}
+}
