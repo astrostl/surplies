@@ -212,7 +212,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// home-anchored half — which resolves inside the requested root — still
 	// runs and the machine-anchored half does not. The header states the
 	// scope, so the phase line reads the same either way.
-	s.progress("[1/6] Checking known malicious artifacts...\n")
+	s.progress("[1/6] Scanning known malicious artifact paths...\n")
 	s.debug.stage("artifacts/persistence")
 	s.checkArtifacts()
 	s.checkNpmCLI()
@@ -238,7 +238,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 3: Find and scan Python site-packages directories. The phase still
 	// runs under -only — a virtualenv inside a requested root is in scope —
 	// but the fixed system paths are not, so the line says which half ran.
-	s.progress("[3/6] Scanning Python site-packages for compromised packages...\n")
+	s.progress("[3/6] Scanning Python site-packages...\n")
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
@@ -246,7 +246,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// snapshot describes the machine, not a directory, so -only does not take
 	// it. The header says so; the phase line stays the same either way rather
 	// than making the reader work out which run they are looking at.
-	s.progress("[4/6] Active connections...\n")
+	s.progress("[4/6] Scanning active network connections...\n")
 	if !s.Only {
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
@@ -257,12 +257,12 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// so the set is whichever of them the run is allowed to read — possibly
 	// none. The header already says the run stays inside the given roots, so
 	// the line does not make the reader work out which case they are in.
-	s.progress("[5/6] Checking temp directories for payload remnants...\n")
+	s.progress("[5/6] Scanning temp directories...\n")
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
 
 	if s.Git {
-		s.progress("[6/6] Checking locally available Git refs and history against known payload hashes...\n")
+		s.progress("[6/6] Scanning locally available Git refs and history...\n")
 		s.debug.stage("git")
 		s.scanGitRepositories()
 	}
