@@ -188,12 +188,15 @@ func (s *Scanner) printRunHeader() {
 	// These roots are walked for persistence on every run without being asked
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
-	if s.Only {
-		s.progress("Nothing outside the given root(s) is read; live connections are not checked.\n")
-	} else if present := existingPersistenceRoots(); len(present) > 0 {
+	if present := existingPersistenceRoots(); !s.Only && len(present) > 0 {
 		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
 	}
 	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
+	// The one statement that changes what the phase lines below mean, so it
+	// gets its own paragraph instead of a clause among the scope lines.
+	if s.Only {
+		s.progress("ONLY MODE: Nothing outside the given root(s) is read, and live connections are not checked!\n\n")
+	}
 }
 
 // Run executes all checks and returns findings.
@@ -240,11 +243,11 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.scanPythonPackages()
 
 	// Phase 4: Check for network IOCs in shell history/config. A connection
-	// snapshot describes the machine, not a directory, so -only skips it.
-	if s.Only {
-		s.progress("[4/5] Active connections — skipped\n")
-	} else {
-		s.progress("[4/5] Checking active connections for network IOCs...\n")
+	// snapshot describes the machine, not a directory, so -only does not take
+	// it. The header says so; the phase line stays the same either way rather
+	// than making the reader work out which run they are looking at.
+	s.progress("[4/5] Active connections...\n")
+	if !s.Only {
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
 	}
