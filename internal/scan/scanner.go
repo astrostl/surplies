@@ -189,7 +189,7 @@ func (s *Scanner) printRunHeader() {
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if s.Only {
-		s.progress("Machine-wide checks skipped: live connections, system Python paths; fixed artifact, persistence and temp paths are checked only where they fall inside the given roots\n")
+		s.progress("Nothing outside these roots is read; live connections are not checked.\n")
 	} else if present := existingPersistenceRoots(); len(present) > 0 {
 		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
 	}
