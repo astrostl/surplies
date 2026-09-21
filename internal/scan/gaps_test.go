@@ -55,6 +55,7 @@ func TestNetworkFailuresAndDNS(t *testing.T) {
 	for _, kind := range []string{"empty", "failed", "timeout", "nxdomain", "filtered", "resolver-failed"} {
 		t.Run(kind, func(t *testing.T) {
 			s := New(t.TempDir(), false)
+			s.Resolve = true // these cases are the DNS paths themselves
 			collect := func(ctx context.Context) ([]byte, error) {
 				switch kind {
 				case "failed":
@@ -90,6 +91,32 @@ func TestNetworkFailuresAndDNS(t *testing.T) {
 		})
 	}
 }
+
+// Resolving the known C2 domains queries nameservers the campaign may still
+// control, and a dead domain reparked on shared hosting would match an address
+// the machine legitimately talks to. Off by default — and said out loud, so the
+// reader knows which half of the indicator list the snapshot was compared
+// against.
+func TestC2DomainsAreNotResolvedWithoutResolve(t *testing.T) {
+	s := New(t.TempDir(), false)
+	looked := 0
+	lookup := func(context.Context, string) ([]string, error) {
+		looked++
+		return []string{"203.0.113.1"}, nil
+	}
+	s.inspectNetwork(func(context.Context) ([]byte, error) { return nil, nil }, lookup, time.Second)
+	if looked != 0 {
+		t.Fatalf("resolved %d domains without -resolve", looked)
+	}
+	notices := findingsFor(s, "scan-limited")
+	if len(notices) != 1 || !strings.Contains(notices[0].Detail, "-resolve") {
+		t.Fatalf("missing the scope notice naming -resolve: %v", s.Findings)
+	}
+	if hasIncomplete(s.Findings) {
+		t.Fatalf("a deliberate scope limit reported as incomplete coverage: %v", s.Findings)
+	}
+}
+
 func TestCheckDrivenSourceScope(t *testing.T) {
 	for _, deep := range []bool{false, true} {
 		dir := t.TempDir()

@@ -69,11 +69,16 @@ type Scanner struct {
 	// Deep adds declared dependency entrypoint and known-candidate inspection.
 	// Metadata, lifecycle targets and targeted persistence run in both modes.
 
-	Deep            bool
-	Git             bool
-	NpmCache        bool
-	Broad           bool
-	BrowserCache    bool
+	Deep         bool
+	Git          bool
+	NpmCache     bool
+	Broad        bool
+	BrowserCache bool
+	// Resolve opts into looking up the known C2 domains at scan time. Off by
+	// default: the query goes to nameservers the campaign may still control,
+	// and a dead domain reparked on shared hosting resolves to an address the
+	// machine legitimately talks to, which would report as a critical.
+	Resolve         bool
 	contentDirs     map[string]bool
 	dependencyDirs  map[string]bool
 	rawCacheSkipped map[string]bool

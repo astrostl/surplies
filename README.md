@@ -52,6 +52,7 @@ surplies              # scan with verbose output (default)
 surplies -broad        # include unrelated text/data (slow)
 surplies -browser-cache # include browser cache contents (slow)
 surplies -npm-cache    # include raw npm cache contents (slow)
+surplies -resolve      # also resolve known C2 domains and match their current addresses
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
@@ -77,6 +78,11 @@ falling back to home, and both the run header and the phase lines say what ran
 and what was skipped. It is for one-off checks of a single tree, not for
 concluding a machine is clean: a `-only` run that finds nothing says nothing
 about the rest of the machine.
+
+`-resolve` is off by default: looking those domains up queries nameservers the
+campaign may still control, and a dead C2 domain reparked on shared hosting
+resolves to an address the machine legitimately talks to. Every run says which
+half of the indicator list its connection snapshot was compared against.
 
 `-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
 
@@ -104,7 +110,7 @@ A scan runs six phases in sequence:
 1. **Known malicious artifacts** — fixed filesystem paths, the global npm CLI, documented Electron application entrypoints and their sidecars, and persistence roots under home and system locations
 2. **Project directories** — walk home and each `-root`, inspecting every `node_modules`, Composer `vendor/`, `.claude/` and `.vscode/`, and every build config, web font, and `.gitignore` encountered
 3. **Python site-packages** — discovered environments plus well-known system Python paths
-4. **Network IOCs** — established connections from `netstat -n` against known C2 IPs and on-the-fly resolutions of known C2 domains
+4. **Network IOCs** — established connections from `netstat -n` against known C2 IPs; `-resolve` adds the current addresses behind known C2 domains
 5. **Temp directories** — payload remnants and staging artifacts
 6. **Git history** — blobs reachable from local refs, matched against the [active payload hashes](docs/ATTACKS.md#active-payload-hashes) regardless of filename
 

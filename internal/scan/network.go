@@ -49,13 +49,20 @@ func (s *Scanner) inspectNetwork(collect networkCollector, lookup hostResolver, 
 		data []byte
 		err  error
 	}
-	results := make(chan result, len(KnownC2Domains)+1)
+	domains := KnownC2Domains
+	if !s.Resolve {
+		// Stated, not silently dropped: the reader has to know which half of
+		// the indicator list this snapshot was compared against.
+		domains = nil
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "netstat", Detail: fmt.Sprintf("Connections were matched against the known C2 addresses only; the %d known C2 domains were not resolved, so a campaign reachable at a current address behind one of them would not match. Use -resolve to look them up, which queries nameservers the campaign may control", len(KnownC2Domains))})
+	}
+	results := make(chan result, len(domains)+1)
 	go func() { data, err := collect(ctx); results <- result{name: "netstat", data: data, err: err} }()
-	for _, domain := range KnownC2Domains {
+	for _, domain := range domains {
 		go func() { ips, err := lookup(ctx, domain); results <- result{name: domain, ips: ips, err: err} }()
 	}
 	pending := map[string]bool{"netstat": true}
-	for _, d := range KnownC2Domains {
+	for _, d := range domains {
 		pending[d] = true
 	}
 	resolved := map[string][]string{}

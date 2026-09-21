@@ -11,7 +11,7 @@ import (
 )
 
 type ScanModes struct {
-	Deep, Git, Coverage, NpmCache, Debug, Broad, BrowserCache bool
+	Deep, Git, Coverage, NpmCache, Debug, Broad, BrowserCache, Resolve bool
 }
 
 func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
@@ -20,6 +20,7 @@ func RegisterScanModes(fs *flag.FlagSet) *ScanModes {
 	fs.BoolVar(&m.BrowserCache, "browser-cache", false, "include browser cache contents (slow)")
 	fs.BoolVar(&m.Debug, "debug", false, "save detailed diagnostics to a log and report")
 	fs.BoolVar(&m.NpmCache, "npm-cache", false, "include raw npm cache contents (slow)")
+	fs.BoolVar(&m.Resolve, "resolve", false, "resolve and scan for known C2 domains (queries attacker-controlled nameservers)")
 	return m
 }
 

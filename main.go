@@ -62,7 +62,7 @@ func runScan() int {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&only, "only", false, "confine the scan to the given -root(s); machine-wide checks run only inside them")
+	flag.BoolVar(&only, "only", false, "confine the scan to only the given -root(s)")
 	flag.Usage = printUsage
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -93,6 +93,7 @@ func runScan() int {
 	s.NpmCache = modes.NpmCache
 	s.Broad = modes.Broad
 	s.BrowserCache = modes.BrowserCache
+	s.Resolve = modes.Resolve
 	var debugLog *os.File
 	if modes.Debug {
 		debugLog, err = s.EnableDebug("", quiet, os.Stderr)
