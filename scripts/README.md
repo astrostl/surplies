@@ -41,14 +41,14 @@ be removed separately.
 
 ## notify/
 
-Scripts that run `surplies` and send a desktop notification **only when a scan exits 2** for a critical finding. Clean scans, warning-level findings, incomplete coverage, and scan errors are silent.
+Scripts that run `surplies` and send a desktop notification when a scan exits nonzero. Warning-level findings, incomplete coverage, and scan errors use neutral warning text; only exit code 2 uses the critical attack-indicator message. Clean scans are silent.
 
 Notification behavior follows `surplies`' exit codes:
 
 | Exit code | Meaning | Notification title |
 |-----------|---------|-------------------|
 | `0` | Clean — no indicators found | *(none)* |
-| `1` | Warning-level findings | *(none)* |
+| `1` | Warning-level findings | `Surplies: Warning` |
 | `2` | Critical finding | `Surplies: Critical Finding` |
 
 ### macOS (`notify/macos.sh`)
@@ -146,7 +146,7 @@ Contributions welcome. The same exit-code contract applies (`0` = clean, `1` = w
 Each notify script should:
 
 1. Run `surplies -q >/dev/null 2>&1` and capture the exit code
-2. Exit silently unless the code is `2`
-3. Fire the platform's native critical notification for code `2`
+2. Exit silently if the code is `0`
+3. Fire the platform's native critical notification for code `2`; use neutral warning text for other nonzero codes
 
 Use `#!/bin/sh` for shell scripts where possible (POSIX-portable). No JSON parsing needed — the exit code is the reliable interface.

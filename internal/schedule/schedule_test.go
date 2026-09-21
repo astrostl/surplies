@@ -152,14 +152,26 @@ func TestInstalledNotificationScript(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", output, err)
 				}
-				if code != 2 && len(output) != 0 {
-					t.Fatalf("exit %d notified: %s", code, output)
-				}
-				if code == 2 && !strings.Contains(string(output), "Surplies: Critical Finding") {
-					t.Fatalf("no critical notification: %s", output)
-				}
+				checkNotificationOutput(t, code, output)
 			})
 		}
+	}
+}
+
+func checkNotificationOutput(t *testing.T, code int, output []byte) {
+	t.Helper()
+	text := string(output)
+	if code == 0 && len(output) != 0 {
+		t.Fatalf("clean scan notified: %s", output)
+	}
+	if code == 2 && (!strings.Contains(text, "Surplies: Critical Finding") || !strings.Contains(text, "Critical supply chain attack indicators detected")) {
+		t.Fatalf("no critical notification: %s", output)
+	}
+	if code != 0 && code != 2 && (!strings.Contains(text, "Surplies: Warning") || !strings.Contains(text, "warnings, incomplete coverage, or an error")) {
+		t.Fatalf("wrong warning notification for exit %d: %s", code, output)
+	}
+	if code != 2 && strings.Contains(text, "Critical") {
+		t.Fatalf("exit %d produced a critical notification: %s", code, output)
 	}
 }
 
