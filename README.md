@@ -60,11 +60,12 @@ surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-
 ```
 
 `-only` confines the scan to the `-root` paths given. Every check is filtered
-by that scope rather than switched off wholesale: live connections and the
-fixed system Python paths are skipped outright, and the fixed artifact,
-persistence, npm-CLI, startup and temp paths run only where they fall inside a
-requested root. Since `-only` puts the first `-root` in home's place, the
-home-relative half of those checks resolves inside the tree you named — so
+by that scope rather than switched off wholesale: the only thing genuinely
+skipped is the live-connection snapshot, which describes the machine and has no
+path to confine. Every fixed path — artifacts, persistence roots, the npm CLI,
+startup files, system Python paths, temp dirs — is read only where it falls
+inside a requested root. Since `-only` puts the first `-root` in home's place,
+the home-relative half of those checks resolves inside the tree you named, so
 pointing it at an extracted home backup still reports LaunchAgents, startup
 files and dropped artifacts found there. It refuses without `-root` rather than
 falling back to home, and both the run header and the phase lines say what ran
