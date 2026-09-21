@@ -14,6 +14,42 @@ The scanner runs five phases sequentially:
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
 5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
 
+## External commands
+
+A scan executes exactly two external programs: `netstat` and `git`. Both are the
+documented exceptions to filesystem-only detection; everything else a check knows
+comes from reading files. No package manager or runtime (`npm`, `pip`, `python`,
+`node`, `kubectl`, `docker`) is ever invoked, and nothing is run through a shell —
+each command is executed directly with an argument vector, so no scanned path or
+file content can be interpreted as shell syntax.
+
+| Command | When | Exact invocation |
+|---|---|---|
+| `netstat` | Network IOC phase; skipped entirely under `-only` | `netstat -n`, plus `-l` on macOS, under a five-second deadline |
+| `git` | Once before the Git phase, to resolve and version-check Git | `git --version`, deliberately without the hardening flags an older Git would reject |
+| `git` | Git history phase, per repository | `rev-list --objects --all --no-object-names --missing=print`, `cat-file --batch-check`, `cat-file --batch`, each under the repository's two-minute deadline |
+
+Every Git command but the version probe is prefixed with `--no-pager
+--no-replace-objects --no-lazy-fetch -c core.hooksPath=<null device> -c
+core.fsmonitor=false -c protocol.allow=never -c core.commitGraph=false -c
+safe.directory=* -C <repo>`, and runs with the inherited `GIT_*` environment
+removed and `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<null device>`,
+`GIT_NO_LAZY_FETCH=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0` and
+`LC_ALL=C` set. That combination is what makes the Git phase read-only and
+offline: no fetch, no checkout, no hook, filter or fsmonitor process, and no
+repository, user or system configuration that could redirect the scan. Git is
+resolved from `PATH` only. See [Default Git history checks](#default-git-history-checks).
+
+Three more commands exist in the program and are unreachable from a scan. They
+belong to the [`schedule`](../README.md#scheduled-scans) subcommand, which the user
+must invoke by name: `launchctl` (`print`, `bootout`, `enable`, `bootstrap`,
+`disable`) on macOS, and `systemctl --user` (`show-environment`, `daemon-reload`,
+`enable`, `disable --now`, `restart`, `stop`) plus a `notify-send --version`
+prerequisite probe on Linux. Detection code does not import `internal/schedule`.
+The notification helper that `schedule` installs runs `surplies` itself and then
+`osascript` or `notify-send` to display the result; it is a shell script under the
+user's own account, not something the scanner calls.
+
 ## Default dependency checks
 
 Every full scan checks installed package names and versions, declared execution targets, known payload candidates, and targeted persistence files. Dependency content inspection selects:
