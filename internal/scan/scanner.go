@@ -189,7 +189,7 @@ func (s *Scanner) printRunHeader() {
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if s.Only {
-		s.progress("Nothing outside these roots is read; live connections are not checked.\n")
+		s.progress("Nothing outside the given root(s) is read; live connections are not checked.\n")
 	} else if present := existingPersistenceRoots(); len(present) > 0 {
 		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
 	}
@@ -209,7 +209,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// home-anchored half — which resolves inside the requested root — still
 	// runs and the machine-anchored half does not.
 	if s.Only {
-		s.progress("[1/5] Checking known malicious artifacts inside the given roots (-only)...\n")
+		s.progress("[1/5] Checking known malicious artifacts inside the given root(s)...\n")
 	} else {
 		s.progress("[1/5] Checking known malicious artifacts...\n")
 	}
@@ -223,9 +223,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.checkStartupFiles()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts.
-	// Deep is always on and has no flag to turn it off, so the line describes
-	// what is inspected rather than naming a mode the reader cannot change.
-	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode) — manifests, lifecycle targets, declared entrypoints and known payload candidates...\n")
+	// What gets selected for reading is already stated by the scope notice
+	// below, so the phase line names the directories and stops there.
+	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
 	s.debug.stage("projects")
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
@@ -239,7 +239,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// runs under -only — a virtualenv inside a requested root is in scope —
 	// but the fixed system paths are not, so the line says which half ran.
 	if s.Only {
-		s.progress("[3/5] Scanning Python site-packages under the given roots — system paths skipped (-only)...\n")
+		s.progress("[3/5] Scanning Python site-packages under the given root(s)...\n")
 	} else {
 		s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
 	}
@@ -249,7 +249,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 4: Check for network IOCs in shell history/config. A connection
 	// snapshot describes the machine, not a directory, so -only skips it.
 	if s.Only {
-		s.progress("[4/5] Active connections — skipped (-only)\n")
+		s.progress("[4/5] Active connections — skipped\n")
 	} else {
 		s.progress("[4/5] Checking active connections for network IOCs...\n")
 		s.debug.stage("network")
@@ -263,9 +263,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	case !s.Only:
 		s.progress("[5/5] Checking temp directories for payload remnants...\n")
 	case len(s.inScopeTempDirs()) > 0:
-		s.progress("[5/5] Checking temp directories inside the given roots (-only)...\n")
+		s.progress("[5/5] Checking temp directories inside the given root(s)...\n")
 	default:
-		s.progress("[5/5] Temp directories — skipped (-only: none inside the given roots)\n")
+		s.progress("[5/5] Temp directories — skipped (none inside the given root(s))\n")
 	}
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
