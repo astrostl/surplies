@@ -207,12 +207,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// global npm CLI entrypoint, which lives outside the home directory.
 	// Under -only each candidate is filtered by pathInScope, so the
 	// home-anchored half — which resolves inside the requested root — still
-	// runs and the machine-anchored half does not.
-	if s.Only {
-		s.progress("[1/5] Checking known malicious artifacts inside the given root(s)...\n")
-	} else {
-		s.progress("[1/5] Checking known malicious artifacts...\n")
-	}
+	// runs and the machine-anchored half does not. The header states the
+	// scope, so the phase line reads the same either way.
+	s.progress("[1/5] Checking known malicious artifacts...\n")
 	s.debug.stage("artifacts/persistence")
 	s.checkArtifacts()
 	s.checkNpmCLI()
@@ -238,11 +235,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 3: Find and scan Python site-packages directories. The phase still
 	// runs under -only — a virtualenv inside a requested root is in scope —
 	// but the fixed system paths are not, so the line says which half ran.
-	if s.Only {
-		s.progress("[3/5] Scanning Python site-packages under the given root(s)...\n")
-	} else {
-		s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
-	}
+	s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
@@ -258,14 +251,12 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 
 	// Phase 5: Check tmp directories for suspicious payload remnants. A temp
 	// dir is a fixed machine path, but naming one with -root puts it in scope,
-	// so the phase runs whenever one of them is inside a requested root.
-	switch {
-	case !s.Only:
+	// so the phase runs whenever one of them is inside a requested root and
+	// says "skipped" only when none is.
+	if len(s.inScopeTempDirs()) > 0 {
 		s.progress("[5/5] Checking temp directories for payload remnants...\n")
-	case len(s.inScopeTempDirs()) > 0:
-		s.progress("[5/5] Checking temp directories inside the given root(s)...\n")
-	default:
-		s.progress("[5/5] Temp directories — skipped (none inside the given root(s))\n")
+	} else {
+		s.progress("[5/5] Temp directories — skipped\n")
 	}
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
