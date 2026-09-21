@@ -360,6 +360,42 @@ func TestOnlySkipsMachineWideChecks(t *testing.T) {
 	}
 }
 
+// The system Python paths are fixed machine-wide locations, not directories
+// the user pointed at, so -only must not read them either. The count is the
+// assertion: a system site-packages is usually clean, so the leak produces no
+// finding and would otherwise stay invisible.
+func TestOnlySkipsSystemPythonPaths(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, filepath.Join(root, "package.json"), `{"name":"fixture"}`)
+
+	bare := New(root, false)
+	bare.Only = true
+	if _, stats := bare.Run(); stats.SitePackagesFound != 0 {
+		t.Fatalf("-only inspected %d site-packages outside its root", stats.SitePackagesFound)
+	}
+
+	// The phase itself still runs: a site-packages inside the root is checked.
+	inside := filepath.Join(root, "venv", "lib", "python3.12", "site-packages")
+	if err := os.MkdirAll(filepath.Join(inside, "litellm-1.82.7.dist-info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	s := New(root, false)
+	s.Only = true
+	findings, stats := s.Run()
+	if stats.SitePackagesFound != 1 {
+		t.Fatalf("site-packages inside the root: found %d, want 1", stats.SitePackagesFound)
+	}
+	var hit bool
+	for _, f := range findings {
+		if f.Check == "compromised-python-version" && strings.HasPrefix(f.Path, inside) {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("compromised version inside the root was not reported: %+v", findings)
+	}
+}
+
 // The same tree without -only reaches the machine-wide checks, which is what
 // makes the assertion above a real difference rather than a fixture artifact.
 func TestOnlyIsWhatSuppressesThePhases(t *testing.T) {

@@ -60,8 +60,8 @@ surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-
 ```
 
 `-only` narrows the scan to the `-root` paths given and skips every
-machine-wide phase — fixed artifact paths, persistence roots, live
-connections and temp directories. It refuses without `-root` rather than
+machine-wide phase — fixed artifact paths, persistence roots, system Python
+paths, live connections and temp directories. It refuses without `-root` rather than
 falling back to home, and both the run header and the phase lines name what
 was skipped. It is for one-off checks of a single tree, not for concluding a
 machine is clean: a `-only` run that finds nothing says nothing about

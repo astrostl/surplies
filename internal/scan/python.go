@@ -18,7 +18,12 @@ var distInfoVersionRe = regexp.MustCompile(`^(.+)-(\d+\..+)\.dist-info$`)
 // and checks them for compromised packages and malicious .pth files.
 func (s *Scanner) scanPythonPackages() {
 	// Also check well-known system paths outside home dir for .pth files and bad versions.
-	systemPaths := pythonSystemPaths()
+	// These are fixed machine-wide paths, not directories the user pointed at,
+	// so -only skips them the same way it skips the artifact and temp phases.
+	var systemPaths []string
+	if !s.Only {
+		systemPaths = pythonSystemPaths()
+	}
 
 	for _, sp := range systemPaths {
 		entries, err := s.readDir(sp)

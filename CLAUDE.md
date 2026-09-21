@@ -119,8 +119,9 @@ scan finish merely to collect totals.
 For a quick real run against the built binary, use `-only` with whatever roots
 you want to look at — `-root /tmp -only`, a fixture directory, a single project.
 `-only` restricts the scan to the named roots and skips every machine-wide phase
-(fixed artifact paths, persistence roots, live connections, temp dirs), so it
-finishes in milliseconds and never walks the user's home directory. Use it for
+(fixed artifact paths, persistence roots, system Python paths, live connections,
+temp dirs), so it finishes in milliseconds and never walks the user's home
+directory. Use it for
 rapid iteration and one-off checks. Do not use it to claim a machine is clean:
 a `-only` run that finds nothing says nothing about persistence, artifacts, or
 connections. Never point a default (non-`-only`) run at the user's home without

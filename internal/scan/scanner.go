@@ -88,8 +88,8 @@ type Scanner struct {
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
 	// Only restricts the run to the roots the user named: the machine-wide
-	// phases (fixed artifact paths, persistence roots, live connections, temp
-	// dirs) are skipped entirely, because none of them is anchored in the
+	// phases (fixed artifact paths, persistence roots, system Python paths,
+	// live connections, temp dirs) are skipped entirely, because none of them is anchored in the
 	// requested directory. Intended for one-off checks of a single tree and
 	// for rapid iteration on fixtures, where a full home walk is the cost.
 	Only bool
@@ -187,7 +187,7 @@ func (s *Scanner) printRunHeader() {
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if s.Only {
-		s.progress("Machine-wide checks skipped: artifact paths, persistence roots, connections, temp dirs\n")
+		s.progress("Machine-wide checks skipped: artifact paths, persistence roots, system Python paths, connections, temp dirs\n")
 	} else if present := existingPersistenceRoots(); len(present) > 0 {
 		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
 	}
