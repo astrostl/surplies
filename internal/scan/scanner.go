@@ -212,7 +212,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// home-anchored half — which resolves inside the requested root — still
 	// runs and the machine-anchored half does not. The header states the
 	// scope, so the phase line reads the same either way.
-	s.progress("[1/5] Checking known malicious artifacts...\n")
+	s.progress("[1/6] Checking known malicious artifacts...\n")
 	s.debug.stage("artifacts/persistence")
 	s.checkArtifacts()
 	s.checkNpmCLI()
@@ -225,7 +225,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 2: Walk home for node_modules and project-local payload artifacts.
 	// What gets selected for reading is already stated by the scope notice
 	// below, so the phase line names the directories and stops there.
-	s.progress("[2/5] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
+	s.progress("[2/6] Scanning project directories (node_modules, vendor, .claude, .vscode)...\n")
 	s.debug.stage("projects")
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
@@ -238,7 +238,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Phase 3: Find and scan Python site-packages directories. The phase still
 	// runs under -only — a virtualenv inside a requested root is in scope —
 	// but the fixed system paths are not, so the line says which half ran.
-	s.progress("[3/5] Scanning Python site-packages for compromised packages...\n")
+	s.progress("[3/6] Scanning Python site-packages for compromised packages...\n")
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
@@ -246,7 +246,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// snapshot describes the machine, not a directory, so -only does not take
 	// it. The header says so; the phase line stays the same either way rather
 	// than making the reader work out which run they are looking at.
-	s.progress("[4/5] Active connections...\n")
+	s.progress("[4/6] Active connections...\n")
 	if !s.Only {
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
@@ -257,12 +257,12 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// so the set is whichever of them the run is allowed to read — possibly
 	// none. The header already says the run stays inside the given roots, so
 	// the line does not make the reader work out which case they are in.
-	s.progress("[5/5] Checking temp directories for payload remnants...\n")
+	s.progress("[5/6] Checking temp directories for payload remnants...\n")
 	s.debug.stage("temp")
 	s.checkTempArtifacts()
 
 	if s.Git {
-		s.progress("[git] Checking locally available refs and history against known payload hashes...\n")
+		s.progress("[6/6] Checking locally available Git refs and history against known payload hashes...\n")
 		s.debug.stage("git")
 		s.scanGitRepositories()
 	}

@@ -94,7 +94,7 @@ See [scheduling details](scripts/README.md) for the exact files installed and th
 
 ## How it works
 
-A scan runs five phases in sequence, then inspects local Git history:
+A scan runs six phases in sequence:
 
 1. **Known malicious artifacts** — fixed filesystem paths, the global npm CLI, documented Electron application entrypoints and their sidecars, and persistence roots under home and system locations
 2. **Project directories** — walk home and each `-root`, inspecting every `node_modules`, Composer `vendor/`, `.claude/` and `.vscode/`, and every build config, web font, and `.gitignore` encountered
