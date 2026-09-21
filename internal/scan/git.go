@@ -24,7 +24,23 @@ const GitScanTimeout = 2 * time.Minute
 func gitCommand(ctx context.Context, repo string, args ...string) *exec.Cmd {
 	options := []string{"--no-pager", "--no-replace-objects", "--no-lazy-fetch",
 		"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false",
-		"-c", "protocol.allow=never", "-c", "core.commitGraph=false", "-C", repo}
+		"-c", "protocol.allow=never", "-c", "core.commitGraph=false",
+		// Without this, a scan running as a different user than the repo owner
+		// reads NOTHING: git's ownership guard fails every command with
+		// "detected dubious ownership", the repo is counted as found but never
+		// scanned, and the report still looks clean. That is the normal case
+		// for fleet deployment -- an MDM policy runs as root over user homes.
+		//
+		// safe.directory is only honoured from protected configuration, and the
+		// hardening below deliberately removes the other two scopes
+		// (GIT_CONFIG_NOSYSTEM, GIT_CONFIG_GLOBAL=/dev/null), so -c is the only
+		// remaining channel -- no caller can supply it from the environment.
+		//
+		// The guard exists to stop an untrusted repo's LOCAL config from being
+		// honoured; the flags above already neutralise what that config could
+		// abuse (hooks, fsmonitor, protocols, commit-graph), and local config is
+		// needed regardless for object format, worktrees and alternates.
+		"-c", "safe.directory=*", "-C", repo}
 	cmd := exec.CommandContext(ctx, "git", append(options, args...)...)
 	// Inherited GIT_DIR, object-directory overrides, config injection and trace
 	// settings must not redirect the scan or write files. Local repo config is
