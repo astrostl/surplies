@@ -1,15 +1,15 @@
 class Surplies < Formula
   desc "Scans for supply chain attack IOCs (axios, litellm, mini-shai-hulud) via filesystem-only detection"
   homepage "https://github.com/astrostl/surplies"
-  version "v0.11.5"
+  version "v0.12.0"
   license "MIT"
 
   if OS.mac? && Hardware::CPU.arm?
-    url "https://github.com/astrostl/surplies/releases/download/v0.11.5/surplies-v0.11.5-darwin-arm64.tar.gz"
-    sha256 "27ea94c87dc8f6575032c526619a13c35ee71a430fac9cdb59478271cdd2bfee"
+    url "https://github.com/astrostl/surplies/releases/download/v0.12.0/surplies-v0.12.0-darwin-arm64.tar.gz"
+    sha256 "6b62c93029b57c4863ec539daa99f30f6be20ec091bc57eab12bbfa19e927ff5"
   elsif OS.mac? && Hardware::CPU.intel?
-    url "https://github.com/astrostl/surplies/releases/download/v0.11.5/surplies-v0.11.5-darwin-amd64.tar.gz"
-    sha256 "1bc5bc3991f0ff1320bdce22a67547ee74ea38b1e23d795c51019bd7e6e19e43"
+    url "https://github.com/astrostl/surplies/releases/download/v0.12.0/surplies-v0.12.0-darwin-amd64.tar.gz"
+    sha256 "4f16d8ee83485600e24306b156d496e125efbf4a268b83d5154c4c5923a755d9"
   else
     odie "surplies is only supported on macOS via Homebrew. Build from source for Linux."
   end
