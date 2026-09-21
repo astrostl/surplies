@@ -21,6 +21,9 @@ func (s *Scanner) checkApplicationPatterns(patterns []string) {
 		// entrypoint, and must still be reported in that case.
 		dirs := s.persistenceDirs(filepath.Dir(pattern))
 		for _, dir := range dirs {
+			if !s.pathInScope(dir) {
+				continue
+			}
 			s.checkPersistenceSiblings(dir)
 			s.checkApplicationFile(filepath.Join(dir, filepath.Base(pattern)))
 		}
@@ -158,7 +161,7 @@ func (s *Scanner) checkRuntimeStaging() {
 func (s *Scanner) checkStagingPaths(paths []string) {
 	seen := make(map[string]bool)
 	for _, path := range paths {
-		if seen[path] {
+		if seen[path] || !s.pathInScope(path) {
 			continue
 		}
 		seen[path] = true
@@ -223,6 +226,9 @@ func existingPersistenceRoots() []string {
 
 func (s *Scanner) checkPersistenceRoots() {
 	for _, root := range DefaultPersistenceRoots() {
+		if !s.pathInScope(root) {
+			continue
+		}
 		if _, err := os.Stat(root); os.IsNotExist(err) {
 			continue
 		}

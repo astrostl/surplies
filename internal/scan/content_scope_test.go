@@ -360,6 +360,33 @@ func TestOnlySkipsMachineWideChecks(t *testing.T) {
 	}
 }
 
+// -only makes the first -root take home's place, so a home-anchored artifact
+// path resolves inside the requested tree and is in scope. Skipping the whole
+// phase used to hide it: pointing -only at an extracted home backup reported
+// nothing, however infected the backup was.
+func TestOnlyChecksRootRelativeArtifacts(t *testing.T) {
+	root := t.TempDir()
+	planted := filepath.Join(root, ".config", "sysmon", "sysmon.py")
+	writeFixture(t, planted, "# litellm backdoor placeholder\n")
+
+	s := New(root, false)
+	s.Only = true
+	findings, _ := s.Run()
+
+	var hit bool
+	for _, f := range findings {
+		if f.Check == "known-artifact" && f.Path == planted {
+			hit = true
+		}
+		if !strings.HasPrefix(f.Path, root) && f.Path != "content" && f.Path != "dependencies" {
+			t.Errorf("-only reported a path outside its root: %+v", f)
+		}
+	}
+	if !hit {
+		t.Errorf("artifact inside the root was not reported: %+v", findings)
+	}
+}
+
 // The system Python paths are fixed machine-wide locations, not directories
 // the user pointed at, so -only must not read them either. The count is the
 // assertion: a system site-packages is usually clean, so the leak produces no

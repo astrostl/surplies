@@ -838,7 +838,7 @@ func (s *Scanner) checkNpmCLI() {
 	for _, pattern := range NpmCLIGlobs(s.HomeDir) {
 		for _, dir := range s.persistenceDirs(filepath.Dir(pattern)) {
 			path := filepath.Join(dir, filepath.Base(pattern))
-			if seen[path] {
+			if seen[path] || !s.pathInScope(dir) {
 				continue
 			}
 			seen[path] = true

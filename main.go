@@ -62,7 +62,7 @@ func runScan() int {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&only, "only", false, "restrict the scan to -root; skips home and all machine-wide checks")
+	flag.BoolVar(&only, "only", false, "confine the scan to -root; machine-wide checks run only inside those roots")
 	flag.Usage = printUsage
 	flag.Parse()
 	if flag.NArg() != 0 {

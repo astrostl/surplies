@@ -55,6 +55,40 @@ func (s *Scanner) rootVisitor(absolute, resolved string, walked map[string]bool,
 	}
 }
 
+// Several fixed-path checks are half machine-anchored (/Applications,
+// /usr/lib, DefaultPersistenceRoots) and half home-anchored (~/Library/
+// LaunchAgents, ~/.node_modules, shell startup files). Under -only the first
+// -root takes home's place, so the home-anchored half resolves inside the tree
+// the user asked for and belongs in the run; the machine-anchored half does
+// not. Filter individual candidates rather than dropping whole phases, so the
+// phase reports what it actually did. Without -only everything is in scope and
+// this is a no-op.
+func (s *Scanner) pathInScope(path string) bool {
+	if !s.Only {
+		return true
+	}
+	if s.scopeRoots == nil {
+		s.scopeRoots = resolvedScanRoots(append([]string{s.HomeDir}, s.ExtraRoots...))
+	}
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	// A candidate that does not exist cannot be resolved; its absolute spelling
+	// still decides scope, and an existing one is compared both ways so a
+	// symlinked root (/tmp on macOS) matches either spelling.
+	resolved := absolute
+	if target, err := filepath.EvalSymlinks(absolute); err == nil {
+		resolved = target
+	}
+	for _, root := range s.scopeRoots {
+		if pathWithin(root, absolute) || pathWithin(root, resolved) {
+			return true
+		}
+	}
+	return false
+}
+
 func resolveScanRoot(root string) (absolute, resolved string, err error) {
 	absolute, err = filepath.Abs(root)
 	if err != nil {

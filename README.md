@@ -59,13 +59,18 @@ surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
 ```
 
-`-only` narrows the scan to the `-root` paths given and skips every
-machine-wide phase — fixed artifact paths, persistence roots, system Python
-paths, live connections and temp directories. It refuses without `-root` rather than
-falling back to home, and both the run header and the phase lines name what
-was skipped. It is for one-off checks of a single tree, not for concluding a
-machine is clean: a `-only` run that finds nothing says nothing about
-persistence, artifacts or connections.
+`-only` confines the scan to the `-root` paths given. Every check is filtered
+by that scope rather than switched off wholesale: live connections and the
+fixed system Python paths are skipped outright, and the fixed artifact,
+persistence, npm-CLI, startup and temp paths run only where they fall inside a
+requested root. Since `-only` puts the first `-root` in home's place, the
+home-relative half of those checks resolves inside the tree you named — so
+pointing it at an extracted home backup still reports LaunchAgents, startup
+files and dropped artifacts found there. It refuses without `-root` rather than
+falling back to home, and both the run header and the phase lines say what ran
+and what was skipped. It is for one-off checks of a single tree, not for
+concluding a machine is clean: a `-only` run that finds nothing says nothing
+about the rest of the machine.
 
 `-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
 

@@ -37,9 +37,15 @@ func (s *Scanner) checkStartupFiles() {
 }
 func (s *Scanner) inspectStartupPaths(files, dirs []string) {
 	for _, path := range files {
+		if !s.pathInScope(path) {
+			continue
+		}
 		s.checkStartupFile(path, true)
 	}
 	for _, dir := range dirs {
+		if !s.pathInScope(dir) {
+			continue
+		}
 		if _, err := os.Stat(dir); os.IsNotExist(err) {
 			continue
 		}

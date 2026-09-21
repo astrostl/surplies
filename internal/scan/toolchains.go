@@ -19,6 +19,9 @@ func extraToolchainPath(path string) bool {
 }
 func (s *Scanner) checkExtraToolchains() {
 	dir := filepath.Join(s.HomeDir, ".local", "share", "claude", "versions")
+	if !s.pathInScope(dir) {
+		return
+	}
 	entries, err := s.readDir(dir)
 	if err != nil {
 		s.persistenceError(dir, err)

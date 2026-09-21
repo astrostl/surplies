@@ -87,6 +87,8 @@ type Scanner struct {
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
+	// scopeRoots caches the resolved roots pathInScope compares against.
+	scopeRoots []string
 	// Only restricts the run to the roots the user named: the machine-wide
 	// phases (fixed artifact paths, persistence roots, system Python paths,
 	// live connections, temp dirs) are skipped entirely, because none of them is anchored in the
@@ -187,7 +189,7 @@ func (s *Scanner) printRunHeader() {
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if s.Only {
-		s.progress("Machine-wide checks skipped: artifact paths, persistence roots, system Python paths, connections, temp dirs\n")
+		s.progress("Machine-wide checks skipped: live connections, system Python paths; fixed artifact, persistence and temp paths are checked only where they fall inside the given roots\n")
 	} else if present := existingPersistenceRoots(); len(present) > 0 {
 		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
 	}
@@ -203,21 +205,22 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 
 	// Phase 1: Check known malicious artifacts (fast, fixed paths) and the
 	// global npm CLI entrypoint, which lives outside the home directory.
-	// Every check here is anchored at a fixed system or home path, so -only
-	// skips the phase rather than reporting coverage it did not deliver.
+	// Under -only each candidate is filtered by pathInScope, so the
+	// home-anchored half — which resolves inside the requested root — still
+	// runs and the machine-anchored half does not.
 	if s.Only {
-		s.progress("[1/5] Known malicious artifacts — skipped (-only)\n")
+		s.progress("[1/5] Checking known malicious artifacts inside the given roots (-only)...\n")
 	} else {
 		s.progress("[1/5] Checking known malicious artifacts...\n")
-		s.debug.stage("artifacts/persistence")
-		s.checkArtifacts()
-		s.checkNpmCLI()
-		s.checkApplicationPersistence()
-		s.checkPersistenceRoots()
-		s.checkRuntimeStaging()
-		s.checkExtraToolchains()
-		s.checkStartupFiles()
 	}
+	s.debug.stage("artifacts/persistence")
+	s.checkArtifacts()
+	s.checkNpmCLI()
+	s.checkApplicationPersistence()
+	s.checkPersistenceRoots()
+	s.checkRuntimeStaging()
+	s.checkExtraToolchains()
+	s.checkStartupFiles()
 
 	// Phase 2: Walk home for node_modules and project-local payload artifacts
 	mode := "selected injection candidates, dependency metadata and lifecycle targets"
@@ -255,14 +258,19 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.checkNetworkIOCs()
 	}
 
-	// Phase 5: Check tmp directories for suspicious payload remnants
-	if s.Only {
-		s.progress("[5/5] Temp directories — skipped (-only)\n")
-	} else {
+	// Phase 5: Check tmp directories for suspicious payload remnants. A temp
+	// dir is a fixed machine path, but naming one with -root puts it in scope,
+	// so the phase runs whenever one of them is inside a requested root.
+	switch {
+	case !s.Only:
 		s.progress("[5/5] Checking temp directories for payload remnants...\n")
-		s.debug.stage("temp")
-		s.checkTempArtifacts()
+	case len(s.inScopeTempDirs()) > 0:
+		s.progress("[5/5] Checking temp directories inside the given roots (-only)...\n")
+	default:
+		s.progress("[5/5] Temp directories — skipped (-only: none inside the given roots)\n")
 	}
+	s.debug.stage("temp")
+	s.checkTempArtifacts()
 
 	if s.Git {
 		s.progress("[git] Checking locally available refs and history against known payload hashes...\n")
@@ -303,6 +311,9 @@ func (s *Scanner) checkArtifacts() {
 		path := c.Path
 		if !c.Absolute {
 			path = filepath.Join(s.HomeDir, c.Path)
+		}
+		if !s.pathInScope(path) {
+			continue
 		}
 
 		s.log("checking artifact: %s", path)
@@ -763,20 +774,29 @@ func obfuscationFlags(data []byte) []string {
 	return flags
 }
 
-// checkTempArtifacts looks for suspicious files in temp directories.
-func (s *Scanner) checkTempArtifacts() {
-	tmpDirs := []string{os.TempDir()}
-
+// inScopeTempDirs is the deduplicated temp-directory list this run may read:
+// every one of them by default, and only those inside a requested root under
+// -only.
+func (s *Scanner) inScopeTempDirs() []string {
+	candidates := []string{os.TempDir()}
 	if runtime.GOOS != "windows" {
-		tmpDirs = append(tmpDirs, "/tmp", "/var/tmp")
+		candidates = append(candidates, "/tmp", "/var/tmp")
 	}
-
 	seen := make(map[string]bool)
-	for _, dir := range tmpDirs {
-		if seen[dir] {
+	dirs := make([]string, 0, len(candidates))
+	for _, dir := range candidates {
+		if seen[dir] || !s.pathInScope(dir) {
 			continue
 		}
 		seen[dir] = true
+		dirs = append(dirs, dir)
+	}
+	return dirs
+}
+
+// checkTempArtifacts looks for suspicious files in temp directories.
+func (s *Scanner) checkTempArtifacts() {
+	for _, dir := range s.inScopeTempDirs() {
 		s.log("checking temp dir: %s", dir)
 
 		for _, sp := range ArtifactsTmp {
