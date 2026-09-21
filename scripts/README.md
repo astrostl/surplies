@@ -48,8 +48,13 @@ Notification behavior follows `surplies`' exit codes:
 | Exit code | Meaning | Notification title |
 |-----------|---------|-------------------|
 | `0` | Clean — no indicators found | *(none)* |
-| `1` | Warning-level findings | `Surplies: Warning` |
+| `1` | Warning-level findings, or incomplete coverage | `Surplies: Warning` |
 | `2` | Critical finding | `Surplies: Critical Finding` |
+| anything else | The scan errored or did not run | `Surplies: Warning` |
+
+Only `2` is an attack indicator. Every other nonzero code shares the neutral
+warning wording, because a coverage gap and a failed run are not findings and
+must never be announced as one.
 
 ### macOS (`notify/macos.sh`)
 
