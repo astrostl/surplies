@@ -23,7 +23,14 @@ func PrintResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 		}
 		PrintReportSummary(os.Stderr, findings, stats, invocation)
 	} else {
-		if path, err := SaveScanReport("", findings, stats, invocation); err == nil {
+		// Render the human report BEFORE saving so the saved file can embed
+		// it. The terminal order is unchanged -- the buffer is replayed to
+		// stdout below, after the "Full report saved" line, exactly where it
+		// was printed before.
+		var human strings.Builder
+		PrintHumanReport(&human, findings, stats, coverageDetails, invocation)
+
+		if path, err := SaveScanReport("", findings, stats, invocation, human.String()); err == nil {
 			fmt.Fprintf(os.Stdout, "\n-----------------------------------------------------------------------------\n\nFull report saved: %s\n", path)
 		} else {
 			fmt.Fprintf(os.Stderr, "Could not save full report: %v\n", err)
@@ -32,7 +39,7 @@ func PrintResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 		if stats.Debug != nil && stats.Debug.DebugLog != "" {
 			fmt.Fprintf(os.Stdout, "Debug log saved: %s\n", stats.Debug.DebugLog)
 		}
-		PrintHumanReport(os.Stdout, findings, stats, coverageDetails, invocation)
+		io.WriteString(os.Stdout, human.String())
 	}
 }
 

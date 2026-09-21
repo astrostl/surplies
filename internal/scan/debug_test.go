@@ -72,7 +72,7 @@ func TestDebugSavedAccounting(t *testing.T) {
 	if r.Traversal.Calls != 1 || r.Traversal.Entries != 1 || !strings.Contains(r.Files[path].Selection, "checkSourceFile") {
 		t.Fatalf("missing evidence: %+v", r)
 	}
-	report, err := SaveScanReport(root, nil, ScanStats{Debug: r}, "fixture -debug")
+	report, err := SaveScanReport(root, nil, ScanStats{Debug: r}, "fixture -debug", "")
 	if err != nil {
 		t.Fatal(err)
 	}

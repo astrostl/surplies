@@ -191,18 +191,34 @@ func scopeReportCategory(f Finding) string {
 // Preserve every diagnostic from this run without requiring another scan.
 // CreateTemp uses a private 0600 file; reports contain paths and findings, not
 // inspected source contents. JSON stdout mode already preserves these records.
-func SaveScanReport(dir string, findings []Finding, stats ScanStats, invocation string) (string, error) {
+// summary is the human-readable block this run printed to the terminal. It is
+// stored verbatim so the report is self-contained: whoever ends up reading the
+// file -- an MDM inventory record, a ticket attachment, a colleague -- gets the
+// same plain-language verdict and the loud coverage banners, not just the
+// structured findings they would have to re-derive. Pass "" to omit it.
+func SaveScanReport(dir string, findings []Finding, stats ScanStats, invocation, summary string) (string, error) {
 	f, err := os.CreateTemp(dir, "surplies-report-*.json")
 	if err != nil {
 		return "", err
 	}
+	// Reproduce the terminal output verbatim: everything the run printed after
+	// the separator rule, starting with the saved-report path. Only this
+	// function knows that path, so it prepends the line rather than making the
+	// caller guess a filename it has not been given yet.
+	if summary != "" {
+		summary = fmt.Sprintf("\n\nFull report saved: %s\n%s", f.Name(), summary)
+	}
 	enc := json.NewEncoder(f)
 	enc.SetIndent("", "  ")
+	// Summary goes LAST. It is many lines of prose, and putting it ahead of the
+	// structured fields pushes stats and findings off the first screen of
+	// anyone reading the raw file.
 	err = enc.Encode(struct {
 		Invocation string    `json:"invocation"`
 		Stats      ScanStats `json:"stats"`
 		Findings   []Finding `json:"findings"`
-	}{invocation, stats, findings})
+		Summary    string    `json:"summary,omitempty"`
+	}{invocation, stats, findings, summary})
 	closeErr := f.Close()
 	if err == nil {
 		err = closeErr

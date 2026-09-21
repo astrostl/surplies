@@ -124,7 +124,7 @@ func TestScopePathsStayInSavedReportNotTerminal(t *testing.T) {
 	if !strings.Contains(out.String(), "Browser cache directories excluded: 100 notice(s)") {
 		t.Fatal(out.String())
 	}
-	path, err := SaveScanReport(t.TempDir(), findings, ScanStats{}, "surplies -a")
+	path, err := SaveScanReport(t.TempDir(), findings, ScanStats{}, "surplies -a", "")
 	if err != nil {
 		t.Fatal(err)
 	}
