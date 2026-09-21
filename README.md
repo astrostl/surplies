@@ -59,7 +59,7 @@ surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
 surplies -skip-tmproots # do not walk the temp directories (staging names still checked)
-surplies -no-pause    # never wait for ENTER before exiting (Windows only; see below)
+surplies -no-pause    # never wait for ENTER before exiting (Windows only, SURPLIES_NO_PAUSE equivalent; see below)
 ```
 
 A default scan walks your home directory and your own temp directories —
