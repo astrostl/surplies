@@ -12,7 +12,7 @@ The scanner runs five phases sequentially:
 2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root (`-skip-tmproots` drops the temp directories from this walk, keeping any named with `-root`, and reports a `scan-limited` notice); dependency checks select declared entrypoints and known payload candidates
 3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
 4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
-5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
+5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list (skipped entirely when the scan has already spent its stall budget: the storage is not answering, and a longer partial report is not what the reader needs)
 
 ## External commands
 

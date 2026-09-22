@@ -37,13 +37,30 @@ the push there is no taking it back.
 
 ## Steps
 
-### 1. Decide the version
+### 1. Establish what the release covers
+
+A release is **everything since the previous tag** — every commit already on
+`origin/main`, plus whatever is still uncommitted in the working tree. Not the
+last thing you worked on, and not only the commits from the current session.
+Commits can arrive from another machine, another session, or a hook, so start by
+fetching and looking at the whole range rather than at what you remember doing:
+
+```sh
+git fetch origin
+git log --oneline $(git describe --tags --abbrev=0)..origin/main
+git status --short
+```
+
+Everything those three commands print is in scope for the documentation audit in
+step 2 and for the release notes in step 6.
+
+### 1b. Decide the version
 
 Use [semantic versioning](https://semver.org/). For IOC-only additions (new packages/hashes), bump the patch version. For new check types, bump minor.
 
 ### 2. Sync the documentation with changes since the last release
 
-Diff the scanner package against the previous release tag to enumerate everything that needs to be reflected in `README.md` and `docs/`:
+Diff the scanner package against the previous release tag — the whole range from step 1, not one commit — to enumerate everything that needs to be reflected in `README.md` and `docs/`:
 
 ```sh
 git diff $(git describe --tags --abbrev=0) -- internal/scan main.go

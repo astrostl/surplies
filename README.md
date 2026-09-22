@@ -16,7 +16,7 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
 
-**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.14.1) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
+**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.15.0) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
 
 **Go:**
 

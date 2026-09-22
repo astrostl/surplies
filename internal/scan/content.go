@@ -264,6 +264,31 @@ func (s *Scanner) inheritedScopeRoots() []string {
 	return s.scopeRootList()
 }
 
+// openForRead screens a selected path and opens it. A nil file with a nil error
+// means the path was deliberately not read and is not a coverage failure here.
+//
+// Stat before opening, not after: opening a FIFO blocks until a writer appears,
+// so a named pipe anywhere in a scanned tree would cost a full ReadTimeout.
+// Nothing but a regular file has content to inspect, and a placeholder whose
+// bytes are not on local disk must not be opened at all, because reading one
+// asks the sync provider to fetch it. statFile is indirected for tests, which
+// need a FIFO to stay readable to simulate an unresponsive mount.
+func (s *Scanner) openForRead(path string) (*os.File, error) {
+	info, err := statFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		s.debug.event("skip-irregular", path, 0, 0)
+		return nil, nil
+	}
+	if isDataless(info) {
+		s.recordDataless(path)
+		return nil, nil
+	}
+	return os.Open(path)
+}
+
 func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect func(*Scanner, []byte), optional, source bool) []byte {
 	s.debug.selection(path)
 	if s.stallBudgetSpent() {
@@ -293,25 +318,12 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 			s.debug.fileDone(path, fileStats, readTime, inspectTime, time.Since(started))
 			done <- result
 		}()
-		// Stat before opening, not after. Opening a FIFO blocks until a
-		// writer appears, so a named pipe anywhere in a scanned tree costs a
-		// full ReadTimeout and three of them abandon the subtree. Nothing but
-		// a regular file has content to inspect, and the stat is a syscall
-		// against a five-second hang. Indirected for tests, which need a FIFO
-		// to stay readable to simulate an unresponsive mount.
-		if info, err := statFile(path); err != nil {
-			result = fileResult{err: err}
-			return
-		} else if !info.Mode().IsRegular() {
-			s.debug.event("skip-irregular", path, 0, 0)
-			return
-		} else if isDataless(info) {
-			s.recordDataless(path)
-			return
-		}
-		f, err := os.Open(path)
+		f, err := s.openForRead(path)
 		if err != nil {
 			result = fileResult{err: err}
+			return
+		}
+		if f == nil {
 			return
 		}
 		opened.Store(f)
