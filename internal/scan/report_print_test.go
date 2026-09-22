@@ -149,10 +149,11 @@ func TestCoverageCategoriesAndCounts(t *testing.T) {
 	if got := coverageSummary(groups); got != "Coverage incomplete: 13 size limit exceeded, 1 permission denied." {
 		t.Fatal(got)
 	}
-	s.recordStall("/cloud", "/cloud/file.js")
+	s.recordTimeout("/cloud/file.js")
+	s.recordDataless("/cloud/placeholder.js")
 	s.scanError("/missing", os.ErrNotExist)
 	groups = groupCoverage(s.Findings)
-	if len(groups["timed out"]) != 1 || len(groups["other errors"]) != 1 {
+	if len(groups["timed out"]) != 1 || len(groups["not downloaded"]) != 1 || len(groups["other errors"]) != 1 {
 		t.Fatalf("missing failure categories: %+v", groups)
 	}
 }

@@ -92,14 +92,14 @@ type Scanner struct {
 	rawCacheSkipped map[string]bool
 	linkNotices     map[string]bool
 	stats           ScanStats
-	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
-	// is abandoned after StallThreshold strikes instead of costing
-	// ReadTimeout on every file beneath it. Guarded by mu.
-	stallCounts map[string]int
-	// stallSkipped counts the reads abandoned under each stalled subtree, so
-	// the finding can say how much went unread instead of standing for an
-	// unbounded remainder.
-	stallSkipped map[string]int
+	// timeLostToStalls accumulates the wall-clock time this scan has spent on
+	// reads that never returned. Once it reaches StallBudget the scan stops
+	// reading files entirely: readsAbandoned latches true and readsSkipped
+	// counts what went unread afterwards, so the finding can say how much was
+	// lost instead of standing for an unbounded remainder. Guarded by mu.
+	timeLostToStalls time.Duration
+	readsAbandoned   bool
+	readsSkipped     int
 	// Explicit persistence checks bypass dependency boundaries; avoid reporting
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
@@ -310,7 +310,11 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.checkNetworkIOCs()
 	}
 
-	if s.Git {
+	// A scan that spent its whole stall budget stops here rather than running
+	// Git over the same unresponsive storage. Git bounds itself per repository,
+	// but the report is already untrustworthy and the reader's next move is to
+	// fix the machine and re-run, not to read a longer partial result.
+	if s.Git && !s.stallBudgetSpent() {
 		s.phase("Scanning locally available Git refs and history")
 		s.debug.stage("git")
 		s.scanGitRepositories()
