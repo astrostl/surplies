@@ -45,7 +45,14 @@ type Finding struct {
 	// rollup collapses a check that routinely fires across dozens of packages
 	// into one human-report block labelled by subject instead of one block and
 	// one path list per subject. JSON and the saved report keep every record.
-	rollup   string
+	rollup string
+	// cause is the shared explanation behind a finding whose Detail also
+	// carries evidence unique to one location -- a Git blob ID, a historical
+	// path. Grouping on the whole Detail would print the same explanation once
+	// per location; grouping on cause prints it once and hangs the evidence
+	// off each path. Empty for the ordinary case where Detail is the cause.
+	cause    string
+	evidence string
 	Check    string   `json:"check"`
 	Severity Severity `json:"severity"`
 	Path     string   `json:"path"`
@@ -80,6 +87,7 @@ type Scanner struct {
 	// machine legitimately talks to, which would report as a critical.
 	Resolve         bool
 	contentDirs     map[string]bool
+	gitHistory      map[string]*gitHistoryHit
 	dependencyDirs  map[string]bool
 	rawCacheSkipped map[string]bool
 	linkNotices     map[string]bool
@@ -143,6 +151,7 @@ type ScanStats struct {
 	GitBlobsChecked         int
 	GitBlobsConsidered      int
 	GitBlobsIdentified      int
+	GitBlobsInspected       int
 	GitCacheMarkersSkipped  int
 	NodeModulesFound        int
 	PackagesScanned         int

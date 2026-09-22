@@ -82,7 +82,17 @@ func printGitSummary(out io.Writer, stats ScanStats) {
 	if stats.GitPath != "" {
 		fmt.Fprintf(out, "Git binary: %s (version %s)\n", stats.GitPath, gitVersionLabel(stats.GitVersion))
 	}
-	fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified)
+	fmt.Fprintf(out, "Git: %d/%d repositories completed; %d blobs considered, %d candidate blobs hashed, %d matched by object identity, %d inspected by name.\n", stats.GitRepositoriesScanned, stats.GitRepositoriesFound, stats.GitBlobsConsidered, stats.GitBlobsChecked, stats.GitBlobsIdentified, stats.GitBlobsInspected)
+	// An older Git still runs the size-matched history scan, so the line above
+	// is real coverage -- but the filename-gated checks it did not run are the
+	// ones that find the config-append landing. Say which half was missing
+	// rather than letting the counts imply a whole history scan.
+	if stats.GitRepositoriesFound > 0 && stats.GitVersion != "" && !gitPathsSupported(stats.GitVersion) {
+		if old, _ := gitTooOld(stats.GitVersion); !old {
+			fmt.Fprintf(out, "Git history covered payload sizes and object identities only: %s cannot emit object paths (needs %d.%d), so the filename-gated history checks did not run.\n",
+				stats.GitVersion, GitObjectPathsVersion[0], GitObjectPathsVersion[1])
+		}
+	}
 	if old, _ := gitTooOld(stats.GitVersion); old && stats.GitRepositoriesFound > 0 {
 		fmt.Fprintf(out, "\n*** GIT IS TOO OLD TO INSPECT REPOSITORIES! *** %s is %s; %d.%d or newer is required, so this report covers files only\n",
 			stats.GitPath, stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1])
@@ -124,37 +134,63 @@ func PrintHumanReport(out io.Writer, findings []Finding, stats ScanStats, detail
 			continue
 		}
 		fmt.Fprintf(out, "\n%s (%d)\n", section.title, len(selected))
-		groups := make(map[string][]Finding)
-		var keys []string
-		for _, f := range selected {
-			key := f.Check + "\x00" + f.Detail
-			if f.rollup != "" {
-				key = f.Check
-			}
-			if _, ok := groups[key]; !ok {
-				keys = append(keys, key)
-			}
-			groups[key] = append(groups[key], f)
-		}
-		sort.Strings(keys)
+		groups, keys := groupIndicators(selected)
 		for _, key := range keys {
 			group := groups[key]
 			if group[0].rollup != "" {
 				printRollupGroup(out, group)
 				continue
 			}
-			fmt.Fprintf(out, "\n  %s (%d location(s))\n    %s\n", reportCheckTitle(group[0].Check), len(group), group[0].Detail)
-			paths := make([]string, 0, len(group))
-			for _, f := range group {
-				paths = append(paths, f.Path)
-			}
-			sort.Strings(paths)
-			for _, path := range paths {
-				fmt.Fprintf(out, "    - %s\n", path)
-			}
+			printIndicatorGroup(out, group)
 		}
 	}
 	printReportDiagnostics(out, findings, details)
+}
+
+// groupIndicators collects findings that share an explanation, in first-seen
+// order of the sorted key. A finding carrying per-location evidence groups on
+// its cause instead of its whole detail, so one explanation is not printed once
+// per blob; see the cause field on Finding.
+func groupIndicators(selected []Finding) (map[string][]Finding, []string) {
+	groups := make(map[string][]Finding)
+	var keys []string
+	for _, f := range selected {
+		key := f.Check + "\x00" + f.Detail
+		if f.cause != "" {
+			key = f.Check + "\x00" + f.cause
+		}
+		if f.rollup != "" {
+			key = f.Check
+		}
+		if _, ok := groups[key]; !ok {
+			keys = append(keys, key)
+		}
+		groups[key] = append(groups[key], f)
+	}
+	sort.Strings(keys)
+	return groups, keys
+}
+
+// printIndicatorGroup prints one shared explanation followed by its paths, each
+// with whatever evidence belongs to that path alone.
+func printIndicatorGroup(out io.Writer, group []Finding) {
+	shared := group[0].Detail
+	if group[0].cause != "" {
+		shared = group[0].cause
+	}
+	fmt.Fprintf(out, "\n  %s (%d location(s))\n    %s\n", reportCheckTitle(group[0].Check), len(group), shared)
+	lines := make([]string, 0, len(group))
+	for _, f := range group {
+		line := f.Path
+		if f.evidence != "" {
+			line += "\n        " + f.evidence
+		}
+		lines = append(lines, line)
+	}
+	sort.Strings(lines)
+	for _, line := range lines {
+		fmt.Fprintf(out, "    - %s\n", line)
+	}
 }
 
 // Some checks describe ordinary ecosystem shape rather than anything to look

@@ -62,6 +62,69 @@ For each change, update the matching section:
 
 Commit the documentation updates as part of the release commit in step 4.
 
+### 2b. Audit every Markdown file for accuracy, then get the developer's sign-off
+
+The list above is change-driven: it catches what this release added. It does not
+catch what an earlier release quietly made untrue. Documentation rots in one
+direction — the code moves and the prose stays — and none of it is covered by
+`make lint` or the test suite, so nothing fails when it goes wrong. A reader
+deciding whether this tool covers their machine is reading the prose, not the
+source.
+
+Read every Markdown file in the repository against the current code, not against
+memory of it:
+
+```sh
+git ls-files '*.md'
+```
+
+That is `README.md`, `CLAUDE.md`, this file, everything under `docs/`, plus
+`scripts/README.md` and the skill definitions under `.claude/skills/`. The last
+two are easy to forget and no less wrong when stale — a skill file is an
+instruction future work is written against, the same as `CLAUDE.md`.
+
+For each, verify:
+
+- **Counts and totals.** "all N checks", "N documented major supply chain
+  attacks", any other number written as a word in prose. These drift silently
+  and are the most common stale claim.
+- **Every documented check still exists, and every check is documented.** Diff
+  the `Check:` strings in `internal/scan` against the numbered sections in
+  `docs/CHECKS.md` and the README's check table, in both directions. A check
+  that fires in a real scan with no section is a gap in a table that claims to
+  be complete.
+- **Version and threshold claims.** Required tool versions, size and time
+  limits, percentage thresholds. Confirm each against the constant it describes.
+- **Internal anchors resolve.** Every `docs/CHECKS.md#n-name-severity` link
+  breaks the moment a section is renumbered, and Markdown links fail silently.
+  Check them with the script below rather than by eye.
+- **`CLAUDE.md` still describes the code it constrains.** It is the one file no
+  user reads and every future change is written against, so a stale rule there
+  causes the next wrong change rather than one wrong impression.
+- **Sample output matches what the binary prints.** Summary lines and example
+  reports go stale whenever a counter or banner is reworded.
+
+Run from the repository root:
+
+```sh
+python3 - <<'EOF'
+import glob, re
+heads = {re.sub(r'[^a-z0-9 -]', '', h.lower()).replace(' ', '-')
+         for h in re.findall(r'^## (.+)$', open('docs/CHECKS.md').read(), re.M)}
+for f in glob.glob('docs/*.md') + ['README.md', 'CLAUDE.md']:
+    for a in re.findall(r'CHECKS\.md#([a-z0-9-]+)', open(f).read()):
+        if a not in heads:
+            print('BROKEN', f, a)
+EOF
+```
+
+**Then stop and ask the developer to confirm.** Show what changed and what you
+verified as still accurate, and wait for an explicit yes before continuing to
+step 3. Do not fold a documentation rewrite into a release commit on your own
+judgment: the developer is the only one who knows whether a rewording is a
+correction or a change in meaning, and [Rule zero](#rule-zero-main-is-the-homebrew-tap)
+means the answer cannot be revised after the push.
+
 ### 3. Smoke-test detection end-to-end
 
 Confirm that the binary you're about to ship actually detects a known bad version, and that it stops detecting it once the fixture is removed. This catches the class of bug where a refactor silently breaks the npm or Python scanner phase.

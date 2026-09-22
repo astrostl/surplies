@@ -49,7 +49,7 @@ func PrintResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 // counting one as an indicator would tell the reader this machine shows signs
 // of an attack, which is a different and false statement.
 func isCoverageCheck(check string) bool {
-	return check == "scan-incomplete" || check == "git-too-old"
+	return check == "scan-incomplete" || check == "git-too-old" || check == "git-too-old-for-filenames"
 }
 
 // Coverage limitations are diagnostics, not indicators of compromise. Keep

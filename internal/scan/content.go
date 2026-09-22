@@ -646,22 +646,25 @@ func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
 	return false
 }
 
+// Matching is done over the bytes rather than a string copy of them: this
+// runs once per blob across a repository's whole history, where the copy
+// alone came to hundreds of megabytes on a large repository.
 func payloadSignature(data []byte) (PayloadSignature, bool) {
-	content := string(data)
-	var lower string
+	var lower []byte
 	lowerReady := false
 	caseInsensitiveContains := func(needle string) bool {
 		if !lowerReady {
-			lower = strings.ToLower(content)
+			lower = bytes.ToLower(data)
 			lowerReady = true
 		}
-		return strings.Contains(lower, strings.ToLower(needle))
+		return bytes.Contains(lower, []byte(strings.ToLower(needle)))
 	}
+	contains := func(needle string) bool { return bytes.Contains(data, []byte(needle)) }
 	for _, sig := range KnownPayloadSignatures {
-		if sig.Requires != "" && !strings.Contains(content, sig.Requires) {
+		if sig.Requires != "" && !contains(sig.Requires) {
 			continue
 		}
-		if strings.Contains(content, sig.Signature) ||
+		if contains(sig.Signature) ||
 			(strings.HasPrefix(sig.Signature, "0xa322") && caseInsensitiveContains(sig.Signature)) ||
 			(sig.Signature == "x-payload-b64" && caseInsensitiveContains(sig.Signature)) {
 			return sig, true
@@ -785,24 +788,31 @@ func hasInlinePadding(data []byte) bool {
 // deliberate concealment step, and it survives cleanup of the file itself.
 func (s *Scanner) checkGitignore(path string) {
 	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
-		for line := range strings.Lines(string(data)) {
-			trimmed := strings.TrimSpace(line)
-			for _, entry := range GitignoreInjectedLines {
-				if trimmed == entry.Signature {
-					local.addFinding(Finding{
-						Check:    "gitignore-injection",
-						Severity: SevCritical,
-						Path:     path,
-						Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
-					})
-					return
-				}
-			}
-		}
+		local.inspectGitignore(path, data)
 	}) != nil {
 		s.stats.FilesChecked++
 	}
 
+}
+
+// inspectGitignore is the content half of checkGitignore, split out so the
+// same whole-line comparison can run against a Git blob body, which arrives
+// as bytes off a pipe rather than from a file on disk.
+func (s *Scanner) inspectGitignore(path string, data []byte) {
+	for line := range strings.Lines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		for _, entry := range GitignoreInjectedLines {
+			if trimmed == entry.Signature {
+				s.addFinding(Finding{
+					Check:    "gitignore-injection",
+					Severity: SevCritical,
+					Path:     path,
+					Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
+				})
+				return
+			}
+		}
+	}
 }
 
 // scanDirFiles runs content checks over the files directly inside one
