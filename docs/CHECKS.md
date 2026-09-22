@@ -501,7 +501,7 @@ Matches blobs against the sized entries in the [active hash list](ATTACKS.md#act
 
 Object names require [Git 2.50](https://github.com/git/git/blob/master/Documentation/RelNotes/2.50.0.adoc), whose `rev-list -z` emits them NUL-framed. The legacy format joins the object ID and the path with a space on a newline-terminated line, and a path may contain either, so an older Git is given `--no-object-names` and the size-matched half runs alone — reported as [`git-too-old-for-filenames`](#27-git-too-old-for-filenames-critical), never as silent coverage.
 
-**What is deliberately not run against history.** The general heuristics — `suspicious-source-execution`, `unicode-concealment`, `loader-structure`, [`padded-source-file`](#17-padded-source-file-warn) — stay on the working tree. History holds every revision of every file, so one pattern in one file becomes a warning per revision, pointing at a commit nobody is going to edit. Measured against a 49,000-blob repository they produced 305 warnings and no indicator. Only checks that name a specific published payload carry over, because those stay true however many revisions hold them.
+**What is deliberately not run against history.** The general heuristics — [`suspicious-source-execution`](#29-suspicious-source-execution-warn), [`unicode-concealment`](#30-unicode-concealment-warn), [`loader-structure`](#31-loader-structure-warn), [`padded-source-file`](#17-padded-source-file-warn) — stay on the working tree. History holds every revision of every file, so one pattern in one file becomes a warning per revision, pointing at a commit nobody is going to edit. Measured against a 49,000-blob repository they produced 305 warnings and no indicator. Only checks that name a specific published payload carry over, because those stay true however many revisions hold them.
 
 **Selection is the filesystem rule, not a broader one.** A history blob is read when its name is one the filesystem walk would open: a payload or artifact filename, `.gitignore`, a `*.config.*` JavaScript file, a documented injectable source name, a font, or a `.vscode`/`.claude` settings file. A source extension never alone selects a blob, exactly as it never alone selects a file on disk. Selecting by extension instead reads every `.py`, `.js` and `.json` ever committed, which on a real machine meant reading a developer's own IOC research scripts out of history and reporting their C2 constants as indicators. Size-matched blobs still need no name, so a renamed dropper stays reachable.
 
@@ -530,3 +530,130 @@ Reports an installed Git from 2.45 through 2.49 when the scan found at least one
 ## 28. `scan-limited` (INFO)
 
 Reports expected scope limits, such as shallow Git repositories whose older history is not available locally, or the temp directories a `-skip-tmproots` run did not walk. These notices are grouped by shared explanation in human output and retained individually in JSON. They are not attack indicators or scan failures and do not change the exit status. Actual inspection failures remain `scan-incomplete` warnings.
+
+## 29. `suspicious-source-execution` (WARN)
+
+Flags source that decodes and executes, pipes a download into a shell, or spawns a hidden detached child.
+
+**What it looks for:**
+
+| Pattern | Match |
+|---------|-------|
+| Decode-and-execute | `eval(` or `Function(` wrapping `Buffer.from`, `atob`, `unescape`, or `decodeURIComponent` |
+| Download-to-shell | `curl` or `wget` piped to `sh`, `bash`, or `zsh` on one line, within 200 characters |
+| Hidden detached spawn | `spawn(` with both `detached: true` and `windowsHide: true` nearby, in either order |
+
+**How it works:** Fixed-width ASCII escapes (`\uXXXX`, `\xXX`) are decoded to their printable characters first, so an escaped `eval` still matches; nothing is ever evaluated or unpacked. `eval` on its own, a public RPC URL on its own, and an ordinary `spawn` do not qualify — each pattern requires the correlation above.
+
+**Why it is WARN:** These shapes are common in minified bundles, installers and build tooling as well as in malware. A hit says static review is required; it does not establish that anything ran. This is a general source heuristic, so it runs against the working tree only and never against Git history, where one pattern would otherwise become a warning per revision.
+
+## 30. `unicode-concealment` (WARN)
+
+Flags source that hides code from the reader with invisible Unicode, the GlassWorm technique.
+
+**What it looks for:**
+
+| Signal | Match |
+|--------|-------|
+| Unbalanced bidi controls | `U+202A`/`U+202B`/`U+202D`/`U+202E` or the isolates `U+2066`–`U+2068` left unterminated, or a stray `U+202C`/`U+2069` |
+| Variation-selector run | Eight or more consecutive selectors from either range: `U+FE00`–`U+FE0F` and `U+E0100`–`U+E01EF` |
+| Concealed joiner | `U+200C` or `U+200D` between two ASCII identifier characters |
+
+**How it works:** Each line is scanned separately, keeping a stack of open bidi controls. Ordinary emoji variation selectors, balanced right-to-left text, private-use glyphs, and joiners between non-ASCII scripts do not qualify. There is no long-line cutoff.
+
+Source attack: [GlassWorm](ATTACKS.md#glassworm-unicode-concealment). Working tree only, for the same reason as `suspicious-source-execution`.
+
+## 31. `loader-structure` (WARN)
+
+Flags an `import.meta.url` expression invoked immediately on a relative `.cjs` sidecar — the published shape of a loader that hands control to a CommonJS module sitting beside it.
+
+**How it works:** Matched on the escape-normalized text, and only in a file that has an `import` in it. Legitimate ESM-to-CJS loaders exist, so the finding names the referenced module for inspection rather than asserting compromise.
+
+## 32. `loader-variant` (WARN)
+
+Flags an assignment to `global['_V']` or `global['!']`, the published injection form, across quoting and spacing variants.
+
+**How it works:** Checked only when the file did not already match a `payload-signature` constant, so one injection produces one finding rather than two. The match is a community-documented form, reported as context to review rather than inheriting the upstream severity.
+
+## 33. `correlated-loader-markers` (WARN)
+
+Flags a community-documented build marker that appears alongside loader or decode/execute structure.
+
+**What it looks for:**
+
+| Marker | Match |
+|--------|-------|
+| Build tag | `/*C######*/`, `/*M######*/`, or `/*RS######*/`, with an optional trailing letter |
+| Named marker | `__inzV` or `app-vscode-eval` |
+
+**How it works:** A marker alone is never a finding — the file must also carry loader structure, the `loader-variant` assignment, or a decode-and-execute call. The `C` series is matched in addition to the `M` and `RS` prefixes ByteGuard publishes, because it is the larger half of the observed markers and a date tag costs the operator nothing to change.
+
+## 34. `escaped-execution` (WARN)
+
+Flags a run of eight or more consecutive `\u00XX` ASCII escapes in a file that also has `eval(`, `Function(`, or loader structure in it.
+
+**How it works:** Matched against the raw bytes, before escape normalization, so what it sees is the concealment itself. Escaping printable ASCII is a way of writing identifiers that reviewers and greps do not read; dynamic execution in the same file is what makes it worth reporting.
+
+## 35. `asset-format-mismatch` (WARN)
+
+Flags a file with a binary asset extension whose bytes do not match the format it claims.
+
+**What it looks for:**
+
+| Extension | Expected header |
+|-----------|-----------------|
+| `.png` | `89 50 4E 47 0D 0A 1A 0A` |
+| `.jpg`, `.jpeg` | `FF D8 FF` |
+| `.gif` | `GIF87a` or `GIF89a` |
+| `.webp` | `RIFF` with `WEBP` at offset 8 |
+| `.ico` | `00 00 01 00` |
+| `.wasm` | `00 61 73 6D 01 00 00 00` |
+| `.pdf` | `%PDF-` |
+| `.zip` | `PK\x03\x04`, `PK\x05\x06`, or `PK\x07\x08` |
+| `.mp3` | `ID3`, or an MPEG frame sync |
+| `.mp4` | `ftyp` at offset 4 |
+
+**How it works:** Leading NUL and whitespace padding is removed before the check, so a padded prefix does not hide the real header. A file whose remaining bytes are text is reported as a possible disguised script; anything else is reported as an unrecognized or truncated header, which may simply be a corrupt file or an unsupported variant. HTML and XML bodies are excluded, because a failed download saved under the asset's name is the common benign case. Font extensions are handled by the critical [`fake-font-payload`](#15-fake-font-payload-critical) check instead.
+
+**Why it is WARN:** These headers are format hints, not validators, and the formats here are not asserted to be confirmed carriers for any campaign. It is a masquerade check: a file that is not what its name says deserves a look.
+
+## 36. `disguised-file-execution-task` (WARN)
+
+Flags an editor task that runs an interpreter on a binary-named file.
+
+**How it works:** Parses `.vscode/tasks.json` (comments and trailing commas allowed) and evaluates each task, including its `windows`, `linux`, and `osx` overrides. The interpreters recognized are `node`, `python`, `python3`, `sh`, `bash`, `zsh`, `powershell`, `pwsh`, `cmd`, `deno`, and `bun`, with or without a `.exe` suffix and at any path. The target must carry an asset extension from the table above, a font extension, or `.bin`, `.dat`, or `.svg`. Common pass-through arguments (`--`, `--no-warnings`, `-File`, `/c`, `run`) are skipped; an option with unknown arity ends the search rather than being guessed past. Unlike [`font-execution-task`](#23-font-execution-task-critical), this does not require `folderOpen`, so a manually run task is still reported — and the automatic Node-on-font case remains the critical finding rather than this one.
+
+## 37. `workspace-setting-context` (WARN or INFO)
+
+Reports `.vscode/settings.json` preferences that make automatic execution easier, as context rather than as compromise.
+
+**What it looks for:**
+
+| Setting | Reported when |
+|---------|---------------|
+| `task.allowAutomaticTasks` | `"on"` — automatic tasks are enabled |
+| `security.workspace.trust.enabled` | `false` — the workspace requests trust disablement |
+| `security.workspace.trust.untrustedFiles` | `"open"` — the workspace requests opening untrusted files |
+| `terminal.integrated.automationProfile.{osx,linux,windows}` | present and not `null` — a custom automation profile |
+
+**How it works:** One matching preference is INFO; two or more together are a WARN. Current VS Code accepts `"on"` and `"off"` for `task.allowAutomaticTasks`, not a boolean, so any other value is reported as INFO and no bypass is inferred from it. Trust settings are scoped by the editor's own rules, so what a workspace requests is not necessarily what takes effect — the finding says to review the effective settings, and never claims a trust bypass.
+
+## 38. `startup-content` (WARN)
+
+Flags startup and persistence files that reference documented staging paths or C2 addresses.
+
+**How it works:** Reads shell startup files (`.zshrc`, `.zprofile`, `.bashrc`, `.bash_profile`, `.profile`), macOS `LaunchAgents`/`LaunchDaemons`, Linux systemd user units, and the `cron.d`/`cron.{daily,hourly,weekly,monthly}` directories. Shell comments and XML comments are removed first, so a commented-out line is not evidence. A finding requires a reference to `/tmp/get-pip`, `/tmp/.pip`, or `verify-human`; a `.node_modules` path combined with Node execution (`node `, `<string>node</string>`, or `ExecStart=`); or a [known C2 IP](#11-network-ioc-active-connection-critical). Binary plists are not decoded and produce a `scan-limited` notice instead; no plist decoder or external command is invoked. Windows startup registry and scheduled-task enumeration are outside scope.
+
+These are community hunt patterns, not campaign attribution. Correlate a hit with payload evidence.
+
+## 39. `hosts-c2-entry` (WARN)
+
+Flags a system hosts file entry that maps a name to a [known C2 IP](#11-network-ioc-active-connection-critical).
+
+**How it works:** Parses each line, ignores `#` comments, and compares the address field against the indicator list in canonical form. This is configuration evidence, not an active connection: it says something wrote a C2 address into name resolution, which is worth explaining regardless of whether anything is talking to it right now.
+
+## 40. `missing-script-target` (INFO)
+
+Reports a package whose lifecycle script names a file that is not installed.
+
+**How it works:** When a manifest declares a hook (`preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, `prepack`, `postpack`) that runs a JS/CJS/MJS file, and no such file exists, the absence is recorded as context rather than as a read failure: published tarballs routinely strip build hooks and pruned installs drop install helpers. What makes it worth printing at all is that npm would execute anything later written to that path. Because it fires across dozens of packages on an ordinary machine, the human report prints the explanation once and lists the packages; every individual path stays in `-json` and the saved report. Actual read failures remain `scan-incomplete` warnings.

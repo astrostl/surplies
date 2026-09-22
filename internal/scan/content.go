@@ -222,6 +222,17 @@ func (s *Scanner) processSourceFile(path string, inspect func(*Scanner, []byte))
 	source := !slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == filepath.Base(path) })
 	return s.processFilePolicy(path, ReadTimeout, inspect, false, source)
 }
+
+// inheritedScopeRoots is the scope a per-read Scanner copy must carry, resolved
+// here on the parent so a read that outlives its deadline cannot leave a
+// goroutine filling the cache beside the caller. Nil when the scan is unconfined.
+func (s *Scanner) inheritedScopeRoots() []string {
+	if !s.Only {
+		return nil
+	}
+	return s.scopeRootList()
+}
+
 func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect func(*Scanner, []byte), optional, source bool) []byte {
 	s.debug.selection(path)
 	key := s.stallKey(path)
@@ -231,10 +242,7 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		s.mu.Unlock()
 		return nil
 	}
-	var scopeRoots []string
-	if s.Only {
-		scopeRoots = s.scopeRootList()
-	}
+	scopeRoots := s.inheritedScopeRoots()
 	deadline := time.Now().Add(timeout)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()

@@ -16,7 +16,7 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
 
-**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.14.0) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
+**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.14.1) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
 
 **Go:**
 
@@ -181,6 +181,18 @@ Which files a scan actually reads — and which it deliberately does not — is 
 | [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) | CRITICAL | An installed Git older than 2.45, which cannot inspect a single repository |
 | [`git-too-old-for-filenames`](docs/CHECKS.md#27-git-too-old-for-filenames-critical) | CRITICAL | An installed Git from 2.45 to 2.49, which inspects history by size but cannot read the names blobs were committed under |
 | [`scan-limited`](docs/CHECKS.md#28-scan-limited-info) | INFO | Expected scope limits, such as shallow Git history |
+| [`suspicious-source-execution`](docs/CHECKS.md#29-suspicious-source-execution-warn) | WARN | Decode-and-execute, download-to-shell, or hidden detached spawn structure |
+| [`unicode-concealment`](docs/CHECKS.md#30-unicode-concealment-warn) | WARN | Invisible Unicode hiding code from the reader: bidi controls, variation selectors, joiners |
+| [`loader-structure`](docs/CHECKS.md#31-loader-structure-warn) | WARN | An `import.meta.url` expression immediately invoking a local `.cjs` sidecar |
+| [`loader-variant`](docs/CHECKS.md#32-loader-variant-warn) | WARN | A published global injection assignment, across quoting and spacing variants |
+| [`correlated-loader-markers`](docs/CHECKS.md#33-correlated-loader-markers-warn) | WARN | A community build marker alongside loader or decode/execute structure |
+| [`escaped-execution`](docs/CHECKS.md#34-escaped-execution-warn) | WARN | A long run of ASCII escapes alongside dynamic execution or loader structure |
+| [`asset-format-mismatch`](docs/CHECKS.md#35-asset-format-mismatch-warn) | WARN | A binary-named asset whose header is not the format it claims, or is text |
+| [`disguised-file-execution-task`](docs/CHECKS.md#36-disguised-file-execution-task-warn) | WARN | An editor task running an interpreter on a binary-named file |
+| [`workspace-setting-context`](docs/CHECKS.md#37-workspace-setting-context-warn-or-info) | WARN/INFO | Workspace preferences that ease automatic execution, reported as context |
+| [`startup-content`](docs/CHECKS.md#38-startup-content-warn) | WARN | Startup and persistence files referencing documented staging paths or C2 addresses |
+| [`hosts-c2-entry`](docs/CHECKS.md#39-hosts-c2-entry-warn) | WARN | A hosts file entry mapping a name to a known C2 IP |
+| [`missing-script-target`](docs/CHECKS.md#40-missing-script-target-info) | INFO | A lifecycle script naming a file that is not installed |
 
 What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS.md).
 
@@ -195,7 +207,7 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 ## Documentation
 
 - [Attacks covered](docs/ATTACKS.md) — every campaign in detail, and the active payload hash list
-- [Checks](docs/CHECKS.md) — all 28 checks, their tables, and their reasoning
+- [Checks](docs/CHECKS.md) — all 40 checks, their tables, and their reasoning
 - [Scanning behavior](docs/SCANNING.md) — design principles, what gets read, scope decisions, and performance diagnostics
 - [Attribution](docs/ATTRIBUTION.md) — the researchers and writeups every indicator comes from
 - [Scheduling details](scripts/README.md) — the exact files `surplies schedule` installs
