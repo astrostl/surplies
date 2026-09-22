@@ -45,7 +45,14 @@ type Finding struct {
 	// rollup collapses a check that routinely fires across dozens of packages
 	// into one human-report block labelled by subject instead of one block and
 	// one path list per subject. JSON and the saved report keep every record.
-	rollup   string
+	rollup string
+	// cause is the shared explanation behind a finding whose Detail also
+	// carries evidence unique to one location -- a Git blob ID, a historical
+	// path. Grouping on the whole Detail would print the same explanation once
+	// per location; grouping on cause prints it once and hangs the evidence
+	// off each path. Empty for the ordinary case where Detail is the cause.
+	cause    string
+	evidence string
 	Check    string   `json:"check"`
 	Severity Severity `json:"severity"`
 	Path     string   `json:"path"`
@@ -69,31 +76,53 @@ type Scanner struct {
 	// Deep adds declared dependency entrypoint and known-candidate inspection.
 	// Metadata, lifecycle targets and targeted persistence run in both modes.
 
-	Deep            bool
-	Git             bool
-	NpmCache        bool
-	Broad           bool
-	BrowserCache    bool
+	Deep         bool
+	Git          bool
+	NpmCache     bool
+	Broad        bool
+	BrowserCache bool
+	// Resolve opts into looking up the known C2 domains at scan time. Off by
+	// default: the query goes to nameservers the campaign may still control,
+	// and a dead domain reparked on shared hosting resolves to an address the
+	// machine legitimately talks to, which would report as a critical.
+	Resolve         bool
 	contentDirs     map[string]bool
+	gitHistory      map[string]*gitHistoryHit
 	dependencyDirs  map[string]bool
 	rawCacheSkipped map[string]bool
 	linkNotices     map[string]bool
 	stats           ScanStats
-	// stallCounts tracks timed-out reads per subtree so an unresponsive mount
-	// is abandoned after StallThreshold strikes instead of costing
-	// ReadTimeout on every file beneath it. Guarded by mu.
-	stallCounts map[string]int
+	// timeLostToStalls accumulates the wall-clock time this scan has spent on
+	// reads that never returned. Once it reaches StallBudget the scan stops
+	// reading files entirely: readsAbandoned latches true and readsSkipped
+	// counts what went unread afterwards, so the finding can say how much was
+	// lost instead of standing for an unbounded remainder. Guarded by mu.
+	timeLostToStalls time.Duration
+	readsAbandoned   bool
+	readsSkipped     int
 	// Explicit persistence checks bypass dependency boundaries; avoid reporting
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
 	ExtraRoots         []string
+	// TempRoots are the temp directories to walk, normally DefaultTempRoots().
+	TempRoots []string
+	// SkipTempRoots drops those directories from the walk, for a run that
+	// does not want its report dominated by build and installer debris. The
+	// fixed staging-name probes in checkRuntimeStaging still run, so temp
+	// directories are traversed no longer rather than unscanned, and the run
+	// says so with a scope notice.
+	SkipTempRoots bool
+	// tempRoots caches the resolved temp directories this run covers, and
+	// tempSpellings every path prefix they can be reached under.
+	tempRoots     []string
+	tempSpellings []string
 	// scopeRoots caches the resolved roots pathInScope compares against.
 	scopeRoots []string
 	// phaseNum counts the progress lines printed so far.
 	phaseNum int
 	// Only restricts the run to the roots the user named: the machine-wide
 	// phases (fixed artifact paths, persistence roots, system Python paths,
-	// live connections, temp dirs) are skipped entirely, because none of them is anchored in the
+	// live connections) are skipped entirely, because none of them is anchored in the
 	// requested directory. Intended for one-off checks of a single tree and
 	// for rapid iteration on fixtures, where a full home walk is the cost.
 	Only bool
@@ -113,13 +142,20 @@ type Scanner struct {
 
 // ScanStats tracks scan progress.
 type ScanStats struct {
-	Debug                   *DebugReport `json:"debug,omitempty"`
-	Git                     bool
+	Debug *DebugReport `json:"debug,omitempty"`
+	Git   bool
+	// GitPath and GitVersion are recorded on every Git-enabled run, whether
+	// it worked or not. Without them the reason a fleet machine scanned no
+	// repositories is only inferable from an error string, and only by
+	// someone who reads the coverage rows.
+	GitPath                 string
+	GitVersion              string
 	GitRepositoriesFound    int
 	GitRepositoriesScanned  int
 	GitBlobsChecked         int
 	GitBlobsConsidered      int
 	GitBlobsIdentified      int
+	GitBlobsInspected       int
 	GitCacheMarkersSkipped  int
 	NodeModulesFound        int
 	PackagesScanned         int
@@ -179,19 +215,21 @@ func (s *Scanner) printRunHeader() {
 	if s.Invocation != "" {
 		s.progress("%s\n", s.Invocation)
 	}
-	label := "Scanning home directory"
+	// Every directory this run walks on one line. Naming only the home
+	// directory understated the scope: requested roots and the temp
+	// directories are walked the same way and belong in the same list.
+	label := "Scanning directories"
 	if s.Only {
 		label = "Scanning only"
 	}
-	s.progress("%s: %s\n", label, s.HomeDir)
-	for _, root := range s.ExtraRoots {
-		s.progress("Additional scan root: %s\n", root)
-	}
+	dirs := append([]string{s.HomeDir}, s.ExtraRoots...)
+	dirs = append(dirs, s.tempWalkRoots()...)
+	s.progress("%s: %s\n", label, quotedPathList(dirs))
 	// These roots are walked for persistence on every run without being asked
 	// for, so a header that named only the home directory understated the
 	// scope. Absent roots are skipped by the walk and so go unlisted here.
 	if present := existingPersistenceRoots(); !s.Only && len(present) > 0 {
-		s.progress("Persistence-only roots: %s\n", strings.Join(present, ", "))
+		s.progress("Persistence-only roots: %s\n", quotedPathList(present))
 	}
 	s.progress("Platform: %s/%s\n\n", runtime.GOOS, runtime.GOARCH)
 	// The one statement that changes what the phase lines below mean, so it
@@ -205,7 +243,7 @@ func (s *Scanner) printRunHeader() {
 // connection snapshot, so that run counts five phases rather than printing a
 // sixth the reader would have to discount.
 func (s *Scanner) phase(label string) {
-	total := 4 // artifacts, projects, python, temp
+	total := 3 // artifacts, directories, python
 	if !s.Only {
 		total++ // the connection snapshot
 	}
@@ -247,6 +285,9 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	if !s.Broad {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: "Ordinary content reads require a specific check: metadata, execution targets, documented injection filenames/configs, or project font validation. Project membership, source extensions and executable bits do not select arbitrary files. Use -broad for broader non-dependency inspection"})
 	}
+	if s.SkipTempRoots {
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "temp", Detail: "Temp directories were not walked (-skip-tmproots): a payload unpacked into a subdirectory of one was not looked for. The documented staging filenames are still checked at the top of each temp directory, and a temp directory named with -root is still walked in full"})
+	}
 	s.scanSharedDiscovery()
 	if s.Deep {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "dependencies", Detail: "Dependency checks select declared npm entrypoints, Python command modules/startup files, Composer autoload files, and known payload candidates. Unreferenced source, type exports, wildcard/subpath exports and transitive imports are not exhaustively read"})
@@ -269,20 +310,17 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.checkNetworkIOCs()
 	}
 
-	// Phase 5: Check tmp directories for suspicious payload remnants. A temp
-	// dir is a fixed machine path, but naming one with -root puts it in scope,
-	// so the set is whichever of them the run is allowed to read — possibly
-	// none. The header already says the run stays inside the given roots, so
-	// the line does not make the reader work out which case they are in.
-	s.phase("Scanning temp directories")
-	s.debug.stage("temp")
-	s.checkTempArtifacts()
-
-	if s.Git {
+	// A scan that spent its whole stall budget stops here rather than running
+	// Git over the same unresponsive storage. Git bounds itself per repository,
+	// but the report is already untrustworthy and the reader's next move is to
+	// fix the machine and re-run, not to read a longer partial result.
+	if s.Git && !s.stallBudgetSpent() {
 		s.phase("Scanning locally available Git refs and history")
 		s.debug.stage("git")
 		s.scanGitRepositories()
 	}
+
+	s.finalizeStalls()
 
 	s.stats.ContentBytesRead = s.contentIO.bytes.Load()
 	s.stats.BinaryPrefixesSkipped = s.contentIO.binary.Load()
@@ -717,6 +755,15 @@ func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptTarget(pa
 // a warning: the absence is normal and nearly always benign, and the reader has
 // nothing to review beyond the packaging itself.
 func (s *Scanner) checkScriptTarget(path, pkgName, hook string) {
+	// The target is named by the manifest, relative to the package, so "../"
+	// resolves outside it — and npm would run it there, which is why the
+	// escape is inspected rather than ignored. Under -only that read and the
+	// finding naming it would land outside the tree the user asked about,
+	// which is the one thing -only promises not to do. Without -only this is
+	// a no-op and the target is inspected wherever it points.
+	if !s.pathInScope(path) {
+		return
+	}
 	if hook != "" {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			s.addFinding(Finding{Check: "missing-script-target", Severity: SevInfo, Path: path, rollup: fmt.Sprintf("%s (%s)", pkgName, hook), Detail: fmt.Sprintf("%s declares a %s script that runs this file, but no such file is installed; npm would execute anything later written to this path", pkgName, hook)})
@@ -778,49 +825,6 @@ func obfuscationFlags(data []byte) []string {
 	}
 
 	return flags
-}
-
-// inScopeTempDirs is the deduplicated temp-directory list this run may read:
-// every one of them by default, and only those inside a requested root under
-// -only.
-func (s *Scanner) inScopeTempDirs() []string {
-	candidates := []string{os.TempDir()}
-	if runtime.GOOS != "windows" {
-		candidates = append(candidates, "/tmp", "/var/tmp")
-	}
-	seen := make(map[string]bool)
-	dirs := make([]string, 0, len(candidates))
-	for _, dir := range candidates {
-		if seen[dir] || !s.pathInScope(dir) {
-			continue
-		}
-		seen[dir] = true
-		dirs = append(dirs, dir)
-	}
-	return dirs
-}
-
-// checkTempArtifacts looks for suspicious files in temp directories.
-func (s *Scanner) checkTempArtifacts() {
-	for _, dir := range s.inScopeTempDirs() {
-		s.log("checking temp dir: %s", dir)
-
-		for _, sp := range ArtifactsTmp {
-			matches, err := filepath.Glob(filepath.Join(dir, sp.Glob))
-			if err != nil {
-				continue
-			}
-			for _, m := range matches {
-				s.stats.FilesChecked++
-				s.addFinding(Finding{
-					Check:    "suspicious-temp-file",
-					Severity: SevWarn,
-					Path:     m,
-					Detail:   sp.Desc,
-				})
-			}
-		}
-	}
 }
 
 func truncate(s string, n int) string {

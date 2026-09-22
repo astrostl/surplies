@@ -48,6 +48,7 @@ func runScan() int {
 		showVer    bool
 		extraRoots []string
 		only       bool
+		noPause    bool
 	)
 
 	flag.BoolVar(&jsonOutput, "json", false, "output findings as JSON")
@@ -62,7 +63,8 @@ func runScan() int {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&only, "only", false, "confine the scan to the given -root(s); machine-wide checks run only inside them")
+	flag.BoolVar(&only, "only", false, "confine the scan to only the given -root(s)")
+	flag.BoolVar(&noPause, "no-pause", false, "never wait for ENTER before exiting (Windows only, "+PauseDisabledEnv+" equivalent)")
 	flag.Usage = printUsage
 	flag.Parse()
 	if flag.NArg() != 0 {
@@ -93,6 +95,7 @@ func runScan() int {
 	s.NpmCache = modes.NpmCache
 	s.Broad = modes.Broad
 	s.BrowserCache = modes.BrowserCache
+	s.Resolve = modes.Resolve
 	var debugLog *os.File
 	if modes.Debug {
 		debugLog, err = s.EnableDebug("", quiet, os.Stderr)
@@ -102,6 +105,8 @@ func runScan() int {
 		}
 	}
 	s.ExtraRoots = extraRoots
+	s.TempRoots = scan.DefaultTempRoots()
+	s.SkipTempRoots = modes.SkipTempRoots
 	findings, stats := s.Run()
 	if debugLog != nil {
 		if err := debugLog.Close(); err != nil {
@@ -111,6 +116,11 @@ func runScan() int {
 
 	scan.PrintResults(findings, stats, jsonOutput, modes.Coverage, invocation)
 
+	// Last thing before the exit code, so a double-clicked run's window stays
+	// up over the whole report rather than closing on top of it.
+	if shouldPauseForLauncherWindow(noPause) {
+		pauseForLauncherWindow(os.Stdout, os.Stdin, launcherWindowPauseTimeout)
+	}
 	return worstSeverityExitCode(findings)
 }
 

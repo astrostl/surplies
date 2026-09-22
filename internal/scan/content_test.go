@@ -3,6 +3,7 @@ package scan
 import (
 	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -545,7 +546,56 @@ func mkHangingFile(t *testing.T, path string) {
 	}
 }
 
+// regularInfo presents a FIFO as a regular file so the production guard in
+// processFilePolicy lets the read through and the timeout path is exercised.
+type regularInfo struct{ os.FileInfo }
+
+func (r regularInfo) Mode() os.FileMode { return r.FileInfo.Mode() &^ os.ModeNamedPipe }
+
+// allowHangingFiles lets this test's FIFOs reach the read. Production skips
+// every non-regular file before opening it; see TestNamedPipeSkippedNotRead.
+func allowHangingFiles(t *testing.T) {
+	t.Helper()
+	prev := statFile
+	statFile = func(path string) (os.FileInfo, error) {
+		info, err := prev(path)
+		if err != nil {
+			return info, err
+		}
+		return regularInfo{info}, nil
+	}
+	t.Cleanup(func() { statFile = prev })
+}
+
+// A named pipe blocks in open() until a writer appears, so reading one costs a
+// full ReadTimeout and three of them abandon the whole subtree. Nothing but a
+// regular file has content worth inspecting.
+func TestNamedPipeSkippedNotRead(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "stuck.config.js")
+	mkHangingFile(t, path)
+
+	s := New(dir, false)
+	start := time.Now()
+	data := s.readCapped(path)
+	elapsed := time.Since(start)
+
+	if data != nil {
+		t.Errorf("expected nil from a named pipe, got %d bytes", len(data))
+	}
+	if elapsed > time.Second {
+		t.Errorf("named pipe took %s; it should be skipped without opening", elapsed)
+	}
+	if s.stats.FilesUnreadable != 0 {
+		t.Errorf("a skipped pipe is not a coverage gap, got %d unreadable", s.stats.FilesUnreadable)
+	}
+	if hits := findingsFor(s, "scan-incomplete"); len(hits) != 0 {
+		t.Errorf("a skipped pipe must not report incomplete coverage: %v", hits)
+	}
+}
+
 func TestReadTimesOutRatherThanHanging(t *testing.T) {
+	allowHangingFiles(t)
 	dir := t.TempDir()
 	mkHangingFile(t, filepath.Join(dir, "stuck.config.js"))
 
@@ -568,49 +618,66 @@ func TestReadTimesOutRatherThanHanging(t *testing.T) {
 	}
 }
 
-func TestStalledSubtreeAbandonedAndReported(t *testing.T) {
+func TestStallBudgetExhaustionAbandonsScan(t *testing.T) {
 	dir := t.TempDir()
-	sub := filepath.Join(dir, "Library", "CloudStorage", "Dropbox", "repo")
-	os.MkdirAll(sub, 0755)
-
-	// More hanging files than the threshold. Only the first StallThreshold may
-	// actually cost a timeout; the rest must be skipped instantly.
-	const total = 8
-	for i := range total {
-		mkHangingFile(t, filepath.Join(sub, fmt.Sprintf("a%d.config.js", i)))
-	}
-
 	s := New(dir, false)
-	start := time.Now()
-	s.scanProjectDirs()
-	elapsed := time.Since(start)
 
-	budget := ReadTimeout * (StallThreshold + 1)
-	if elapsed > budget {
-		t.Errorf("scan took %s; breaker should have capped it near %s", elapsed, ReadTimeout*StallThreshold)
-	}
-	if s.stats.FilesUnreadable != total {
-		t.Errorf("want all %d files counted unreadable, got %d", total, s.stats.FilesUnreadable)
+	// Spending the budget takes a full minute of real hangs, so the accounting
+	// is driven directly. That a read actually times out is covered above.
+	timeouts := int(StallBudget / ReadTimeout)
+	for i := range timeouts {
+		s.recordTimeout(filepath.Join(dir, fmt.Sprintf("stuck%d.config.js", i)))
 	}
 
+	if !s.stallBudgetSpent() {
+		t.Fatalf("scan should have given up after %s of timeouts", StallBudget)
+	}
 	hits := findingsFor(s, "scan-incomplete")
-	if len(hits) != 1 {
-		t.Fatalf("want exactly 1 scan-incomplete finding, got %d: %v", len(hits), hits)
+	if len(hits) != timeouts+1 {
+		t.Fatalf("want %d warnings plus one give-up finding, got %d", timeouts, len(hits))
 	}
-	if hits[0].Severity != SevWarn {
-		t.Errorf("scan-incomplete should be WARN, got %v", hits[0].Severity)
+	var critical []Finding
+	for _, f := range hits {
+		if f.Severity == SevCritical {
+			critical = append(critical, f)
+		}
 	}
-	if !strings.HasSuffix(hits[0].Path, filepath.Join("Library", "CloudStorage", "Dropbox")) {
-		t.Errorf("finding should name the sync root, got %s", hits[0].Path)
+	if len(critical) != 1 {
+		t.Fatalf("giving up must be exactly one critical finding, got %d", len(critical))
+	}
+
+	// Once the budget is spent nothing else is read, instantly and regardless
+	// of where it lives.
+	allowHangingFiles(t)
+	other := filepath.Join(dir, "elsewhere.config.js")
+	mkHangingFile(t, other)
+	start := time.Now()
+	if data := s.readCapped(other); data != nil {
+		t.Error("a read after the budget ran out must return nothing")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("skipped read took %s; it should not have been attempted", elapsed)
+	}
+
+	// The reader has to be able to weigh what was lost.
+	s.finalizeStalls()
+	for _, f := range findingsFor(s, "scan-incomplete") {
+		if f.Severity != SevCritical {
+			continue
+		}
+		if !strings.Contains(f.Detail, "1 further file(s) went unread") {
+			t.Errorf("give-up finding does not report the skipped count: %s", f.Detail)
+		}
 	}
 }
 
-func TestStallInOneSubtreeDoesNotBlockAnother(t *testing.T) {
+func TestTimeoutsUnderBudgetDoNotStopTheScan(t *testing.T) {
+	allowHangingFiles(t)
 	dir := t.TempDir()
 
 	bad := filepath.Join(dir, "Library", "CloudStorage", "Dropbox")
 	os.MkdirAll(bad, 0755)
-	for i := range StallThreshold + 2 {
+	for i := range 2 {
 		mkHangingFile(t, filepath.Join(bad, fmt.Sprintf("b%d.config.js", i)))
 	}
 
@@ -626,8 +693,45 @@ func TestStallInOneSubtreeDoesNotBlockAnother(t *testing.T) {
 	if hits := findingsFor(s, "payload-signature"); len(hits) != 1 {
 		t.Errorf("healthy subtree was not scanned: got %d payload-signature findings", len(hits))
 	}
-	if hits := findingsFor(s, "scan-incomplete"); len(hits) != 1 {
-		t.Errorf("want 1 scan-incomplete finding, got %d", len(hits))
+	hits := findingsFor(s, "scan-incomplete")
+	if len(hits) != 2 {
+		t.Fatalf("want one warning per timed-out file, got %d", len(hits))
+	}
+	for _, f := range hits {
+		if f.Severity != SevWarn {
+			t.Errorf("a named timed-out file is a warning, not %v", f.Severity)
+		}
+	}
+}
+
+func TestDatalessFileIsSkippedWithoutReading(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "next.config.js")
+	os.WriteFile(path, []byte(`x;var q="Cot%3t=shtP";`), 0644)
+
+	// No portable way exists to make a real placeholder, so the probe is
+	// replaced. What matters is that a file the kernel says is not local is
+	// never read, however loudly its contents would have matched.
+	restore := isDataless
+	isDataless = func(fs.FileInfo) bool { return true }
+	t.Cleanup(func() { isDataless = restore })
+
+	s := New(dir, false)
+	if data := s.readCapped(path); data != nil {
+		t.Errorf("a placeholder must not be read, got %d bytes", len(data))
+	}
+	if hits := findingsFor(s, "payload-signature"); len(hits) != 0 {
+		t.Error("an unread placeholder cannot produce content findings")
+	}
+	hits := findingsFor(s, "scan-incomplete")
+	if len(hits) != 1 {
+		t.Fatalf("want 1 coverage warning, got %d", len(hits))
+	}
+	if hits[0].Severity != SevWarn {
+		t.Errorf("a named unread placeholder is a warning, got %v", hits[0].Severity)
+	}
+	if hits[0].Path != path {
+		t.Errorf("the finding must name the file, got %s", hits[0].Path)
 	}
 }
 

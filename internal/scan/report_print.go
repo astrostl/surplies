@@ -43,11 +43,20 @@ func PrintResults(findings []Finding, stats ScanStats, jsonOutput, coverageDetai
 	}
 }
 
+// isCoverageCheck reports whether a check describes the scan rather than the
+// machine. These carry severities and drive the exit status like any other
+// finding -- a Git too old to inspect a single repository is critical -- but
+// counting one as an indicator would tell the reader this machine shows signs
+// of an attack, which is a different and false statement.
+func isCoverageCheck(check string) bool {
+	return check == "scan-incomplete" || check == "git-too-old" || check == "git-too-old-for-filenames"
+}
+
 // Coverage limitations are diagnostics, not indicators of compromise. Keep
 // scan-incomplete records in JSON and the nonzero exit status for automation.
 func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	for _, f := range findings {
-		if f.Check == "scan-incomplete" {
+		if isCoverageCheck(f.Check) {
 			coverage = append(coverage, f)
 		} else if f.Check != "scan-limited" {
 			indicators = append(indicators, f)
@@ -56,7 +65,7 @@ func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	return
 }
 
-var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "Git errors", "network collection", "other errors"}
+var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "not downloaded", "Git errors", "Git coverage", "network collection", "other errors"}
 
 func groupCoverage(coverage []Finding) map[string][]Finding {
 	groups := make(map[string][]Finding)
@@ -175,6 +184,20 @@ func printScopeNotices(findings []Finding, details bool) {
 		return
 	}
 	printDiagnosticGroups(os.Stderr, notices)
+}
+
+// Scan roots print as one comma-separated list, where a path holding a space
+// or a comma is ambiguous. Quote those the way the invocation label quotes an
+// argument, and leave ordinary paths bare.
+func quotedPathList(paths []string) string {
+	quoted := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if strings.ContainsAny(path, " \t\r\n\",\\") || path == "" {
+			path = strconv.Quote(path)
+		}
+		quoted = append(quoted, path)
+	}
+	return strings.Join(quoted, ", ")
 }
 
 func InvocationLabel(buildVersion string, args []string) string {

@@ -9,5 +9,8 @@ site-packages/
 # Local detection gap analysis
 /GAPS.md
 
+# Local working notes
+/OFFLINE.md
+
 # macOS
 .DS_Store

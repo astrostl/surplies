@@ -1,6 +1,6 @@
 ---
 name: citation-hygiene
-description: Keep IOC citations in sync across ioc.go and the README when adding, revising, or removing an IOC in surplies. Covers which of the four documentation locations must be updated, which outlets may be cited at all, when two incidents count as one campaign, and the Markdown link conventions the README depends on. Use before or while editing ioc.go, or when editing the README's attack list, docs/ATTACKS.md, docs/ATTRIBUTION.md, or the check tables in docs/CHECKS.md.
+description: Keep IOC citations in sync across ioc.go and the README when adding, revising, or removing an IOC in surplies. Covers which of the four documentation locations must be updated, which outlets may be cited at all, which sources may be named at all, when two incidents count as one campaign, and the Markdown link conventions the README depends on. Use before or while editing ioc.go, or when editing the README's attack list, docs/ATTACKS.md, docs/ATTRIBUTION.md, or the check tables in docs/CHECKS.md.
 ---
 
 # Citation hygiene
@@ -14,6 +14,12 @@ When adding or revising IOCs, keep these four places in sync. They drift indepen
 
 Other rules:
 
+- **Cite only public, linkable sources.** Nothing here — `ioc.go` comments, the
+  README, `docs/`, `CLAUDE.md`, commit messages — may name or fingerprint
+  anything outside this repository: no external paths, no repository or
+  organization names, no document titles or digests. An indicator whose only
+  support is non-public is one to raise with the developer rather than annotate.
+  See **Sources** in `CLAUDE.md`.
 - **Only cite sources we actually pull IOCs from.** Outlets like Wiz, Snyk, Hacker News, Infosecurity Magazine may be useful in chat for confirming attribution, but they don't go in the README unless we used them for a specific IOC.
 - **Sub-incidents are not separate attacks.** Same actor + same payload family + same exfil infrastructure = same campaign, even if the initial-access vector differs. Defer to how Socket / StepSecurity / the campaign's primary trackers frame it; don't infer "distinct attack" from a postmortem that doesn't name the campaign.
 - **Attack-bullet style in the intro: one link in the title, no inline citations.** The README bullet is one line linking to its `docs/ATTACKS.md` section; that section's heading carries the single writeup link. `docs/ATTRIBUTION.md` carries the full source credit. Inline links scattered through a paragraph read as "random citations."

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -17,9 +18,22 @@ const networkTimeout = 5 * time.Second
 type networkCollector func(context.Context) ([]byte, error)
 type hostResolver func(context.Context, string) ([]string, error)
 
+// macOS truncates the address column by default, cutting link-local IPv6 peers
+// mid-address (fe80::1caa:a604:.55584), which parses as neither host nor port.
+// Every Mac near another Apple device holds such connections open via rapportd,
+// so the default flags cost a coverage warning on essentially every scan. -l is
+// documented as "Print full IPv6 address" on macOS only; on Linux -l means
+// "listening sockets", which would empty the snapshot.
+func netstatArgs() []string {
+	if runtime.GOOS == "darwin" {
+		return []string{"-n", "-l"}
+	}
+	return []string{"-n"}
+}
+
 func (s *Scanner) checkNetworkIOCs() {
 	s.inspectNetwork(func(ctx context.Context) ([]byte, error) {
-		cmd := exec.CommandContext(ctx, "netstat", "-n")
+		cmd := exec.CommandContext(ctx, "netstat", netstatArgs()...)
 		cmd.WaitDelay = time.Second
 		return cmd.Output()
 	}, net.DefaultResolver.LookupHost, networkTimeout)
@@ -35,13 +49,20 @@ func (s *Scanner) inspectNetwork(collect networkCollector, lookup hostResolver, 
 		data []byte
 		err  error
 	}
-	results := make(chan result, len(KnownC2Domains)+1)
+	domains := KnownC2Domains
+	if !s.Resolve {
+		// Stated, not silently dropped: the reader has to know which half of
+		// the indicator list this snapshot was compared against.
+		domains = nil
+		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "netstat", Detail: fmt.Sprintf("Connections were matched against the known C2 addresses only; the %d known C2 domains were not resolved, so a campaign reachable at a current address behind one of them would not match. Use -resolve to look them up, which queries nameservers the campaign may control", len(KnownC2Domains))})
+	}
+	results := make(chan result, len(domains)+1)
 	go func() { data, err := collect(ctx); results <- result{name: "netstat", data: data, err: err} }()
-	for _, domain := range KnownC2Domains {
+	for _, domain := range domains {
 		go func() { ips, err := lookup(ctx, domain); results <- result{name: domain, ips: ips, err: err} }()
 	}
 	pending := map[string]bool{"netstat": true}
-	for _, d := range KnownC2Domains {
+	for _, d := range domains {
 		pending[d] = true
 	}
 	resolved := map[string][]string{}

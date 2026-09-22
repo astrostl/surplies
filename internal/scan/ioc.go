@@ -1594,8 +1594,12 @@ var ArtifactsTmp = []struct {
 	Desc string
 }{
 	// axios
-	{"*.vbs", "axios VBScript dropper (Windows, %TEMP%\\{campaignID}.vbs)"},
-	{"*.ps1", "axios PowerShell payload (Windows, %TEMP%\\{campaignID}.ps1)"},
+	// Extension-only patterns: unlike the named artifacts below, a match says a
+	// script of this type is staged in a temp directory, not that it is the
+	// axios payload. Word them so the finding states what was seen and names
+	// the campaign as the reason the pattern exists.
+	{"*.vbs", "VBScript file staged in a temp directory; axios dropped its VBScript loader as %TEMP%\\{campaignID}.vbs on Windows"},
+	{"*.ps1", "PowerShell file staged in a temp directory; axios dropped its payload as %TEMP%\\{campaignID}.ps1 on Windows"},
 	// litellm
 	{".pg_state", "litellm C2 state tracking file"},
 	{"pglog", "litellm downloaded payload staging"},

@@ -2,6 +2,7 @@ package scan
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -77,15 +78,25 @@ func (d *gitDiagnostic) Write(p []byte) (int, error) {
 }
 
 func (s *Scanner) scanGitRepositories() {
-	if _, err := exec.LookPath("git"); err != nil {
+	// PATH only. Hunting for another copy -- Homebrew, MacPorts, a vendored
+	// one -- would mean a scan running as root executing a binary out of a
+	// directory an unprivileged account can write to (/usr/local/bin is
+	// world-writable by default on macOS), in a tool whose whole job is
+	// looking for a local compromise. A too-old git is reported, not
+	// worked around.
+	path, err := exec.LookPath("git")
+	if err != nil {
 		s.gitScanError("git", fmt.Errorf("Git history inspection requires Git: %w", err))
 		return
 	}
+	s.stats.GitPath = path
+	s.recordGitVersion(path)
 	seen := make(map[string]bool)
 	if s.discovery != nil {
 		for _, path := range s.discovery.git {
 			s.checkGitRepository(path, seen)
 		}
+		s.reportGitCoverage()
 		return
 	}
 	s.walkScanRoots(func(path string, entry os.DirEntry, err error) error {
@@ -110,6 +121,161 @@ func (s *Scanner) scanGitRepositories() {
 		}
 		return nil
 	})
+	s.reportGitCoverage()
+}
+
+// MinimumGitVersion is the first release carrying --no-lazy-fetch, which
+// every command in this file passes. An older Git rejects the whole command
+// line with exit 129 before it does anything, so repository discovery itself
+// fails and not one repository is inspected -- while the file half of the
+// scan completes normally and the report still looks like a verdict.
+// GIT_NO_LAZY_FETCH is no substitute; it landed in the same release.
+// https://github.com/git/git/blob/master/Documentation/RelNotes/2.45.0.adoc
+var MinimumGitVersion = [2]int{2, 45}
+
+// recordGitVersion runs the one Git command that predates every option this
+// file relies on. It must stay a bare `git --version`: adding the hardening
+// flags would make the probe fail on exactly the Git it exists to identify.
+// Nothing is read, written or configured, so there is nothing to harden
+// beyond dropping inherited GIT_* redirection.
+func (s *Scanner) recordGitVersion(path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), GitScanTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, path, "--version")
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(strings.ToUpper(entry), "GIT_") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL="+os.DevNull, "LC_ALL=C")
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err != nil {
+		s.gitScanError(path, fmt.Errorf("Git version could not be determined: %w", err))
+		return
+	}
+	s.stats.GitVersion = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(out)), "git version "))
+}
+
+// parseGitVersion reads the leading major.minor out of a reported version.
+// Everything after them is build identity -- "2.39.5 (Apple Git-154)",
+// "2.45.1.windows.1" -- which is worth recording and not worth comparing.
+func parseGitVersion(version string) ([2]int, bool) {
+	fields := strings.SplitN(version, ".", 3)
+	if len(fields) < 2 {
+		return [2]int{}, false
+	}
+	var parsed [2]int
+	for i, field := range fields[:2] {
+		n, err := strconv.Atoi(strings.TrimSpace(field))
+		if err != nil || n < 0 {
+			return [2]int{}, false
+		}
+		parsed[i] = n
+	}
+	return parsed, true
+}
+
+// gitTooOld reports whether a recorded version predates the minimum. known
+// is false when the version string could not be read at all, which is a
+// coverage failure rather than a verdict either way.
+func gitTooOld(version string) (old, known bool) {
+	parsed, ok := parseGitVersion(version)
+	if !ok {
+		return false, false
+	}
+	if parsed[0] != MinimumGitVersion[0] {
+		return parsed[0] < MinimumGitVersion[0], true
+	}
+	return parsed[1] < MinimumGitVersion[1], true
+}
+
+// reportGitVersion is the loud half of the version check. It is deliberately
+// gated on having found a repository: a machine with no repositories needed
+// no Git, and failing it over a Git it never called would be noise.
+//
+// This is CRITICAL rather than a warning because of how it fails. The file
+// half of the scan completes, the report reads like any other, and the exit
+// status was clean -- a files-only verdict presented as a whole one. A scan
+// that is trusted while its Git half never ran is worse than one that fails
+// outright, so it is made impossible to miss.
+func (s *Scanner) reportGitVersion() {
+	if s.stats.GitRepositoriesFound == 0 || s.stats.GitVersion == "" {
+		return
+	}
+	old, known := gitTooOld(s.stats.GitVersion)
+	if !known {
+		s.gitScanError(s.stats.GitPath, fmt.Errorf("Git version %q could not be compared against the required %d.%d", s.stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1]))
+		return
+	}
+	if !old {
+		// Old enough to run every command, too old to be told what the objects
+		// are called. That leaves the size-matched half of the history scan
+		// working and the filename-gated half silently absent -- and the
+		// absent half is the one that finds the config-append landing, whose
+		// carrier is the victim's own build config and so has no fixed size.
+		// Same failure shape as the case below, so the same severity: the
+		// report otherwise reads like a whole history scan.
+		if !gitPathsSupported(s.stats.GitVersion) {
+			s.addFinding(Finding{Check: "git-too-old-for-filenames", Severity: SevCritical, Path: s.stats.GitPath,
+				coverageCategory: "Git errors",
+				Detail: fmt.Sprintf("%s reports Git %s, and Git %d.%d or newer is required to read the names of objects in history. Repository history was inspected by payload size and object identity only; the filename-gated checks -- injected build configs, propagation artifacts, .gitignore concealment, IDE task hooks -- did not run against history. Working-tree coverage is unaffected. Install a newer Git (on macOS, update the Xcode Command Line Tools) and scan again.",
+					s.stats.GitPath, s.stats.GitVersion, GitObjectPathsVersion[0], GitObjectPathsVersion[1])})
+		}
+		return
+	}
+	s.addFinding(Finding{Check: "git-too-old", Severity: SevCritical, Path: s.stats.GitPath,
+		coverageCategory: "Git errors",
+		Detail: fmt.Sprintf("%s reports Git %s, and Git %d.%d or newer is required: every Git command this scan runs passes --no-lazy-fetch, which an older Git rejects before doing anything. No repository history was inspected. The rest of this report covers files only. Install a newer Git (on macOS, update the Xcode Command Line Tools) and scan again.",
+			s.stats.GitPath, s.stats.GitVersion, MinimumGitVersion[0], MinimumGitVersion[1])})
+}
+
+// A Git scan that reached only some of the repositories it found is already a
+// list of per-repository warnings, but nothing in that list says how much of
+// the machine they add up to. GitUnscannableCriticalPercent is where the two
+// stop being the same kind of result. Across a deployed fleet, ordinary
+// breakage -- a broken ref, an unavailable object, a dead submodule -- sits
+// under about 10% of a machine's repositories, while the machines whose Git
+// scan meant nothing failed 80-100% of theirs. A quarter separates them with
+// room on both sides, and it makes any machine that scanned none of the
+// repositories it found critical regardless of how few it had: 0 of 2 is not
+// a scan with gaps, it is no Git coverage at all.
+const GitUnscannableCriticalPercent = 25
+
+func (s *Scanner) reportGitCoverage() {
+	// Named before the ratio: "the installed Git cannot run these commands"
+	// is the cause of the 0/N the ratio is about to report.
+	s.reportGitVersion()
+	found, scanned := s.stats.GitRepositoriesFound, s.stats.GitRepositoriesScanned
+	if found == 0 {
+		// Not an error: repositories kept outside the scanned roots are
+		// invisible until -root names them. It is still a warning, because a
+		// Git scan that inspected no history must not be reported as a Git
+		// scan that found nothing wrong.
+		s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: "git",
+			coverageCategory: "Git coverage",
+			Detail:           "No Git repositories were found, so no Git history was inspected. Add -root for any repositories kept outside the scanned directories."})
+		return
+	}
+	unscannable := found - scanned
+	if unscannable*100 <= found*GitUnscannableCriticalPercent {
+		return
+	}
+	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevCritical, Path: "git",
+		coverageCategory: "Git coverage",
+		Detail: fmt.Sprintf("Git history coverage is unusable: %d of %d repositories (%d%%) could not be scanned, above the %d%% critical threshold. The failures are listed individually above; this machine's Git result does not describe its repositories.",
+			unscannable, found, GitUnscannablePercent(found, scanned), GitUnscannableCriticalPercent)})
+}
+
+// GitUnscannablePercent is the share of the repositories found that the scan
+// could not complete. Truncating integer division is deliberate: it can only
+// understate the failure, and both callers already know a nonzero share is
+// nonzero. Zero repositories found is reported on its own terms, not as 0%.
+func GitUnscannablePercent(found, scanned int) int {
+	if found <= 0 {
+		return 0
+	}
+	return (found - scanned) * 100 / found
 }
 
 func looksLikeBareGit(path string) bool {
@@ -171,6 +337,10 @@ func (s *Scanner) checkGitRepository(repo string, seen map[string]bool) {
 	if shallow == "true" {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: repo, Detail: "Shallow Git repository: scanning locally available history only; older history was not fetched."})
 	}
+	// Emitted even when the scan below fails: whatever history was reached
+	// before the failure is still a real finding, and dropping it would make
+	// a partial scan quieter than a complete one.
+	defer s.flushGitHistory(repo)
 	if err := s.scanGitObjects(ctx, repo); err != nil {
 		if ctx.Err() != nil {
 			err = fmt.Errorf("Git scan timed out after %s; history coverage is incomplete: %w", GitScanTimeout, ctx.Err())
@@ -280,7 +450,15 @@ func (s *Scanner) scanGitObjects(ctx context.Context, repo string) (result error
 }
 
 func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, contents *gitBatch) error {
-	cmd := gitCommand(ctx, repo, "rev-list", "--objects", "--all", "--no-object-names", "--missing=print")
+	// Object paths are what make the filename-gated checks available in
+	// history; see gitContentCandidate. They are only requested in the NUL
+	// framing, never in the legacy space-joined form.
+	args := []string{"rev-list", "--objects", "--all", "--no-object-names", "--missing=print"}
+	paths := gitPathsSupported(s.stats.GitVersion)
+	if paths {
+		args = []string{"rev-list", "--objects", "--all", "-z", "--missing=print"}
+	}
+	cmd := gitCommand(ctx, repo, args...)
 	var diagnostic gitDiagnostic
 	cmd.Stderr = &diagnostic
 	output, err := cmd.StdoutPipe()
@@ -294,28 +472,22 @@ func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, con
 	started := time.Now()
 	measured := &debugGitRead{Reader: output}
 	lines := bufio.NewScanner(measured)
-	// Only object IDs are emitted. Avoid path/newline ambiguity entirely.
-	lines.Buffer(make([]byte, 128), 1024)
-	var scanErr error
+	if paths {
+		// Records are NUL-terminated, so a path may contain anything --
+		// spaces, newlines, an = -- without becoming ambiguous.
+		lines.Split(scanNULRecords)
+		lines.Buffer(make([]byte, 4096), 1<<16)
+	} else {
+		// Only object IDs are emitted. Avoid path/newline ambiguity entirely.
+		lines.Buffer(make([]byte, 128), 1024)
+	}
 	missing := 0
 	firstMissing := ""
-	for lines.Scan() {
-		id := lines.Text()
-		if strings.HasPrefix(id, "?") && validGitObjectID(id[1:]) {
-			missing++
-			if firstMissing == "" {
-				firstMissing = id[1:]
-			}
-			continue
-		}
-		if !validGitObjectID(id) {
-			scanErr = fmt.Errorf("invalid Git object ID: %q", id)
-			break
-		}
-		if scanErr = s.checkGitObject(repo, id, metadata, contents); scanErr != nil {
-			break
-		}
+	walk := s.walkLegacyRecords
+	if paths {
+		walk = s.walkNULRecords
 	}
+	scanErr := walk(lines, repo, metadata, contents, &missing, &firstMissing)
 	if scanErr == nil {
 		scanErr = lines.Err()
 	}
@@ -323,7 +495,7 @@ func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, con
 		_ = cmd.Process.Kill()
 	}
 	waitErr, disk := waitDebugGit(ctx, cmd)
-	recordGit(ctx, repo, []string{"rev-list", "--objects", "--all", "--no-object-names", "--missing=print"}, started, measured.bytes.Load(), diagnostic.bytes, waitErr, disk)
+	recordGit(ctx, repo, args, started, measured.bytes.Load(), diagnostic.bytes, waitErr, disk)
 	if scanErr != nil {
 		return fmt.Errorf("Git object inspection failed: %w", scanErr)
 	}
@@ -334,6 +506,89 @@ func (s *Scanner) walkGitObjects(ctx context.Context, repo string, metadata, con
 		return fmt.Errorf("Git history incomplete: %d missing object(s), first %s; available objects were inspected, missing objects were not fetched", missing, firstMissing)
 	}
 	return nil
+}
+
+// walkLegacyRecords reads the --no-object-names stream a Git older than
+// GitObjectPathsVersion produces: one object ID per line, with missing objects
+// prefixed by ?. No path is available, so every object is dispatched unnamed
+// and only the size-matched half of the scan can run.
+func (s *Scanner) walkLegacyRecords(lines *bufio.Scanner, repo string, metadata, contents *gitBatch, missing *int, firstMissing *string) error {
+	for lines.Scan() {
+		id := lines.Text()
+		if strings.HasPrefix(id, "?") && validGitObjectID(id[1:]) {
+			*missing++
+			if *firstMissing == "" {
+				*firstMissing = id[1:]
+			}
+			continue
+		}
+		if !validGitObjectID(id) {
+			return fmt.Errorf("invalid Git object ID: %q", id)
+		}
+		if err := s.checkGitObject(repo, id, "", metadata, contents); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// scanNULRecords splits the -z stream. Each record is NUL-terminated and is
+// either a bare object ID or a token=value pair belonging to the ID above it.
+func scanNULRecords(data []byte, atEOF bool) (int, []byte, error) {
+	if i := bytes.IndexByte(data, 0); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+	if atEOF && len(data) > 0 {
+		return len(data), data, nil
+	}
+	return 0, nil, nil
+}
+
+// walkNULRecords accumulates each object's metadata before acting on it: the
+// ID arrives first and its path follows, so an object can only be dispatched
+// once the next ID -- or the end of the stream -- proves its record complete.
+func (s *Scanner) walkNULRecords(lines *bufio.Scanner, repo string, metadata, contents *gitBatch, missing *int, firstMissing *string) error {
+	var id, path string
+	var absent bool
+	flush := func() error {
+		if id == "" {
+			return nil
+		}
+		current, currentPath, currentAbsent := id, path, absent
+		id, path, absent = "", "", false
+		if currentAbsent {
+			*missing++
+			if *firstMissing == "" {
+				*firstMissing = current
+			}
+			return nil
+		}
+		return s.checkGitObject(repo, current, currentPath, metadata, contents)
+	}
+	for lines.Scan() {
+		record := lines.Text()
+		if record == "" {
+			continue
+		}
+		// An object ID never contains =, so it is what starts a new record.
+		if key, value, ok := strings.Cut(record, "="); ok {
+			switch key {
+			case "path":
+				path = value
+			case "missing":
+				absent = value == "yes"
+			}
+			continue
+		}
+		if err := flush(); err != nil {
+			return err
+		}
+		if !validGitObjectID(record) {
+			return fmt.Errorf("invalid Git object ID: %q", record)
+		}
+		id = record
+	}
+	return flush()
 }
 
 func validGitObjectID(id string) bool {
@@ -351,7 +606,7 @@ func gitHashCandidate(size int64) bool {
 	return knownPayloadSize(size)
 }
 
-func (s *Scanner) checkGitObject(repo, id string, metadata, contents *gitBatch) error {
+func (s *Scanner) checkGitObject(repo, id, path string, metadata, contents *gitBatch) error {
 	object, err := metadata.request(id)
 	if err != nil {
 		return err
@@ -364,40 +619,87 @@ func (s *Scanner) checkGitObject(repo, id string, metadata, contents *gitBatch) 
 	// match: no body read, no hashing, and it works for any size.
 	if h, ok := knownPayloadBlob(id); ok {
 		s.stats.GitBlobsIdentified++
-		s.addFinding(Finding{Check: "git-payload-hash", Severity: SevCritical, Path: repo,
-			Detail: fmt.Sprintf("%s: blob %s matches the published Git object identity (attack: %s). Reachable from local refs/HEAD history; may be historical, not in the checkout. Inspect with git log --all --find-object=%s.", h.Desc, id, h.Attack, id)})
+		s.addGitPayloadFinding(repo, id,
+			fmt.Sprintf("%s (attack: %s); matched by published Git object identity. Reachable from local refs/HEAD history; may be historical, not in the checkout.", h.Desc, h.Attack),
+			fmt.Sprintf("blob %s", id))
 		return nil
 	}
-	if !gitHashCandidate(object.size) {
+	// Two independent reasons to read a body: a length that matches a sized
+	// entry, which needs no name, and a name the filesystem walk would have
+	// opened, which needs no size. A blob with neither is never read.
+	sized := gitHashCandidate(object.size)
+	name := ""
+	if path != "" {
+		name = filepath.Base(path)
+	}
+	named := gitContentCandidate(path, name)
+	if !sized && !named {
 		return nil
 	}
 	if object.size >= SignatureScanMaxBytes {
-		return fileSizeError()
+		return s.reportOversizedGitBlob(repo, sized)
 	}
-	body, err := contents.request(id)
+	data, err := readGitBlob(contents, object)
 	if err != nil {
 		return err
 	}
-	if body != object {
-		return fmt.Errorf("Git object changed during inspection: %s", id)
+	if sized {
+		s.matchGitPayloadHash(repo, id, data)
 	}
-	hash := sha256.New()
-	if _, err := io.CopyN(hash, contents.output, body.size); err != nil {
-		return err
+	if named {
+		s.stats.GitBlobsInspected++
+		s.inspectGitBlob(repo, path, id, data)
+	}
+	return nil
+}
+
+// A sized candidate over the limit is a coverage failure, because its length
+// already matched a payload. An ordinary source blob over it is not: it is the
+// same limit the filesystem walk applies, so it is reported as scope. The
+// detail omits the blob ID so a repository with many oversized blobs states
+// the limit once.
+func (s *Scanner) reportOversizedGitBlob(repo string, sized bool) error {
+	if sized {
+		return fileSizeError()
+	}
+	s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: repo,
+		Detail: "Git history: blobs at or above the content inspection limit were not read; name-gated history checks did not cover every blob in this repository."})
+	return nil
+}
+
+// readGitBlob drains exactly one body off the --batch stream. The metadata the
+// body announces must match what --batch-check reported, or the two streams
+// are describing different objects and nothing after this point is trustworthy.
+func readGitBlob(contents *gitBatch, object gitObject) ([]byte, error) {
+	body, err := contents.request(object.id)
+	if err != nil {
+		return nil, err
+	}
+	if body != object {
+		return nil, fmt.Errorf("Git object changed during inspection: %s", object.id)
+	}
+	data := make([]byte, body.size)
+	if _, err := io.ReadFull(contents.output, data); err != nil {
+		return nil, err
 	}
 	if end, err := contents.output.ReadByte(); err != nil || end != '\n' {
-		return fmt.Errorf("invalid Git object terminator: %s", id)
+		return nil, fmt.Errorf("invalid Git object terminator: %s", object.id)
 	}
+	return data, nil
+}
+
+func (s *Scanner) matchGitPayloadHash(repo, id string, data []byte) {
 	s.stats.GitBlobsChecked++
-	digest := hex.EncodeToString(hash.Sum(nil))
+	sum := sha256.Sum256(data)
+	digest := hex.EncodeToString(sum[:])
 	for _, h := range KnownRepoPayloadHashes {
 		if digest != h.SHA256 {
 			continue
 		}
-		s.addFinding(Finding{Check: "git-payload-hash", Severity: SevCritical, Path: repo,
-			Detail: fmt.Sprintf("%s: blob %s, SHA-256 %s (attack: %s). Reachable from local refs/HEAD history; may be historical, not in the checkout. Inspect with git log --all --find-object=%s.", h.Desc, id, digest, h.Attack, id)})
+		s.addGitPayloadFinding(repo, id,
+			fmt.Sprintf("%s (attack: %s); matched by raw-content SHA-256. Reachable from local refs/HEAD history; may be historical, not in the checkout.", h.Desc, h.Attack),
+			fmt.Sprintf("blob %s, SHA-256 %s", id, digest))
 	}
-	return nil
 }
 
 // uv deliberately puts an empty .git and .gitignore in its sdist bucket.

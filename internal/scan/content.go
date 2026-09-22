@@ -96,96 +96,119 @@ func isJSFamily(ext string) bool {
 
 // ReadTimeout bounds reading and content inspection together for one file.
 //
-// A file under Dropbox, OneDrive, iCloud Drive, or Google Drive may exist as a
-// placeholder whose contents are not on local disk. Opening one asks the
-// provider to fetch it. Usually that works and the file should be scanned —
-// cloud-synced folders hold real repositories, and skipping them outright would
-// be a blind spot in exactly the place this campaign spreads. But when the
-// provider is not running, the account is unlinked, or the file is no longer
-// available server-side, the read blocks indefinitely and then fails. The same
-// happens on a stalled NFS or SMB mount.
-//
-// A timeout covers both: healthy placeholders download and get scanned, broken
-// ones cost a few seconds and are reported. Four MiB from a local disk is
-// effectively instant, so this only ever fires on something genuinely stuck.
+// Cloud-sync placeholders are recognised by their filesystem flag and skipped
+// before they are opened, so the common cause of a hang never reaches here.
+// What remains is a mount or a disk that has stopped answering, where a read
+// blocks indefinitely and then fails. Four MiB from a local disk is effectively
+// instant, so this only ever fires on something genuinely stuck.
 const ReadTimeout = 5 * time.Second
 
-// StallThreshold is how many reads may time out under one subtree before that
-// subtree is abandoned for the rest of the scan.
+// StallBudget is the total wall-clock time one scan may lose to reads that
+// never returned before it gives up and reports what it has.
 //
-// A timeout alone bounds each individual file but not the scan. An offline
-// Dropbox folder holding a few hundred build configs would cost
-// ReadTimeout × every one of them — technically not a hang, practically still
-// unusable. Three strikes is enough to distinguish "one odd file" from "this
-// whole mount is not answering", and caps the damage at
-// StallThreshold × ReadTimeout per subtree.
-const StallThreshold = 3
+// ReadTimeout bounds each individual file but not the run. Cloud placeholders
+// are recognised and skipped without being opened, so a read that hangs now
+// means something is actually broken -- a wedged NFS or SMB mount, a dying
+// disk, a FUSE filesystem whose daemon died -- and in that situation there is
+// no healthy subtree worth salvaging by guessing at which directory is at
+// fault. Twelve timeouts is enough to tell one odd file from a machine that
+// cannot answer, and it makes the worst case a number this file can state:
+// a scan never loses more than a minute to hangs, whatever the layout.
+const StallBudget = 60 * time.Second
 
-// stallKeyDepth is how many path components below the home directory identify
-// a subtree for stall tracking. Three resolves the cloud-provider layouts that
-// matter — `Library/CloudStorage/Dropbox`, `Library/CloudStorage/OneDrive-Foo`
-// — without lumping all of `Library` together, and degrades sensibly elsewhere
-// (`~/Dropbox` keys on itself; `~/src/project` keys per project).
-const stallKeyDepth = 3
-
-// stallKey identifies the subtree a path belongs to for stall tracking.
-func (s *Scanner) stallKey(path string) string {
-	rel, err := filepath.Rel(s.HomeDir, path)
-	if err != nil || strings.HasPrefix(rel, "..") {
-		// Outside the home directory (e.g. a global npm install): key on the
-		// containing directory.
-		return filepath.Dir(path)
-	}
-
-	parts := strings.Split(rel, string(filepath.Separator))
-	if len(parts) > stallKeyDepth {
-		parts = parts[:stallKeyDepth]
-	} else if len(parts) > 1 {
-		parts = parts[:len(parts)-1] // drop the filename
-	}
-	return filepath.Join(s.HomeDir, filepath.Join(parts...))
-}
-
-// stalled reports whether a subtree has already been abandoned.
-func (s *Scanner) stalled(key string) bool {
+// stallBudgetSpent reports whether the scan has already given up on reading.
+func (s *Scanner) stallBudgetSpent() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.stallCounts[key] >= StallThreshold
+	return s.readsAbandoned
 }
 
-// recordStall reports the first timed-out read in a subtree. Reaching the
-// threshold abandons further reads there, without emitting duplicate findings.
-//
-// The finding is deliberately a finding and not a log line: it lands in the
-// JSON output, it appears in the findings list, and it pushes the exit code off
-// zero. A scan that silently gave up on a synced folder full of repositories
-// must never be reportable as a clean scan — which is the same failure mode as
-// a rate-limited API sweep returning empty results and being read as "nothing
-// there".
-func (s *Scanner) recordStall(key, path string) {
+// recordTimeout books the time one read spent hanging. Each timed-out file is
+// its own warning -- it is named, so the reader knows exactly what was missed
+// and can go look. Spending the whole budget is different in kind: everything
+// after it goes unread and nothing names it, so that is the critical one.
+func (s *Scanner) recordTimeout(path string) {
 	s.mu.Lock()
 	s.stats.FilesUnreadable++
-	if s.stallCounts == nil {
-		s.stallCounts = make(map[string]int)
+	s.timeLostToStalls += ReadTimeout
+	trip := !s.readsAbandoned && s.timeLostToStalls >= StallBudget
+	if trip {
+		s.readsAbandoned = true
 	}
-	s.stallCounts[key]++
-	first := s.stallCounts[key] == 1
 	s.mu.Unlock()
 
 	s.log("file processing timed out after %s, not fully scanned: %s", ReadTimeout, path)
 
-	if first {
+	s.addFinding(Finding{
+		Check:            "scan-incomplete",
+		coverageCategory: "timed out",
+		Severity:         SevWarn,
+		Path:             path,
+		Detail: fmt.Sprintf(
+			"Reading or inspecting this file did not finish within %s, so its contents were not scanned. "+
+				"Usually a stalled network mount or a cloud-sync file the provider never delivered. "+
+				"Bring it online and re-run to cover it.", ReadTimeout),
+	})
+
+	if trip {
 		s.addFinding(Finding{
 			Check:            "scan-incomplete",
 			coverageCategory: "timed out",
-			Severity:         SevWarn,
-			Path:             key,
-			Detail: fmt.Sprintf(
-				"File reading or inspection under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
-					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
-					"Bring it online and re-run to cover it.",
-				StallThreshold, ReadTimeout),
+			Severity:         SevCritical,
+			Path:             "content",
+			Detail:           abandonDetail(0),
 		})
+	}
+}
+
+// abandonDetail explains a scan that ran out of patience. How much went unread
+// is only known once the walk is over, so recordTimeout emits this with zero
+// and finalizeStalls rewrites it with the real count: one finding standing for
+// an unbounded remainder gives a reader nothing to weigh it by.
+func abandonDetail(skipped int) string {
+	unread := ""
+	if skipped > 0 {
+		unread = fmt.Sprintf("%d further file(s) went unread. ", skipped)
+	}
+	return fmt.Sprintf(
+		"This scan spent its whole %s budget on reads that never returned, so it stopped reading files and gave up. %s"+
+			"The individual timeouts above name what hung. Something on this machine is not answering -- a stalled network mount, "+
+			"a failing disk, or a sync client that is running but not serving. Fix it and re-run: these results cannot be trusted as a clean scan.",
+		StallBudget, unread)
+}
+
+// recordDataless reports a file whose bytes are not on local disk. Reading one
+// asks the sync provider to fetch it, which is exactly the hang the budget
+// above exists to survive -- and on a healthy machine it would also mean a scan
+// silently downloading gigabytes of someone's archived files. Skipping it loses
+// coverage of one named file, which is a warning, not a failed scan.
+func (s *Scanner) recordDataless(path string) {
+	s.mu.Lock()
+	s.stats.FilesUnreadable++
+	s.mu.Unlock()
+	s.debug.event("skip-dataless", path, 0, 0)
+	s.addFinding(Finding{
+		Check:            "scan-incomplete",
+		coverageCategory: "not downloaded",
+		Severity:         SevWarn,
+		Path:             path,
+		Detail: "This file is a cloud-sync placeholder: its contents are not on local disk, and reading it would ask the provider to download it. " +
+			"It was not scanned. Make it available offline and re-run to cover it.",
+	})
+}
+
+// finalizeStalls folds the count of reads skipped after the budget ran out into
+// the finding that announced it, once the walk that skipped them has finished.
+func (s *Scanner) finalizeStalls() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.readsSkipped == 0 {
+		return
+	}
+	for i, f := range s.Findings {
+		if f.Check == "scan-incomplete" && f.Severity == SevCritical && f.Path == "content" {
+			s.Findings[i].Detail = abandonDetail(s.readsSkipped)
+		}
 	}
 }
 
@@ -193,6 +216,14 @@ func (s *Scanner) recordStall(key, path string) {
 func (s *Scanner) readCapped(path string) []byte {
 	return s.processFile(path, ReadTimeout, nil)
 }
+
+// statFile resolves a path before it is opened. Tests replace it so a FIFO
+// still reaches the read and exercises the timeout path.
+var statFile = os.Stat
+
+// isDataless reports a cloud placeholder from the stat the read already did.
+// Tests replace it: no portable way exists to create one on demand.
+var isDataless = datalessFile
 
 var errFileTooLarge = errors.New("file size limit exceeded")
 
@@ -222,16 +253,52 @@ func (s *Scanner) processSourceFile(path string, inspect func(*Scanner, []byte))
 	source := !slices.ContainsFunc(KnownRepoPayloadHashes, func(h RepoPayloadHash) bool { return h.Filename == filepath.Base(path) })
 	return s.processFilePolicy(path, ReadTimeout, inspect, false, source)
 }
+
+// inheritedScopeRoots is the scope a per-read Scanner copy must carry, resolved
+// here on the parent so a read that outlives its deadline cannot leave a
+// goroutine filling the cache beside the caller. Nil when the scan is unconfined.
+func (s *Scanner) inheritedScopeRoots() []string {
+	if !s.Only {
+		return nil
+	}
+	return s.scopeRootList()
+}
+
+// openForRead screens a selected path and opens it. A nil file with a nil error
+// means the path was deliberately not read and is not a coverage failure here.
+//
+// Stat before opening, not after: opening a FIFO blocks until a writer appears,
+// so a named pipe anywhere in a scanned tree would cost a full ReadTimeout.
+// Nothing but a regular file has content to inspect, and a placeholder whose
+// bytes are not on local disk must not be opened at all, because reading one
+// asks the sync provider to fetch it. statFile is indirected for tests, which
+// need a FIFO to stay readable to simulate an unresponsive mount.
+func (s *Scanner) openForRead(path string) (*os.File, error) {
+	info, err := statFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		s.debug.event("skip-irregular", path, 0, 0)
+		return nil, nil
+	}
+	if isDataless(info) {
+		s.recordDataless(path)
+		return nil, nil
+	}
+	return os.Open(path)
+}
+
 func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect func(*Scanner, []byte), optional, source bool) []byte {
 	s.debug.selection(path)
-	key := s.stallKey(path)
-	if s.stalled(key) {
+	if s.stallBudgetSpent() {
 		s.mu.Lock()
 		s.stats.FilesUnreadable++
+		s.readsSkipped++
 		s.mu.Unlock()
 		return nil
 	}
-	deadline := time.Now().Add(timeout)
+	scopeRoots := s.inheritedScopeRoots()
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	cancel := make(chan struct{})
@@ -251,9 +318,12 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 			s.debug.fileDone(path, fileStats, readTime, inspectTime, time.Since(started))
 			done <- result
 		}()
-		f, err := os.Open(path)
+		f, err := s.openForRead(path)
 		if err != nil {
 			result = fileResult{err: err}
+			return
+		}
+		if f == nil {
 			return
 		}
 		opened.Store(f)
@@ -279,6 +349,12 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		default:
 		}
 		local := New(s.HomeDir, false)
+		// Carry the scope with it. Inspection callbacks reach paths named by
+		// file content (a lifecycle target may be "../../outside.js"), and
+		// they check them against this copy, not against s.
+		local.Only = s.Only
+		local.ExtraRoots = s.ExtraRoots
+		local.scopeRoots = scopeRoots
 		local.contentIO = s.contentIO
 		local.reads = s.reads
 		local.Deep = s.Deep
@@ -293,29 +369,41 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 	}()
 	select {
 	case result := <-done:
-		if time.Now().After(deadline) {
-			s.recordStall(key, path)
-			return nil
-		}
-		if result.err != nil {
-			if optionalFileMissing(optional, result.err) {
-				return nil
-			}
-			s.mu.Lock()
-			s.stats.FilesUnreadable++
-			s.mu.Unlock()
-			s.scanError(path, result.err)
-			return nil
-		}
-		return s.mergeFileResult(path, result)
+		return s.finishFileResult(path, result, optional)
 	case <-timer.C:
+		// The read may have landed in the same instant the timer fired; select
+		// chooses at random between two ready cases. A finished read is a
+		// finished read, and its findings cost a full timeout to produce, so
+		// take the result rather than discarding it and blaming the volume.
+		select {
+		case result := <-done:
+			return s.finishFileResult(path, result, optional)
+		default:
+		}
 		s.debug.event("timeout", path, 0, timeout)
 		if f := opened.Load(); f != nil {
 			go f.Close()
 		}
-		s.recordStall(key, path)
+		s.recordTimeout(path)
 		return nil
 	}
+}
+
+// finishFileResult records a completed read, whether it finished inside the
+// deadline or at the edge of it. Completion is what matters: the bytes were
+// read and inspected, so the findings are as good as any other file's.
+func (s *Scanner) finishFileResult(path string, result fileResult, optional bool) []byte {
+	if result.err != nil {
+		if optionalFileMissing(optional, result.err) {
+			return nil
+		}
+		s.mu.Lock()
+		s.stats.FilesUnreadable++
+		s.mu.Unlock()
+		s.scanError(path, result.err)
+		return nil
+	}
+	return s.mergeFileResult(path, result)
 }
 
 // Content accounting measures bytes returned by file reads, including rejected
@@ -646,22 +734,25 @@ func (s *Scanner) checkPayloadSignatures(path string, data []byte) bool {
 	return false
 }
 
+// Matching is done over the bytes rather than a string copy of them: this
+// runs once per blob across a repository's whole history, where the copy
+// alone came to hundreds of megabytes on a large repository.
 func payloadSignature(data []byte) (PayloadSignature, bool) {
-	content := string(data)
-	var lower string
+	var lower []byte
 	lowerReady := false
 	caseInsensitiveContains := func(needle string) bool {
 		if !lowerReady {
-			lower = strings.ToLower(content)
+			lower = bytes.ToLower(data)
 			lowerReady = true
 		}
-		return strings.Contains(lower, strings.ToLower(needle))
+		return bytes.Contains(lower, []byte(strings.ToLower(needle)))
 	}
+	contains := func(needle string) bool { return bytes.Contains(data, []byte(needle)) }
 	for _, sig := range KnownPayloadSignatures {
-		if sig.Requires != "" && !strings.Contains(content, sig.Requires) {
+		if sig.Requires != "" && !contains(sig.Requires) {
 			continue
 		}
-		if strings.Contains(content, sig.Signature) ||
+		if contains(sig.Signature) ||
 			(strings.HasPrefix(sig.Signature, "0xa322") && caseInsensitiveContains(sig.Signature)) ||
 			(sig.Signature == "x-payload-b64" && caseInsensitiveContains(sig.Signature)) {
 			return sig, true
@@ -785,24 +876,31 @@ func hasInlinePadding(data []byte) bool {
 // deliberate concealment step, and it survives cleanup of the file itself.
 func (s *Scanner) checkGitignore(path string) {
 	if s.processFile(path, ReadTimeout, func(local *Scanner, data []byte) {
-		for line := range strings.Lines(string(data)) {
-			trimmed := strings.TrimSpace(line)
-			for _, entry := range GitignoreInjectedLines {
-				if trimmed == entry.Signature {
-					local.addFinding(Finding{
-						Check:    "gitignore-injection",
-						Severity: SevCritical,
-						Path:     path,
-						Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
-					})
-					return
-				}
-			}
-		}
+		local.inspectGitignore(path, data)
 	}) != nil {
 		s.stats.FilesChecked++
 	}
 
+}
+
+// inspectGitignore is the content half of checkGitignore, split out so the
+// same whole-line comparison can run against a Git blob body, which arrives
+// as bytes off a pipe rather than from a file on disk.
+func (s *Scanner) inspectGitignore(path string, data []byte) {
+	for line := range strings.Lines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		for _, entry := range GitignoreInjectedLines {
+			if trimmed == entry.Signature {
+				s.addFinding(Finding{
+					Check:    "gitignore-injection",
+					Severity: SevCritical,
+					Path:     path,
+					Detail:   fmt.Sprintf("%s (attack: %s)", entry.Desc, entry.Attack),
+				})
+				return
+			}
+		}
+	}
 }
 
 // scanDirFiles runs content checks over the files directly inside one

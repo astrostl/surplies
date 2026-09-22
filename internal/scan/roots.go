@@ -8,11 +8,14 @@ import (
 	"strings"
 )
 
-// Shared discovery walks home plus explicitly requested roots. Resolve root
-// symlinks (e.g. /tmp), deduplicate overlapping roots, and retain the caller's
-// path spelling in findings. Internal directory symlinks are not followed.
+// Shared discovery walks home, explicitly requested roots, and the temp
+// directories, which are walked on every run rather than probed at their top
+// level. Resolve root symlinks (e.g. /tmp), deduplicate overlapping roots, and
+// retain the caller's path spelling in findings. Internal directory symlinks
+// are not followed.
 func (s *Scanner) walkScanRoots(visit fs.WalkDirFunc) {
 	roots := append([]string{s.HomeDir}, s.ExtraRoots...)
+	roots = append(roots, s.tempWalkRoots()...)
 	targets := resolvedScanRoots(roots)
 	walked := make(map[string]bool)
 	for _, root := range roots {
@@ -67,9 +70,7 @@ func (s *Scanner) pathInScope(path string) bool {
 	if !s.Only {
 		return true
 	}
-	if s.scopeRoots == nil {
-		s.scopeRoots = resolvedScanRoots(append([]string{s.HomeDir}, s.ExtraRoots...))
-	}
+	roots := s.scopeRootList()
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return false
@@ -81,12 +82,23 @@ func (s *Scanner) pathInScope(path string) bool {
 	if target, err := filepath.EvalSymlinks(absolute); err == nil {
 		resolved = target
 	}
-	for _, root := range s.scopeRoots {
+	for _, root := range roots {
 		if pathWithin(root, absolute) || pathWithin(root, resolved) {
 			return true
 		}
 	}
 	return false
+}
+
+// scopeRootList resolves the in-scope roots once. Callers that hand the list
+// to a per-read Scanner must warm it here, on the parent, rather than letting
+// that copy fill its own cache: a read that outlives its deadline leaves the
+// goroutine running beside the caller.
+func (s *Scanner) scopeRootList() []string {
+	if s.scopeRoots == nil {
+		s.scopeRoots = resolvedScanRoots(append([]string{s.HomeDir}, s.ExtraRoots...))
+	}
+	return s.scopeRoots
 }
 
 func resolveScanRoot(root string) (absolute, resolved string, err error) {

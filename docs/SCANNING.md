@@ -6,14 +6,49 @@ behind each limit. The principles these follow from are in the
 
 ## Scan phases
 
-The scanner runs six phases sequentially:
+The scanner runs five phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
-2. **Project directory scanning** — walk home and each additional `-root` directory, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases; dependency checks select declared entrypoints and known payload candidates
+2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root (`-skip-tmproots` drops the temp directories from this walk, keeping any named with `-root`, and reports a `scan-limited` notice); dependency checks select declared entrypoints and known payload candidates
 3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
-4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs (and IPs resolved on-the-fly from known C2 domains)
-5. **Temp directory artifacts** — check temp dirs for payload remnants
-6. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list
+4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
+5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list (skipped entirely when the scan has already spent its stall budget: the storage is not answering, and a longer partial report is not what the reader needs)
+
+## External commands
+
+A scan executes exactly two external programs: `netstat` and `git`. Both are the
+documented exceptions to filesystem-only detection; everything else a check knows
+comes from reading files. No package manager or runtime (`npm`, `pip`, `python`,
+`node`, `kubectl`, `docker`) is ever invoked, and nothing is run through a shell —
+each command is executed directly with an argument vector, so no scanned path or
+file content can be interpreted as shell syntax.
+
+| Command | When | Exact invocation |
+|---|---|---|
+| `netstat` | Network IOC phase; skipped entirely under `-only` | `netstat -n`, plus `-l` on macOS, under a five-second deadline |
+| `git` | Once before the Git phase, to resolve and version-check Git | `git --version`, deliberately without the hardening flags an older Git would reject |
+| `git` | Git history phase, per repository | `rev-list --objects --all --missing=print` (with `-z` on Git 2.50 or newer, `--no-object-names` below it), `cat-file --batch-check`, `cat-file --batch`, each under the repository's two-minute deadline |
+
+Every Git command but the version probe is prefixed with `--no-pager
+--no-replace-objects --no-lazy-fetch -c core.hooksPath=<null device> -c
+core.fsmonitor=false -c protocol.allow=never -c core.commitGraph=false -c
+safe.directory=* -C <repo>`, and runs with the inherited `GIT_*` environment
+removed and `GIT_CONFIG_NOSYSTEM=1`, `GIT_CONFIG_GLOBAL=<null device>`,
+`GIT_NO_LAZY_FETCH=1`, `GIT_TERMINAL_PROMPT=0`, `GIT_OPTIONAL_LOCKS=0` and
+`LC_ALL=C` set. That combination is what makes the Git phase read-only and
+offline: no fetch, no checkout, no hook, filter or fsmonitor process, and no
+repository, user or system configuration that could redirect the scan. Git is
+resolved from `PATH` only. See [Default Git history checks](#default-git-history-checks).
+
+Three more commands exist in the program and are unreachable from a scan. They
+belong to the [`schedule`](../README.md#scheduled-scans) subcommand, which the user
+must invoke by name: `launchctl` (`print`, `bootout`, `enable`, `bootstrap`,
+`disable`) on macOS, and `systemctl --user` (`show-environment`, `daemon-reload`,
+`enable`, `disable --now`, `restart`, `stop`) plus a `notify-send --version`
+prerequisite probe on Linux. Detection code does not import `internal/schedule`.
+The notification helper that `schedule` installs runs `surplies` itself and then
+`osascript` or `notify-send` to display the result; it is a shell script under the
+user's own account, not something the scanner calls.
 
 ## Default dependency checks
 
@@ -56,9 +91,11 @@ The scanner discovers repositories under home and additional `-root` directories
 
 Dependency checks, Git history checks, and coverage details are enabled by default; no mode flags are required.
 
-The scanner uses [Git object enumeration](https://git-scm.com/docs/git-rev-list) and [raw blob reads](https://git-scm.com/docs/git-cat-file), with replacement objects and lazy fetching disabled. It does not fetch remote refs, check out branches, run hooks, apply text conversion or content filters, or modify repositories. Repo discovery follows the normal root symlink policy; internal directory symlinks are not traversed. The saved report is self-contained: alongside `invocation`, `stats` and `findings` it carries a `summary` field holding the same human-readable block the run printed to the terminal, verbatim — including the coverage banners. A reader who only has the JSON (an MDM inventory record, a ticket attachment) gets the plain-language verdict without re-deriving it. Repositories outside the selected roots need `-root`; a scan that finds none says so and names `-root`. System and global Git configuration are disabled for every invocation so that no external configuration can redirect the scan; because that also removes the scopes Git accepts `safe.directory` from, the scanner passes `-c safe.directory=*` itself. Without it a scan running as a different user than the repository owner — the normal case when an MDM policy runs as root over user home directories — fails Git's ownership check on every repository, which counts them as found but never scanned.
+Git is resolved from `PATH` only, and the resolved path and version are recorded in `stats` and printed on every Git-enabled run. Git 2.45 or newer is required, because every command below passes `--no-lazy-fetch`; an older Git fails the whole command line and inspects nothing, which is reported as a critical [`git-too-old`](CHECKS.md#26-git-too-old-critical) finding when repositories were found. The scanner uses [Git object enumeration](https://git-scm.com/docs/git-rev-list) and [raw blob reads](https://git-scm.com/docs/git-cat-file), with replacement objects and lazy fetching disabled. Object names are requested only in the NUL-framed `-z` form added in [Git 2.50](https://github.com/git/git/blob/master/Documentation/RelNotes/2.50.0.adoc), never in the legacy space-joined form a path can be mistaken for; an older Git is given `--no-object-names` and its missing filename-gated coverage is reported as a critical [`git-too-old-for-filenames`](CHECKS.md#27-git-too-old-for-filenames-critical). It does not fetch remote refs, check out branches, run hooks, apply text conversion or content filters, or modify repositories. Repo discovery follows the normal root symlink policy; internal directory symlinks are not traversed. The saved report is self-contained: alongside `invocation`, `stats` and `findings` it carries a `summary` field holding the same human-readable block the run printed to the terminal, verbatim — including the coverage banners. A reader who only has the JSON (an MDM inventory record, a ticket attachment) gets the plain-language verdict without re-deriving it. Repositories outside the selected roots need `-root`; a scan that finds none says so and names `-root`. System and global Git configuration are disabled for every invocation so that no external configuration can redirect the scan; because that also removes the scopes Git accepts `safe.directory` from, the scanner passes `-c safe.directory=*` itself. Without it a scan running as a different user than the repository owner — the normal case when an MDM policy runs as root over user home directories — fails Git's ownership check on every repository, which counts them as found but never scanned.
 
-Only locally available reachable history is covered. Unfetched remote branches, missing shallow history, reflog-only/unreachable objects, uninitialized submodules and Git LFS content stored outside Git blobs are not cleared by this check. Each repository has a two-minute inspection deadline; candidate blob reads retain the exclusive 100 MB content limit. Known exact sizes avoid reading unrelated blob bodies; every candidate is verified by raw-content SHA-256. Shallow repositories produce informational `scan-limited` notices describing the available-history scope; these are not scan errors and do not change the exit status. Git absence, incompatible Git, broken refs, missing objects and command failures produce `scan-incomplete` warnings and nonzero exit status. When objects are missing, available reachable objects are still inspected, and the repository remains incomplete. Findings identify the repository, blob ID and SHA-256, with a `git log --all --find-object=<blob>` command for investigating paths/commits. Summary counts distinguish found/completed repositories, blobs considered by metadata, and candidate blobs actually hashed. Zero candidate blobs can simply mean no blob matched a known payload size; the summary counts object-identity matches separately from hashed candidates.
+Blob selection has two independent halves. A published size or object identity needs no name and reaches a renamed dropper. A committed name the project walk would have opened — a payload or artifact filename, `.gitignore`, a `*.config.*` JavaScript file, a documented injectable source name, a font, a `.vscode`/`.claude` settings file — selects the blob for the identity-based content checks, mirroring the filesystem selection rule rather than the broader signature-eligibility rule; a source extension never alone selects a blob. The general heuristics stay on the working tree, because history carries every revision and would repeat each one. Repeated hits roll up to one finding per indicator per repository with a revision count. See [`git-payload-hash`](CHECKS.md#25-git-payload-hash-critical).
+
+Only locally available reachable history is covered. Unfetched remote branches, missing shallow history, reflog-only/unreachable objects, uninitialized submodules and Git LFS content stored outside Git blobs are not cleared by this check. Each repository has a two-minute inspection deadline; candidate blob reads retain the exclusive 100 MB content limit. Known exact sizes avoid reading unrelated blob bodies; every candidate is verified by raw-content SHA-256. Shallow repositories produce informational `scan-limited` notices describing the available-history scope; these are not scan errors and do not change the exit status. Git absence, incompatible Git, broken refs, missing objects and command failures produce `scan-incomplete` warnings and nonzero exit status. Their share of the repositories found is then judged as a whole: no repositories found is a warning, and more than 25% unscannable — including every run that completed none of them — is a critical coverage verdict that exits 2, because at that point the Git result no longer describes the machine. Ordinary breakage across a deployed fleet stays well under that share; the machines whose Git scan meant nothing failed nearly all of their repositories. When objects are missing, available reachable objects are still inspected, and the repository remains incomplete. Findings identify the repository, blob ID and SHA-256, with a `git log --all --find-object=<blob>` command for investigating paths/commits. Summary counts distinguish found/completed repositories, blobs considered by metadata, candidate blobs actually hashed, and blobs read because their committed name selected them. Zero candidate blobs can simply mean no blob matched a known payload size; the summary counts object-identity matches separately from hashed candidates.
 
 Discovery recognizes [uv’s deliberately empty Git cache marker](https://github.com/astral-sh/uv/blob/main/crates/uv-cache/src/lib.rs) only in a versioned sdist bucket with the accompanying empty `.gitignore` and cache signature. It still searches inside that bucket for actual repositories; other invalid gitfiles remain errors.
 
@@ -125,7 +162,7 @@ Installed `node_modules` and `.npm/_npx` installations retain metadata/lifecycle
 
 Live telemetry decision (G15): retain the bounded network snapshot. Process command lines/ancestry, registry and scheduled-task APIs, memory, protocol capture, and dynamic blockchain queries are deferred to complementary endpoint/network investigation. No additional runtime collectors, C2 connections, remediation, or account actions are added. Static findings do not establish execution; a clean scan cannot rule out a running or historical implant.
 
-Explicit package checks follow package-directory symlinks (including pnpm layouts). The scanner resolves requested root symlinks and follows selected file symlinks, but does not recursively follow internal directory symlinks. Supply their destinations with `-root`. Directory traversal itself is not subject to the per-file processing deadline. Package-target checks can inspect a lifecycle target separately from an earlier ordinary source read; repeated identical findings are deduplicated.
+Explicit package checks follow package-directory symlinks (including pnpm layouts). The scanner resolves requested root symlinks and follows selected file symlinks, but does not recursively follow internal directory symlinks. Supply their destinations with `-root`. Directory traversal itself is not subject to the per-file processing deadline. Cloud-sync placeholders are recognised from the stat the read already makes and skipped unread, so a scan never downloads a file to inspect it; a read that hangs anyway costs five seconds, and one minute of such reads across the whole run stops content reading and the Git phase entirely. Package-target checks can inspect a lifecycle target separately from an earlier ordinary source read; repeated identical findings are deduplicated.
 
 ## Performance diagnostics
 

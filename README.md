@@ -16,7 +16,7 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
 
-**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.11.4) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
+**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.15.0) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
 
 **Go:**
 
@@ -52,12 +52,26 @@ surplies              # scan with verbose output (default)
 surplies -broad        # include unrelated text/data (slow)
 surplies -browser-cache # include browser cache contents (slow)
 surplies -npm-cache    # include raw npm cache contents (slow)
+surplies -resolve      # also resolve known C2 domains and match their current addresses
 surplies -q           # quiet mode (suppress scan details)
 surplies -json        # JSON output (findings array to stdout)
 surplies -version     # print version
 surplies -root /custom/path  # additional full scan root; repeatable
 surplies -root /custom/path -only  # scan ONLY that root; skip home and machine-wide checks
+surplies -skip-tmproots # do not walk all temp directories (staging names still checked)
+surplies -no-pause    # never wait for ENTER before exiting (Windows only, SURPLIES_NO_PAUSE equivalent; see below)
 ```
+
+A default scan walks your home directory and your own temp directories —
+`$TMPDIR` (`/var/folders/<xx>/<hash>/T` on macOS), `/tmp`, `/var/tmp`, and the
+platform equivalents — recursively, the same way. The run header lists every
+directory it walks. Other users' temp directories require root and are not read.
+
+`-skip-tmproots` drops those directories from the walk, for a machine where
+build and installer debris dominates the report. It narrows traversal rather
+than putting temp out of scope: the documented staging filenames are still
+checked, a temp directory named with `-root` is still walked in full, and the
+run prints a scope notice saying what it stopped looking for.
 
 `-only` confines the scan to the `-root` paths given. Every check is filtered
 by that scope rather than switched off wholesale: the only thing genuinely
@@ -73,7 +87,23 @@ and what was skipped. It is for one-off checks of a single tree, not for
 concluding a machine is clean: a `-only` run that finds nothing says nothing
 about the rest of the machine.
 
+`-resolve` is off by default: looking those domains up queries nameservers the
+campaign may still control, and a dead C2 domain reparked on shared hosting
+resolves to an address the machine legitimately talks to. Every run says which
+half of the indicator list its connection snapshot was compared against.
+
 `-broad`, `-browser-cache`, and `-npm-cache` are independent opt-ins. Broad content scanning leaves both cache exclusions intact; each cache flag expands inspection only within its cache.
+
+On Windows, double-clicking `surplies.exe` in Explorer gives it a console of
+its own, and that window is destroyed the instant the scan exits — the report
+is printed and then disappears unread. Such a run waits for ENTER before
+exiting. Nothing else does: the wait is entered only when this process is the
+only one attached to its console, which is true of a double-click and false of
+a run from `cmd.exe`, PowerShell, a scheduled task or a service, and only when
+stdin and stdout are both still that console, so anything redirected or piped
+(including `-json`) is unaffected. It also gives up after a minute rather than
+waiting forever. macOS and Linux never pause: their terminals already survive
+the process. Use `-no-pause` or set `SURPLIES_NO_PAUSE` to switch it off.
 
 ### Scheduled scans
 
@@ -86,7 +116,7 @@ surplies schedule remove         # stop and remove the schedule and helper
 
 Installs a daily scan using launchd on macOS or a systemd user timer on Linux, along with the notification helper, for the current user. Run it from your normal account without `sudo`, using an installed binary you intend to keep. Rerunning updates the same schedule rather than adding another. The helper records the executable's absolute path, so it does not depend on your interactive shell's `PATH`. Windows is not supported.
 
-Scheduled scans use the default options plus `-q`. A clean scan is silent; any nonzero exit, including incomplete coverage, raises a desktop notification. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
+Scheduled scans use the default options plus `-q`. A clean scan is silent. Warning-level findings, incomplete coverage, or scan errors raise a warning notification; only a critical result (exit code 2) uses the critical title, which covers a critical finding and a scan whose Git coverage failed outright. Run `surplies` yourself for the details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
 
 `disable` also stops a scan that is running at the time, and the setting survives logout and reboot. Run `surplies schedule` again to re-enable at 09:00, or pass `-time`. `remove` keeps the `surplies` binary and existing scan logs.
 
@@ -99,9 +129,9 @@ A scan runs six phases in sequence:
 1. **Known malicious artifacts** — fixed filesystem paths, the global npm CLI, documented Electron application entrypoints and their sidecars, and persistence roots under home and system locations
 2. **Project directories** — walk home and each `-root`, inspecting every `node_modules`, Composer `vendor/`, `.claude/` and `.vscode/`, and every build config, web font, and `.gitignore` encountered
 3. **Python site-packages** — discovered environments plus well-known system Python paths
-4. **Network IOCs** — established connections from `netstat -n` against known C2 IPs and on-the-fly resolutions of known C2 domains
+4. **Network IOCs** — established connections from `netstat -n` against known C2 IPs; `-resolve` adds the current addresses behind known C2 domains
 5. **Temp directories** — payload remnants and staging artifacts
-6. **Git history** — blobs reachable from local refs, matched against the [active payload hashes](docs/ATTACKS.md#active-payload-hashes) regardless of filename
+6. **Git history** — blobs reachable from local refs, matched against the [active payload hashes](docs/ATTACKS.md#active-payload-hashes) regardless of filename, plus the filename-gated checks against blobs whose committed name the project walk would have opened. This reaches a repository cleaned in the working tree whose history was never rewritten
 
 A human-mode run ends with one verdict, coverage status, elapsed time, and content-read totals. Repeated diagnostics print their explanation once with the affected paths underneath, and expected scope limits are reported as context rather than as failures. Every run also saves all findings, exact paths, and statistics to a private `surplies-report-*.json` in the system temporary directory and prints its path, so nothing needs a second scan to retrieve. `-json` puts the complete findings array on stdout:
 
@@ -113,11 +143,11 @@ Which files a scan actually reads — and which it deliberately does not — is 
 
 ## Design principles
 
-- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters.
+- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters. A scan runs nothing else; the complete inventory, including the scheduler commands the explicitly invoked [`schedule`](#scheduled-scans) subcommand uses, is in [External commands](docs/SCANNING.md#external-commands).
 - **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
-- **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64).
-- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git with support for `--no-lazy-fetch`.
+- **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64). Two things outside detection are deliberately platform-specific: [`schedule`](#scheduled-scans) supports macOS and Linux only, and the [ENTER wait](#usage) for a double-clicked window is Windows-only, because only Windows destroys the window on exit.
+- **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git 2.45 or newer, resolved from `PATH` only; an older Git cannot inspect a single repository and is reported as a critical [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) finding rather than silently skipped. Reading the names blobs were committed under requires Git 2.50; from 2.45 to 2.49 the size-matched half of the history scan runs alone, reported as a critical [`git-too-old-for-filenames`](docs/CHECKS.md#27-git-too-old-for-filenames-critical).
 
 ## Checks
 
@@ -147,8 +177,22 @@ Which files a scan actually reads — and which it deliberately does not — is 
 | [`patched-application`](docs/CHECKS.md#22-patched-application-critical) | CRITICAL | Patched VS Code, Cursor, Antigravity, GitHub Desktop, or Discord entrypoints |
 | [`font-execution-task`](docs/CHECKS.md#23-font-execution-task-critical) | CRITICAL | A `.vscode/tasks.json` `folderOpen` task that runs a font file with Node |
 | [`runtime-staging-artifact`](docs/CHECKS.md#24-runtime-staging-artifact-warn) | WARN | Documented staging paths that also have legitimate explanations |
-| [`git-payload-hash`](docs/CHECKS.md#25-git-payload-hash-critical) | CRITICAL | A blob in local Git history matching an active payload hash |
-| [`scan-limited`](docs/CHECKS.md#26-scan-limited-info) | INFO | Expected scope limits, such as shallow Git history |
+| [`git-payload-hash`](docs/CHECKS.md#25-git-payload-hash-critical) | CRITICAL | A blob in local Git history matching an active payload hash, or carrying a documented indicator under a name the walk would have read |
+| [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) | CRITICAL | An installed Git older than 2.45, which cannot inspect a single repository |
+| [`git-too-old-for-filenames`](docs/CHECKS.md#27-git-too-old-for-filenames-critical) | CRITICAL | An installed Git from 2.45 to 2.49, which inspects history by size but cannot read the names blobs were committed under |
+| [`scan-limited`](docs/CHECKS.md#28-scan-limited-info) | INFO | Expected scope limits, such as shallow Git history |
+| [`suspicious-source-execution`](docs/CHECKS.md#29-suspicious-source-execution-warn) | WARN | Decode-and-execute, download-to-shell, or hidden detached spawn structure |
+| [`unicode-concealment`](docs/CHECKS.md#30-unicode-concealment-warn) | WARN | Invisible Unicode hiding code from the reader: bidi controls, variation selectors, joiners |
+| [`loader-structure`](docs/CHECKS.md#31-loader-structure-warn) | WARN | An `import.meta.url` expression immediately invoking a local `.cjs` sidecar |
+| [`loader-variant`](docs/CHECKS.md#32-loader-variant-warn) | WARN | A published global injection assignment, across quoting and spacing variants |
+| [`correlated-loader-markers`](docs/CHECKS.md#33-correlated-loader-markers-warn) | WARN | A community build marker alongside loader or decode/execute structure |
+| [`escaped-execution`](docs/CHECKS.md#34-escaped-execution-warn) | WARN | A long run of ASCII escapes alongside dynamic execution or loader structure |
+| [`asset-format-mismatch`](docs/CHECKS.md#35-asset-format-mismatch-warn) | WARN | A binary-named asset whose header is not the format it claims, or is text |
+| [`disguised-file-execution-task`](docs/CHECKS.md#36-disguised-file-execution-task-warn) | WARN | An editor task running an interpreter on a binary-named file |
+| [`workspace-setting-context`](docs/CHECKS.md#37-workspace-setting-context-warn-or-info) | WARN/INFO | Workspace preferences that ease automatic execution, reported as context |
+| [`startup-content`](docs/CHECKS.md#38-startup-content-warn) | WARN | Startup and persistence files referencing documented staging paths or C2 addresses |
+| [`hosts-c2-entry`](docs/CHECKS.md#39-hosts-c2-entry-warn) | WARN | A hosts file entry mapping a name to a known C2 IP |
+| [`missing-script-target`](docs/CHECKS.md#40-missing-script-target-info) | INFO | A lifecycle script naming a file that is not installed |
 
 What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS.md).
 
@@ -157,13 +201,13 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 | Code | Meaning |
 |------|---------|
 | 0 | Clean scan, no indicators found |
-| 1 | Warning-level findings only |
-| 2 | At least one critical finding |
+| 1 | Warning-level findings only, including a Git scan that found no repositories at all |
+| 2 | At least one critical finding; a Git older than 2.50 with repositories to scan; or unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them) |
 
 ## Documentation
 
 - [Attacks covered](docs/ATTACKS.md) — every campaign in detail, and the active payload hash list
-- [Checks](docs/CHECKS.md) — all 26 checks, their tables, and their reasoning
+- [Checks](docs/CHECKS.md) — all 40 checks, their tables, and their reasoning
 - [Scanning behavior](docs/SCANNING.md) — design principles, what gets read, scope decisions, and performance diagnostics
 - [Attribution](docs/ATTRIBUTION.md) — the researchers and writeups every indicator comes from
 - [Scheduling details](scripts/README.md) — the exact files `surplies schedule` installs

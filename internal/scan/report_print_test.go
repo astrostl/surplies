@@ -149,10 +149,11 @@ func TestCoverageCategoriesAndCounts(t *testing.T) {
 	if got := coverageSummary(groups); got != "Coverage incomplete: 13 size limit exceeded, 1 permission denied." {
 		t.Fatal(got)
 	}
-	s.recordStall("/cloud", "/cloud/file.js")
+	s.recordTimeout("/cloud/file.js")
+	s.recordDataless("/cloud/placeholder.js")
 	s.scanError("/missing", os.ErrNotExist)
 	groups = groupCoverage(s.Findings)
-	if len(groups["timed out"]) != 1 || len(groups["other errors"]) != 1 {
+	if len(groups["timed out"]) != 1 || len(groups["not downloaded"]) != 1 || len(groups["other errors"]) != 1 {
 		t.Fatalf("missing failure categories: %+v", groups)
 	}
 }
@@ -244,6 +245,11 @@ func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
 	s := New("/home/example", false)
 	s.Invocation = invocation
 	s.ExtraRoots = []string{"/custom apps"}
+	temp, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.TempRoots = []string{temp}
 	s.debug = newScanDebug(&out)
 	s.printRunHeader()
 	header := out.String()
@@ -254,7 +260,9 @@ func TestRunHeaderIncludesVersionAndFlags(t *testing.T) {
 	if got := ResultSummary(invocation, nil); !strings.HasPrefix(got, invocation+" ") {
 		t.Fatalf("summary %q does not carry the same label", got)
 	}
-	for _, want := range []string{"Scanning home directory: /home/example", "Additional scan root: /custom apps", "Platform: "} {
+	// Every walked directory on one line: home, the requested roots, and the
+	// temp directories, which are walked on every run.
+	for _, want := range []string{`Scanning directories: /home/example, "/custom apps", ` + temp + "\n", "Platform: "} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("missing %q in %q", want, header)
 		}
@@ -297,5 +305,32 @@ func TestAbsentLifecycleTargetsRollUpInHumanReport(t *testing.T) {
 	}
 	if paths := findingsFor(s, "missing-script-target"); len(paths) != 3 || paths[0].Path == "" {
 		t.Fatalf("records lost their paths: %+v", paths)
+	}
+}
+
+// A scan that could not read most of the repositories it found exits 2, so
+// the summary must not report nothing critical, and the totals must be
+// visible without adding up the individual failures in a long report.
+func TestCriticalGitCoverageIsStatedInTheSummary(t *testing.T) {
+	failures := []Finding{{Check: "scan-incomplete", Severity: SevCritical, Path: "git",
+		coverageCategory: "Git coverage", Detail: "Git history coverage is unusable"}}
+	var out strings.Builder
+	PrintReportSummary(&out, failures, ScanStats{Git: true, GitRepositoriesFound: 379, GitRepositoriesScanned: 67}, "surplies dev")
+	if !strings.Contains(out.String(), "*** GIT COVERAGE IS UNUSABLE! *** 312 of 379 repositories (82%)") {
+		t.Fatalf("unusable Git coverage is not prominent: %s", out.String())
+	}
+	if !strings.Contains(out.String(), "no critical indicators, but coverage failed critically") {
+		t.Fatalf("exit-2 result reported as nothing critical: %s", out.String())
+	}
+	// A coverage failure is not an attack indicator and must not be counted
+	// as one, here or in the rest of the report.
+	if strings.Contains(out.String(), "critical indicator(s)") {
+		t.Fatalf("coverage counted as an indicator: %s", out.String())
+	}
+	// Failures under the threshold stay warnings, with no banner.
+	out.Reset()
+	PrintReportSummary(&out, nil, ScanStats{Git: true, GitRepositoriesFound: 9, GitRepositoriesScanned: 7}, "surplies dev")
+	if strings.Contains(out.String(), "GIT COVERAGE IS UNUSABLE") {
+		t.Fatalf("ordinary breakage banner-ed: %s", out.String())
 	}
 }
