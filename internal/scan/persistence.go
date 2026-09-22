@@ -183,6 +183,12 @@ func (s *Scanner) scanError(path string, err error) {
 	if os.IsPermission(err) {
 		category = "permission denied"
 	}
+	if materializationRefused(err) {
+		s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path, coverageCategory: "not downloaded",
+			Detail: "This path is a cloud-sync placeholder that macOS would not download (resource deadlock avoided), so its contents were not scanned. " +
+				"Make it available offline and re-run to cover it."})
+		return
+	}
 	s.addFinding(Finding{Check: "scan-incomplete", Severity: SevWarn, Path: path,
 		Detail: fmt.Sprintf("Could not fully inspect this path: %v", err), coverageCategory: category})
 }

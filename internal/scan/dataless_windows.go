@@ -21,3 +21,5 @@ func datalessFile(info fs.FileInfo) bool {
 	data, ok := info.Sys().(*syscall.Win32FileAttributeData)
 	return ok && data.FileAttributes&fileAttributeNotLocal != 0
 }
+
+func materializationRefused(error) bool { return false }

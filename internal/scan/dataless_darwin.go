@@ -1,6 +1,7 @@
 package scan
 
 import (
+	"errors"
 	"io/fs"
 	"syscall"
 )
@@ -15,4 +16,12 @@ const sfDataless = 0x40000000
 func datalessFile(info fs.FileInfo) bool {
 	st, ok := info.Sys().(*syscall.Stat_t)
 	return ok && st.Flags&sfDataless != 0
+}
+
+// EDEADLK ("resource deadlock avoided") is what macOS returns when it will not
+// materialize a dataless file or directory for this process. It is the same
+// placeholder the flag above marks, reached through an open or a directory
+// listing instead of a stat.
+func materializationRefused(err error) bool {
+	return errors.Is(err, syscall.EDEADLK)
 }

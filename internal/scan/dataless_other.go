@@ -9,3 +9,5 @@ import "io/fs"
 // its bytes on disk. A read that hangs anyway is a broken mount, which the
 // stall budget covers.
 func datalessFile(fs.FileInfo) bool { return false }
+
+func materializationRefused(error) bool { return false }
