@@ -6,9 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -538,10 +536,7 @@ func TestCleanProjectNoContentFindings(t *testing.T) {
 // faithful stand-in for an offline cloud placeholder that never materializes.
 func mkHangingFile(t *testing.T, path string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("FIFOs are not available on Windows")
-	}
-	if err := syscall.Mkfifo(path, 0644); err != nil {
+	if err := mkfifo(path); err != nil {
 		t.Skipf("cannot create FIFO: %v", err)
 	}
 }
