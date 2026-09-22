@@ -33,6 +33,8 @@ type installer struct {
 	uid                               int
 	run                               func(string, ...string) error
 	scripts                           Scripts
+	roots                             []string
+	only                              bool
 }
 
 func Command(args []string, out io.Writer, scripts Scripts) error {
@@ -42,8 +44,14 @@ func Command(args []string, out io.Writer, scripts Scripts) error {
 	flags := flag.NewFlagSet("schedule", flag.ContinueOnError)
 	flags.SetOutput(out)
 	runTime := flags.String("time", "09:00", "daily scan time in local time (24-hour HH:MM)")
+	var roots []string
+	flags.Func("root", "add/expand a directory to the full scan (repeatable)", func(path string) error {
+		roots = append(roots, path)
+		return nil
+	})
+	only := flags.Bool("only", false, "confine the scan to the given -root(s); machine-wide checks run only inside them")
 	flags.Usage = func() {
-		fmt.Fprintln(out, "Usage: surplies schedule [-time HH:MM]\n       surplies schedule disable\n       surplies schedule remove")
+		fmt.Fprintln(out, "Usage: surplies schedule [-time HH:MM] [-root DIR ...] [-only]\n       surplies schedule disable\n       surplies schedule remove")
 		flags.PrintDefaults()
 	}
 	if err := flags.Parse(args); err != nil {
@@ -53,6 +61,10 @@ func Command(args []string, out io.Writer, scripts Scripts) error {
 		return fmt.Errorf("unexpected argument: %s", flags.Arg(0))
 	}
 	hour, minute, err := parseTime(*runTime)
+	if err != nil {
+		return err
+	}
+	roots, err = resolveRoots(roots, *only)
 	if err != nil {
 		return err
 	}
@@ -74,12 +86,65 @@ func Command(args []string, out io.Writer, scripts Scripts) error {
 			return err
 		}
 	}
-	inst := installer{goos: runtime.GOOS, home: home, executable: executable, configDir: os.Getenv("XDG_CONFIG_HOME"), uid: os.Getuid(), run: runTool, scripts: scripts}
+	inst := installer{goos: runtime.GOOS, home: home, executable: executable, configDir: os.Getenv("XDG_CONFIG_HOME"), uid: os.Getuid(), run: runTool, scripts: scripts, roots: roots, only: *only}
 	if err := inst.install(hour, minute); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "Daily scans scheduled for %02d:%02d local time. Desktop notifications distinguish warnings from critical findings.\n", hour, minute)
+	fmt.Fprintf(out, "Daily scans scheduled for %02d:%02d local time. Desktop notifications report nonzero scan results, including incomplete coverage.\n", hour, minute)
+	inst.printScope(out)
 	return nil
+}
+
+func resolveRoots(roots []string, only bool) ([]string, error) {
+	if only && len(roots) == 0 {
+		return nil, errors.New("-only requires at least one -root")
+	}
+	resolved := make([]string, 0, len(roots))
+	for _, root := range roots {
+		if strings.TrimSpace(root) == "" {
+			return nil, errors.New("scan root must not be empty")
+		}
+		absolute, err := filepath.Abs(root)
+		if err != nil {
+			return nil, fmt.Errorf("cannot resolve -root %s: %w", root, err)
+		}
+		info, err := os.Stat(absolute)
+		if err != nil {
+			return nil, fmt.Errorf("cannot inspect -root %s: %w", absolute, err)
+		}
+		if !info.IsDir() {
+			return nil, fmt.Errorf("scan root must be a directory: %s", absolute)
+		}
+		resolved = append(resolved, absolute)
+	}
+	return resolved, nil
+}
+
+func (s installer) scanCommand(quiet bool) string {
+	var command strings.Builder
+	command.WriteString(shellQuote(s.executable))
+	if quiet {
+		command.WriteString(" -q")
+	}
+	for _, root := range s.roots {
+		command.WriteString(" -root " + shellQuote(root))
+	}
+	if s.only {
+		command.WriteString(" -only")
+	}
+	return command.String()
+}
+
+func (s installer) printScope(out io.Writer) {
+	if s.only {
+		fmt.Fprintln(out, "Scan scope: only the selected directories; a clean result applies only to this scope.")
+	} else {
+		fmt.Fprintln(out, "Scan scope: default home and machine-wide checks, plus any additional roots.")
+	}
+	for _, root := range s.roots {
+		fmt.Fprintf(out, "  %s\n", root)
+	}
+	fmt.Fprintf(out, "Run for details: %s\n", s.scanCommand(false))
 }
 
 func parseTime(value string) (int, int, error) {
@@ -116,7 +181,10 @@ func (s installer) install(hour, minute int) error {
 	if s.goos == "linux" {
 		script = s.scripts.Linux
 	}
-	script = strings.Replace(script, "surplies -q", shellQuote(s.executable)+" -q", 1)
+	script = strings.NewReplacer(
+		"surplies -q", s.scanCommand(true),
+		"details_command=surplies", "details_command="+shellQuote(s.scanCommand(false)),
+	).Replace(script)
 	scriptPath := filepath.Join(s.home, ".local", "bin", "surplies-notify")
 	if err := writeFile(scriptPath, script, 0755); err != nil {
 		return err
@@ -250,7 +318,7 @@ func stopCommand(args []string, out io.Writer) error {
 		if err := inst.disable(); err != nil {
 			return err
 		}
-		fmt.Fprintln(out, "Schedule disabled. Installed files were kept. Run 'surplies schedule [-time HH:MM]' to enable daily scans again (default: 09:00).")
+		fmt.Fprintln(out, "Schedule disabled. Installed files were kept. Run 'surplies schedule [-time HH:MM] [-root DIR ...] [-only]' to enable daily scans again. Omitted settings revert to defaults (09:00, full scope).")
 	}
 	return nil
 }

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Send a desktop notification when surplies reports a warning or critical result.
+# Send a desktop notification for findings or incomplete scan coverage.
 # Requires libnotify (notify-send). Silent on clean scans.
 # Intended for use with cron or a systemd timer.
 # See scripts/README.md for setup instructions.
@@ -13,3 +13,6 @@ if [ "$code" -eq 2 ]; then
 else
     notify-send -u normal "Surplies: Warning" "The scan found warnings, incomplete coverage, or an error. Run 'surplies' for details."
 fi
+
+details_command=surplies
+notify-send -u "$urgency" "$title" "Scan findings or incomplete coverage require review. Run for details: $details_command"

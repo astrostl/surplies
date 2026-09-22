@@ -1,5 +1,5 @@
 #!/bin/sh
-# Send a macOS notification when surplies reports a warning or critical result.
+# Send a macOS notification for findings or incomplete scan coverage.
 # Silent on clean scans. Intended for use with launchd or cron.
 # See scripts/README.md for setup instructions.
 
@@ -12,3 +12,8 @@ if [ "$code" -eq 2 ]; then
 else
     osascript -e "display notification \"The scan found warnings, incomplete coverage, or an error. Run 'surplies' for details.\" with title \"Surplies: Warning\""
 fi
+
+details_command=surplies
+osascript -e 'on run argv' \
+    -e 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Basso"' \
+    -e 'end run' "$title" "Scan findings or incomplete coverage require review. Run for details: $details_command"
