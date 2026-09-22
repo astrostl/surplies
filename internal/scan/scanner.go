@@ -745,6 +745,15 @@ func (s *Scanner) checkScriptFile(path, pkgName string) { s.checkScriptTarget(pa
 // a warning: the absence is normal and nearly always benign, and the reader has
 // nothing to review beyond the packaging itself.
 func (s *Scanner) checkScriptTarget(path, pkgName, hook string) {
+	// The target is named by the manifest, relative to the package, so "../"
+	// resolves outside it — and npm would run it there, which is why the
+	// escape is inspected rather than ignored. Under -only that read and the
+	// finding naming it would land outside the tree the user asked about,
+	// which is the one thing -only promises not to do. Without -only this is
+	// a no-op and the target is inspected wherever it points.
+	if !s.pathInScope(path) {
+		return
+	}
 	if hook != "" {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			s.addFinding(Finding{Check: "missing-script-target", Severity: SevInfo, Path: path, rollup: fmt.Sprintf("%s (%s)", pkgName, hook), Detail: fmt.Sprintf("%s declares a %s script that runs this file, but no such file is installed; npm would execute anything later written to this path", pkgName, hook)})

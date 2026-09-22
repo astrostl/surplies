@@ -231,6 +231,10 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		s.mu.Unlock()
 		return nil
 	}
+	var scopeRoots []string
+	if s.Only {
+		scopeRoots = s.scopeRootList()
+	}
 	deadline := time.Now().Add(timeout)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -279,6 +283,12 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		default:
 		}
 		local := New(s.HomeDir, false)
+		// Carry the scope with it. Inspection callbacks reach paths named by
+		// file content (a lifecycle target may be "../../outside.js"), and
+		// they check them against this copy, not against s.
+		local.Only = s.Only
+		local.ExtraRoots = s.ExtraRoots
+		local.scopeRoots = scopeRoots
 		local.contentIO = s.contentIO
 		local.reads = s.reads
 		local.Deep = s.Deep

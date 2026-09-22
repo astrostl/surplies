@@ -70,9 +70,7 @@ func (s *Scanner) pathInScope(path string) bool {
 	if !s.Only {
 		return true
 	}
-	if s.scopeRoots == nil {
-		s.scopeRoots = resolvedScanRoots(append([]string{s.HomeDir}, s.ExtraRoots...))
-	}
+	roots := s.scopeRootList()
 	absolute, err := filepath.Abs(path)
 	if err != nil {
 		return false
@@ -84,12 +82,23 @@ func (s *Scanner) pathInScope(path string) bool {
 	if target, err := filepath.EvalSymlinks(absolute); err == nil {
 		resolved = target
 	}
-	for _, root := range s.scopeRoots {
+	for _, root := range roots {
 		if pathWithin(root, absolute) || pathWithin(root, resolved) {
 			return true
 		}
 	}
 	return false
+}
+
+// scopeRootList resolves the in-scope roots once. Callers that hand the list
+// to a per-read Scanner must warm it here, on the parent, rather than letting
+// that copy fill its own cache: a read that outlives its deadline leaves the
+// goroutine running beside the caller.
+func (s *Scanner) scopeRootList() []string {
+	if s.scopeRoots == nil {
+		s.scopeRoots = resolvedScanRoots(append([]string{s.HomeDir}, s.ExtraRoots...))
+	}
+	return s.scopeRoots
 }
 
 func resolveScanRoot(root string) (absolute, resolved string, err error) {

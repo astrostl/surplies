@@ -360,6 +360,44 @@ func TestOnlySkipsMachineWideChecks(t *testing.T) {
 	}
 }
 
+// A lifecycle target is a manifest-supplied relative path, so "../" reaches
+// out of the package and, under -only, out of the tree the user named. The
+// same manifest must still reach that target when the scan is not confined.
+func TestOnlyContainsLifecycleScriptTargets(t *testing.T) {
+	home := t.TempDir()
+	target := filepath.Join(home, "target")
+	writeFixture(t, filepath.Join(target, "pkg", "package.json"),
+		`{"name":"escape","version":"1.0.0","scripts":{"postinstall":"node ../../outside/evil.js"}}`)
+	outside := filepath.Join(home, "outside")
+	escaped := filepath.Join(outside, "evil.js")
+	writeFixture(t, escaped, "module.exports={};"+strings.Repeat(" ", 507)+"/*RS260605*/")
+
+	s := New(target, false)
+	s.Only = true
+	s.Deep = true
+	findings, _ := s.Run()
+	for _, f := range findings {
+		if strings.HasPrefix(f.Path, outside) {
+			t.Errorf("-only read a lifecycle target outside its root: %+v", f)
+		}
+	}
+
+	// Unconfined, the escape is still inspected: that is what makes the
+	// assertion above the gate's doing rather than an unreadable fixture.
+	wide := New(home, false)
+	wide.Deep = true
+	findings, _ = wide.Run()
+	var hit bool
+	for _, f := range findings {
+		if f.Check == "payload-signature" && f.Path == escaped {
+			hit = true
+		}
+	}
+	if !hit {
+		t.Errorf("lifecycle target outside the package was not inspected: %+v", findings)
+	}
+}
+
 // -only makes the first -root take home's place, so a home-anchored artifact
 // path resolves inside the requested tree and is in scope. Skipping the whole
 // phase used to hide it: pointing -only at an extracted home backup reported
