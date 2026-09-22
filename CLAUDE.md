@@ -10,6 +10,11 @@ recaps of what you just did.
 - Never claim something works until it has been verified against real bytes.
   A fixture you wrote that fires an existing rule proves nothing.
 - If you were wrong, say so in one line and move on.
+- Never be verbose, including when asked to expand. "More detail" means one more
+  layer on the same short answer, not pages. Add a paragraph, not a document.
+  Headers and multi-section writeups are almost never the right shape for a reply.
+- Plain human summaries by default. The developer will ask for more if it is too
+  simple; that is cheaper than making them read past what they needed.
 
 ## Design principles
 

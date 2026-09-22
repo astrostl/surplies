@@ -96,6 +96,10 @@ type Scanner struct {
 	// is abandoned after StallThreshold strikes instead of costing
 	// ReadTimeout on every file beneath it. Guarded by mu.
 	stallCounts map[string]int
+	// stallSkipped counts the reads abandoned under each stalled subtree, so
+	// the finding can say how much went unread instead of standing for an
+	// unbounded remainder.
+	stallSkipped map[string]int
 	// Explicit persistence checks bypass dependency boundaries; avoid reporting
 	// those same files again in the home walk.
 	persistenceChecked map[string]bool
@@ -311,6 +315,8 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 		s.debug.stage("git")
 		s.scanGitRepositories()
 	}
+
+	s.finalizeStalls()
 
 	s.stats.ContentBytesRead = s.contentIO.bytes.Load()
 	s.stats.BinaryPrefixesSkipped = s.contentIO.binary.Load()

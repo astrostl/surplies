@@ -97,8 +97,9 @@ func isJSFamily(ext string) bool {
 // ReadTimeout bounds reading and content inspection together for one file.
 //
 // A file under Dropbox, OneDrive, iCloud Drive, or Google Drive may exist as a
-// placeholder whose contents are not on local disk. Opening one asks the
-// provider to fetch it. Usually that works and the file should be scanned —
+// placeholder whose contents are not on local disk. Opening one succeeds
+// immediately and fetches nothing; the first read is what asks the provider for
+// the bytes. Usually that works and the file should be scanned —
 // cloud-synced folders hold real repositories, and skipping them outright would
 // be a blind spot in exactly the place this campaign spreads. But when the
 // provider is not running, the account is unlinked, or the file is no longer
@@ -156,12 +157,13 @@ func (s *Scanner) stalled(key string) bool {
 // recordStall reports the first timed-out read in a subtree. Reaching the
 // threshold abandons further reads there, without emitting duplicate findings.
 //
-// The finding is deliberately a finding and not a log line: it lands in the
-// JSON output, it appears in the findings list, and it pushes the exit code off
-// zero. A scan that silently gave up on a synced folder full of repositories
-// must never be reportable as a clean scan — which is the same failure mode as
-// a rate-limited API sweep returning empty results and being read as "nothing
-// there".
+// The finding is deliberately critical coverage rather than a warning: it lands
+// in the JSON output, it fails coverage the way git-too-old does, and it exits
+// 2. A scan that silently gave up on a synced folder full of repositories must
+// never be reportable as a clean scan — which is the same failure mode as a
+// rate-limited API sweep returning empty results and being read as "nothing
+// there" — and at SevWarn it was reportable that way, because the summary only
+// qualifies its verdict when coverage failed critically.
 func (s *Scanner) recordStall(key, path string) {
 	s.mu.Lock()
 	s.stats.FilesUnreadable++
@@ -178,14 +180,41 @@ func (s *Scanner) recordStall(key, path string) {
 		s.addFinding(Finding{
 			Check:            "scan-incomplete",
 			coverageCategory: "timed out",
-			Severity:         SevWarn,
+			Severity:         SevCritical,
 			Path:             key,
-			Detail: fmt.Sprintf(
-				"File reading or inspection under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. "+
-					"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
-					"Bring it online and re-run to cover it.",
-				StallThreshold, ReadTimeout),
+			Detail:           stallDetail(0),
 		})
+	}
+}
+
+// stallDetail explains an abandoned subtree. How much went unread is only known
+// once the walk is over, so recordStall emits this with zero and finalizeStalls
+// rewrites it with the real count: one finding standing for an unbounded
+// remainder gives a reader nothing to weigh it by.
+func stallDetail(skipped int) string {
+	unread := ""
+	if skipped > 0 {
+		unread = fmt.Sprintf("%d further file(s) under this path went unread. ", skipped)
+	}
+	return fmt.Sprintf(
+		"File reading or inspection under this path timed out; coverage is incomplete. After %d timeouts of %s each, further reads under this path are skipped. %s"+
+			"Usually an offline or unlinked cloud-sync folder (Dropbox/OneDrive/iCloud/Drive) or a stalled network mount. "+
+			"Bring it online and re-run to cover it.",
+		StallThreshold, ReadTimeout, unread)
+}
+
+// finalizeStalls folds each abandoned subtree's skipped-read count into its
+// finding, once the walk that produced the count has finished.
+func (s *Scanner) finalizeStalls() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, f := range s.Findings {
+		if f.Check != "scan-incomplete" || f.coverageCategory != "timed out" {
+			continue
+		}
+		if n := s.stallSkipped[f.Path]; n > 0 {
+			s.Findings[i].Detail = stallDetail(n)
+		}
 	}
 }
 
@@ -193,6 +222,10 @@ func (s *Scanner) recordStall(key, path string) {
 func (s *Scanner) readCapped(path string) []byte {
 	return s.processFile(path, ReadTimeout, nil)
 }
+
+// statFile resolves a path before it is opened. Tests replace it so a FIFO
+// still reaches the read and exercises the timeout path.
+var statFile = os.Stat
 
 var errFileTooLarge = errors.New("file size limit exceeded")
 
@@ -239,11 +272,14 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 	if s.stalled(key) {
 		s.mu.Lock()
 		s.stats.FilesUnreadable++
+		if s.stallSkipped == nil {
+			s.stallSkipped = make(map[string]int)
+		}
+		s.stallSkipped[key]++
 		s.mu.Unlock()
 		return nil
 	}
 	scopeRoots := s.inheritedScopeRoots()
-	deadline := time.Now().Add(timeout)
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	cancel := make(chan struct{})
@@ -263,6 +299,19 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 			s.debug.fileDone(path, fileStats, readTime, inspectTime, time.Since(started))
 			done <- result
 		}()
+		// Stat before opening, not after. Opening a FIFO blocks until a
+		// writer appears, so a named pipe anywhere in a scanned tree costs a
+		// full ReadTimeout and three of them abandon the subtree. Nothing but
+		// a regular file has content to inspect, and the stat is a syscall
+		// against a five-second hang. Indirected for tests, which need a FIFO
+		// to stay readable to simulate an unresponsive mount.
+		if info, err := statFile(path); err != nil {
+			result = fileResult{err: err}
+			return
+		} else if !info.Mode().IsRegular() {
+			s.debug.event("skip-irregular", path, 0, 0)
+			return
+		}
 		f, err := os.Open(path)
 		if err != nil {
 			result = fileResult{err: err}
@@ -311,22 +360,17 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 	}()
 	select {
 	case result := <-done:
-		if time.Now().After(deadline) {
-			s.recordStall(key, path)
-			return nil
-		}
-		if result.err != nil {
-			if optionalFileMissing(optional, result.err) {
-				return nil
-			}
-			s.mu.Lock()
-			s.stats.FilesUnreadable++
-			s.mu.Unlock()
-			s.scanError(path, result.err)
-			return nil
-		}
-		return s.mergeFileResult(path, result)
+		return s.finishFileResult(path, result, optional)
 	case <-timer.C:
+		// The read may have landed in the same instant the timer fired; select
+		// chooses at random between two ready cases. A finished read is a
+		// finished read, and its findings cost a full timeout to produce, so
+		// take the result rather than discarding it and blaming the volume.
+		select {
+		case result := <-done:
+			return s.finishFileResult(path, result, optional)
+		default:
+		}
 		s.debug.event("timeout", path, 0, timeout)
 		if f := opened.Load(); f != nil {
 			go f.Close()
@@ -334,6 +378,23 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		s.recordStall(key, path)
 		return nil
 	}
+}
+
+// finishFileResult records a completed read, whether it finished inside the
+// deadline or at the edge of it. Completion is what matters: the bytes were
+// read and inspected, so the findings are as good as any other file's.
+func (s *Scanner) finishFileResult(path string, result fileResult, optional bool) []byte {
+	if result.err != nil {
+		if optionalFileMissing(optional, result.err) {
+			return nil
+		}
+		s.mu.Lock()
+		s.stats.FilesUnreadable++
+		s.mu.Unlock()
+		s.scanError(path, result.err)
+		return nil
+	}
+	return s.mergeFileResult(path, result)
 }
 
 // Content accounting measures bytes returned by file reads, including rejected
