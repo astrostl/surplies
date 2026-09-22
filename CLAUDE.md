@@ -73,8 +73,8 @@ must never change the exit code or be reachable from `internal/scan`.
 Every name a finding prints must be one the reader can search for and land on a
 public writeup: the campaign, the package, the landing. Private incident
 codenames, internal document titles, and mechanic-level shorthand
-(`cls`, `clb`, `A9-9034`) mean nothing outside this repo and belong in source
-comments, where the provenance pointer is useful. Where two variants of one
+(`cls`, `clb`, `A9-9034`) mean nothing outside this repo, and they do not
+belong in source comments either — see **Sources** below. Where two variants of one
 campaign need distinguishing, name them by what the reader can see — the
 carrier or the landing (Fake Font, config-append) — not by wave, date, or
 attacker build tag. Attacker-internal strings may appear as evidence inside a
@@ -98,6 +98,14 @@ applies in the README and under `docs/`.
 ## Citation hygiene
 
 When adding or revising IOCs, keep the `ioc.go` block comments and all four documentation locations in sync. See the `citation-hygiene` skill.
+
+### Sources
+
+Cite only public, linkable sources. Nothing in this repository — code, comments,
+`README.md`, `docs/`, this file, commit messages — may name or fingerprint
+anything outside it: no external paths, no repository or organization names, no
+document titles or digests. An indicator whose only support is non-public is one
+to raise with the developer rather than annotate.
 
 ## Reaching sources
 
