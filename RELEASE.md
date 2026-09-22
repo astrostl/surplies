@@ -37,6 +37,12 @@ the push there is no taking it back.
 
 ## Steps
 
+### 0. Check `OFFLINE.md`
+
+`OFFLINE.md` is gitignored scratch notes — untracked to-dos and working thinking,
+same idea as `GAPS.md`. If the file exists, skim it before starting. It
+sometimes holds context for the release that never made it into a tracked file.
+
 ### 1. Establish what the release covers
 
 A release is **everything since the previous tag** — every commit already on
