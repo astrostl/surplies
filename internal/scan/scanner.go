@@ -240,10 +240,10 @@ func (s *Scanner) printRunHeader() {
 }
 
 // phase numbers the progress lines as they print. -only never takes the
-// connection snapshot, so that run counts five phases rather than printing a
-// sixth the reader would have to discount.
+// connection snapshot, so that run counts one phase fewer rather than printing
+// one the reader would have to discount.
 func (s *Scanner) phase(label string) {
-	total := 3 // artifacts, directories, python
+	total := 4 // artifacts, directories, python, processes
 	if !s.Only {
 		total++ // the connection snapshot
 	}
@@ -300,7 +300,13 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
-	// Phase 4: Check for network IOCs. A connection snapshot describes the
+	// Phase 4: Check running command lines. Under -only a process is
+	// reported only when the file it runs lies inside a requested root.
+	s.phase("Scanning running processes")
+	s.debug.stage("processes")
+	s.checkProcesses()
+
+	// Phase 5: Check for network IOCs. A connection snapshot describes the
 	// machine, not a directory, so it is the one phase -only cannot run at
 	// all — and therefore the one phase it does not count or print. The
 	// banner already says connections are not scanned.

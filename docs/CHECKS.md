@@ -659,3 +659,17 @@ Flags a system hosts file entry that maps a name to a [known C2 IP](#11-network-
 Reports a package whose lifecycle script names a file that is not installed.
 
 **How it works:** When a manifest declares a hook (`preinstall`, `install`, `postinstall`, `prepare`, `prepublish`, `prepack`, `postpack`) that runs a JS/CJS/MJS file, and no such file exists, the absence is recorded as context rather than as a read failure: published tarballs routinely strip build hooks and pruned installs drop install helpers. What makes it worth printing at all is that npm would execute anything later written to that path. Because it fires across dozens of packages on an ordinary machine, the human report prints the explanation once and lists the packages; every individual path stays in `-json` and the saved report. Actual read failures remain `scan-incomplete` warnings.
+
+## 41. `running-payload-process` (CRITICAL)
+
+Flags a running process that is executing a PolinRider carrier right now.
+
+| Evidence | What matches | Source attack |
+|----------|--------------|---------------|
+| Node running a font | A `node` process whose script argument ends in `.woff2`, `.woff`, `.ttf` or `.otf` — the command the [`font-execution-task`](#23-font-execution-task-critical) plants, now executing | PolinRider (DPRK / Contagious Interview) |
+| Sidecar argument | Any process with a `*.inz.cjs` or `*.inz.orig` path on its command line, including `--opt=value` forms | PolinRider (DPRK / Contagious Interview) |
+| Running script | The script a `node` process is executing, matched against the [active payload hashes](ATTACKS.md#active-payload-hashes), the [`payload-signature`](#16-payload-signature-critical) list, and the carved config-append span | Whichever attack the matched indicator belongs to |
+
+**How it works:** Command lines are read through the operating system's process interfaces — `/proc` on Linux, `proc_info`/`sysctl` on macOS, the Toolhelp snapshot and `NtQueryInformationProcess` on Windows — so no command is run and no process is signalled or attached to. The Node script is the first argument after Node's own options; `-e`/`-p` programs have no script file. A relative script is resolved against the process's working directory, which macOS and Linux expose to the owning account and Windows does not; an unresolvable script is still checked by name, and a `scan-limited` notice counts those not hashed. The script is read under the same five-second, 100 MB limits as any other content. Glob and regex patterns (a `find` or `grep` looking for sidecars) are not sidecar arguments. Processes owned by other users are unreadable on macOS without root and some are protected on Windows; their number is reported as a `scan-limited` notice. A snapshot that does not include the scanner itself reports `scan-incomplete`. Under `-only`, a process is reported only when its script or sidecar resolves inside a requested root, and scripts outside them are not read.
+
+**Why this matters:** Every other PolinRider check finds a file that *could* run. This one finds the loader running. It adds no indicator: each rule is an on-disk check applied to what is executing. A sidecar loaded from inside a patched Electron app never appears on a command line, so [`patched-application`](#22-patched-application-critical) remains the check for that case, and a process that is not running at scan time is not seen.

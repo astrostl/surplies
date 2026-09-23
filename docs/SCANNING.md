@@ -6,13 +6,14 @@ behind each limit. The principles these follow from are in the
 
 ## Scan phases
 
-The scanner runs five phases sequentially:
+The scanner runs six phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
 2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root (`-skip-tmproots` drops the temp directories from this walk, keeping any named with `-root`, and reports a `scan-limited` notice); dependency checks select declared entrypoints and known payload candidates
 3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
-4. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
-5. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list (skipped entirely when the scan has already spent its stall budget: the storage is not answering, and a longer partial report is not what the reader needs)
+4. **Running processes** — read running command lines for [`running-payload-process`](CHECKS.md#41-running-payload-process-critical); under `-only`, only processes whose script or sidecar lies inside a requested root are reported
+5. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
+6. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list (skipped entirely when the scan has already spent its stall budget: the storage is not answering, and a longer partial report is not what the reader needs)
 
 ## External commands
 
@@ -22,6 +23,11 @@ comes from reading files. No package manager or runtime (`npm`, `pip`, `python`,
 `node`, `kubectl`, `docker`) is ever invoked, and nothing is run through a shell —
 each command is executed directly with an argument vector, so no scanned path or
 file content can be interpreted as shell syntax.
+
+Running command lines are read without a command: `/proc` on Linux,
+`proc_info`/`sysctl` on macOS, and the Toolhelp snapshot plus
+`NtQueryInformationProcess` on Windows. Nothing is sent to, suspended in, or
+attached to any process.
 
 | Command | When | Exact invocation |
 |---|---|---|
@@ -160,7 +166,7 @@ Installed `node_modules` and `.npm/_npx` installations retain metadata/lifecycle
 | `asset-format-mismatch` | WARN for unsupported/truncated headers or text in PNG/JPEG/GIF/WebP/ICO/WASM/PDF/ZIP/MP3/MP4. Headers are format hints, not full validators. Bounded whitespace/NUL padding is removed for script inspection. Existing font magics and HTML/XML download-error exclusions remain. | [ByteGuard scanner](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/src/scanner.ts). |
 | `unicode-concealment`, `escaped-execution`, `suspicious-source-execution` | WARN for unbalanced bidi controls, ASCII-identifier joiners, runs of at least eight variation selectors in either Unicode range, correlated escaped execution, decode/execute, download-to-shell, or hidden detached spawn structure. No long-line cutoff. Ordinary emoji, balanced RTL, international joiners, private-use glyphs, `eval` alone and public RPC URLs alone do not trigger these general-source checks. | [Endor Labs](https://www.endorlabs.com/reports/invisible-threats-glassworm-unicode-vscode), [Aikido](https://www.aikido.dev/blog/glassworm-returns-unicode-attack-github-npm-vscode), [ByteGuard rules](https://github.com/n0m4dz/ByteGuard/blob/ac0f609ecdfeab88d731ed7b47ffdf38deb8256d/rules/default.rules.json). |
 
-Live telemetry decision (G15): retain the bounded network snapshot. Process command lines/ancestry, registry and scheduled-task APIs, memory, protocol capture, and dynamic blockchain queries are deferred to complementary endpoint/network investigation. No additional runtime collectors, C2 connections, remediation, or account actions are added. Static findings do not establish execution; a clean scan cannot rule out a running or historical implant.
+Live telemetry decision (G15): retain the bounded network snapshot, and read running command lines only to match indicators the scanner already holds on disk (see [`running-payload-process`](CHECKS.md#41-running-payload-process-critical)). Process ancestry, registry and scheduled-task APIs, memory, protocol capture, and dynamic blockchain queries are deferred to complementary endpoint/network investigation. No C2 connections, remediation, or account actions are added. Static findings do not establish execution; a clean scan cannot rule out a running or historical implant.
 
 Explicit package checks follow package-directory symlinks (including pnpm layouts). The scanner resolves requested root symlinks and follows selected file symlinks, but does not recursively follow internal directory symlinks. Supply their destinations with `-root`. Directory traversal itself is not subject to the per-file processing deadline. Cloud-sync placeholders are recognised from the stat the read already makes and skipped unread, so a scan never downloads a file to inspect it. A directory or file that macOS refuses to materialize for the scan fails with `resource deadlock avoided` (`EDEADLK`) and is reported under `not downloaded` rather than as an unexplained error; a read that hangs anyway costs five seconds, and one minute of such reads across the whole run stops content reading and the Git phase entirely. Package-target checks can inspect a lifecycle target separately from an earlier ordinary source read; repeated identical findings are deduplicated.
 

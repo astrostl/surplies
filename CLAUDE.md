@@ -15,10 +15,11 @@ recaps of what you just did.
   Headers and multi-section writeups are almost never the right shape for a reply.
 - Plain human summaries by default. The developer will ask for more if it is too
   simple; that is cheaper than making them read past what they needed.
+- "cpm" means commit and push to `main`.
 
 ## Design principles
 
-- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories. The `schedule` subcommand additionally runs `launchctl`, `systemctl --user`, and `notify-send`; this is outside detection entirely and is covered by the scheduling carve-out below.
+- **Filesystem-only detection.** Never shell out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any other tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scan files on disk instead. The exceptions are `netstat` for live network connection IOC matching, the running-process list read through OS process interfaces (`/proc`, `sysctl`/`proc_info`, the Windows process APIs — never an external command), and default Git history scans using read-only Git plumbing to inspect locally available refs and raw objects. Git scans must never fetch (including lazy fetching), check out files, execute hooks/filters, or modify repositories. The `schedule` subcommand additionally runs `launchctl`, `systemctl --user`, and `notify-send`; this is outside detection entirely and is covered by the scheduling carve-out below.
 - **Report only, never remediate.** surplies is a read-only scanner. A scan must never delete files, uninstall packages, modify configs, or take any corrective action in response to a finding. Findings are reported; the user decides what to do. See the scheduling carve-out below for the single, explicitly invoked exception.
 - **No container/orchestrator checks.** Do not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem rooted at the user's home directory and explicitly added `-root` directories (plus well-known system paths for artifact checks).
 - **Cross-platform.** All checks must work on macOS, Linux, and Windows (amd64 and arm64). Use `runtime.GOOS` for platform-specific paths; never assume a single OS. Two things outside detection are deliberate exceptions. The `schedule` subcommand supports macOS and Linux only and refuses cleanly elsewhere, because Windows has no equivalent user-level scheduler already covered by the embedded helpers. The ENTER wait for a double-clicked window is Windows-only, because only Windows destroys the console window when the process exits; see the carve-out below.
@@ -122,7 +123,7 @@ Go layout: the root is a thin `package main` so `go install github.com/astrostl/
 Documentation: `README.md` is the human-legible overview (what it is, what it
 detects, install, usage, the design principles, a one-line-per-check table).
 Detail lives under `docs/` — `ATTACKS.md` (campaigns and the active hash list),
-`CHECKS.md` (all 40 checks), `SCANNING.md` (scan phases, selection and scope
+`CHECKS.md` (all 41 checks), `SCANNING.md` (scan phases, selection and scope
 decisions, performance diagnostics), `ATTRIBUTION.md` (sources). Keep the README
 short; new detail belongs in the matching `docs/` file.
 
@@ -132,11 +133,15 @@ short; new detail belongs in the matching `docs/` file.
 
 ## Runtime scope decision (G15)
 
-Keep live collection limited to the bounded `netstat` snapshot and DNS resolution
-of the existing indicator list. Process ancestry/command-line/memory inspection,
-Windows registry/task APIs, protocol capture and dynamic blockchain resolution
-remain outside the scanner. Read-only Git inspection remains authorized
-under its existing constraints. This decision adds no runtime commands or IOC.
+Keep live collection limited to the bounded `netstat` snapshot, DNS resolution
+of the existing indicator list, and a read of running command lines matched
+only against indicators the scanner already holds on disk (Node running a
+font-extension file, a `*.inz.cjs`/`*.inz.orig` sidecar argument, the running
+Node script against the payload hash and signature lists). The process read
+uses OS interfaces, runs no command, and never signals, suspends, or touches a
+process. Process ancestry and memory inspection, Windows registry/task APIs,
+protocol capture and dynamic blockchain resolution remain outside the scanner.
+Read-only Git inspection remains authorized under its existing constraints.
 
 ## Agent scan runs
 
@@ -154,12 +159,13 @@ you want to look at — `-root /tmp -only`, a fixture directory, a single projec
 `-only` confines the scan to the named roots: the live-connection snapshot is
 the only check skipped outright, and every fixed-path check (artifacts,
 persistence roots, npm CLI, startup files, system Python paths, temp dirs) runs
-only where its candidate falls inside a requested root. `-only` also puts the first `-root` in
+only where its candidate falls inside a requested root, and a running process is
+reported only when the file it runs does. `-only` also puts the first `-root` in
 home's place, so home-relative candidates resolve inside that tree. It finishes
 in milliseconds and never walks the user's home directory. Use it for
 rapid iteration and one-off checks. Do not use it to claim a machine is clean:
-a `-only` run that finds nothing says nothing about persistence, artifacts, or
-connections. Never point a default (non-`-only`) run at the user's home without
+a `-only` run that finds nothing says nothing about persistence, artifacts,
+connections, or running processes. Never point a default (non-`-only`) run at the user's home without
 being asked.
 
 Regression requirement: a package manifest or dotfiles `.git` directory at

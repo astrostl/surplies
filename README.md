@@ -127,10 +127,10 @@ See [scheduling details](scripts/README.md) for the exact files installed and th
 A scan runs six phases in sequence:
 
 1. **Known malicious artifacts** — fixed filesystem paths, the global npm CLI, documented Electron application entrypoints and their sidecars, and persistence roots under home and system locations
-2. **Project directories** — walk home and each `-root`, inspecting every `node_modules`, Composer `vendor/`, `.claude/` and `.vscode/`, and every build config, web font, and `.gitignore` encountered
+2. **Project directories** — walk home, each `-root` and the temp directories, inspecting every `node_modules`, Composer `vendor/`, `.claude/` and `.vscode/`, and every build config, web font, and `.gitignore` encountered
 3. **Python site-packages** — discovered environments plus well-known system Python paths
-4. **Network IOCs** — established connections from `netstat -n` against known C2 IPs; `-resolve` adds the current addresses behind known C2 domains
-5. **Temp directories** — payload remnants and staging artifacts
+4. **Running processes** — command lines of running processes against the payload indicators already on file
+5. **Network IOCs** — established connections from `netstat -n` against known C2 IPs; `-resolve` adds the current addresses behind known C2 domains
 6. **Git history** — blobs reachable from local refs, matched against the [active payload hashes](docs/ATTACKS.md#active-payload-hashes) regardless of filename, plus the filename-gated checks against blobs whose committed name the project walk would have opened. This reaches a repository cleaned in the working tree whose history was never rewritten
 
 A human-mode run ends with one verdict, coverage status, elapsed time, and content-read totals. Repeated diagnostics print their explanation once with the affected paths underneath, and expected scope limits are reported as context rather than as failures. Every run also saves all findings, exact paths, and statistics to a private `surplies-report-*.json` in the system temporary directory and prints its path, so nothing needs a second scan to retrieve. `-json` puts the complete findings array on stdout:
@@ -143,7 +143,7 @@ Which files a scan actually reads — and which it deliberately does not — is 
 
 ## Design principles
 
-- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters. A scan runs nothing else; the complete inventory, including the scheduler commands the explicitly invoked [`schedule`](#scheduled-scans) subcommand uses, is in [External commands](docs/SCANNING.md#external-commands).
+- **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching, the running-process list read through the operating system's own process interfaces (no command is run for it), and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters. A scan runs nothing else; the complete inventory, including the scheduler commands the explicitly invoked [`schedule`](#scheduled-scans) subcommand uses, is in [External commands](docs/SCANNING.md#external-commands).
 - **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64). Two things outside detection are deliberately platform-specific: [`schedule`](#scheduled-scans) supports macOS and Linux only, and the [ENTER wait](#usage) for a double-clicked window is Windows-only, because only Windows destroys the window on exit.
@@ -193,6 +193,7 @@ Which files a scan actually reads — and which it deliberately does not — is 
 | [`startup-content`](docs/CHECKS.md#38-startup-content-warn) | WARN | Startup and persistence files referencing documented staging paths or C2 addresses |
 | [`hosts-c2-entry`](docs/CHECKS.md#39-hosts-c2-entry-warn) | WARN | A hosts file entry mapping a name to a known C2 IP |
 | [`missing-script-target`](docs/CHECKS.md#40-missing-script-target-info) | INFO | A lifecycle script naming a file that is not installed |
+| [`running-payload-process`](docs/CHECKS.md#41-running-payload-process-critical) | CRITICAL | A running process executing a fake font, naming an injection sidecar, or running a known payload |
 
 What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS.md).
 
@@ -207,7 +208,7 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 ## Documentation
 
 - [Attacks covered](docs/ATTACKS.md) — every campaign in detail, and the active payload hash list
-- [Checks](docs/CHECKS.md) — all 40 checks, their tables, and their reasoning
+- [Checks](docs/CHECKS.md) — all 41 checks, their tables, and their reasoning
 - [Scanning behavior](docs/SCANNING.md) — design principles, what gets read, scope decisions, and performance diagnostics
 - [Attribution](docs/ATTRIBUTION.md) — the researchers and writeups every indicator comes from
 - [Scheduling details](scripts/README.md) — the exact files `surplies schedule` installs

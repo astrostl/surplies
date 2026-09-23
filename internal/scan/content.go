@@ -806,6 +806,23 @@ func (s *Scanner) checkPadding(path, ext string, isFont bool, data []byte) {
 // payload behind its padding. Both are compared against the sized entries.
 // Carving is pure slicing over bytes already read; nothing is executed.
 func (s *Scanner) checkPaddedSegmentHash(path string, data []byte) bool {
+	h, n, ok := paddedPayloadHash(data)
+	if !ok {
+		return false
+	}
+	s.addFinding(Finding{
+		Check:    "payload-signature",
+		Severity: SevCritical,
+		Path:     path,
+		Detail: fmt.Sprintf("%s (attack: %s); matched as a %d-byte span appended to this file behind a whitespace run, not as the file's own hash",
+			h.Desc, h.Attack, n),
+	})
+	return true
+}
+
+// paddedPayloadHash returns the sized entry a carved span matches, and the
+// span's length.
+func paddedPayloadHash(data []byte) (RepoPayloadHash, int, bool) {
 	for line := range bytes.Lines(data) {
 		idx := bytes.Index(line, []byte(paddingRun))
 		if idx < 0 {
@@ -827,34 +844,26 @@ func (s *Scanner) checkPaddedSegmentHash(path string, data []byte) bool {
 		}
 		padded := bytes.TrimRight(line[start:], "\r\n")
 		for _, span := range [][]byte{payload, padded} {
-			if s.reportPayloadHashMatch(path, span) {
-				return true
+			if h, ok := sizedPayloadHash(span); ok {
+				return h, len(span), true
 			}
 		}
 	}
-	return false
+	return RepoPayloadHash{}, 0, false
 }
 
-// reportPayloadHashMatch compares one carved span against the sized entries.
-// Size is checked before hashing so an ordinary long line costs no SHA-256.
-func (s *Scanner) reportPayloadHashMatch(path string, span []byte) bool {
+// sizedPayloadHash compares one carved span against the sized entries. Size
+// is checked before hashing so an ordinary long line costs no SHA-256.
+func sizedPayloadHash(span []byte) (RepoPayloadHash, bool) {
 	for _, h := range KnownRepoPayloadHashes {
 		if h.Size == 0 || h.Size != int64(len(span)) || h.SHA256 == "" {
 			continue
 		}
-		if fmt.Sprintf("%x", sha256.Sum256(span)) != h.SHA256 {
-			continue
+		if fmt.Sprintf("%x", sha256.Sum256(span)) == h.SHA256 {
+			return h, true
 		}
-		s.addFinding(Finding{
-			Check:    "payload-signature",
-			Severity: SevCritical,
-			Path:     path,
-			Detail: fmt.Sprintf("%s (attack: %s); matched as a %d-byte span appended to this file behind a whitespace run, not as the file's own hash",
-				h.Desc, h.Attack, len(span)),
-		})
-		return true
 	}
-	return false
+	return RepoPayloadHash{}, false
 }
 
 // Ignore leading indentation and trailing whitespace: the documented pattern

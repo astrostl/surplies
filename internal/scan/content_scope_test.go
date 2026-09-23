@@ -416,7 +416,7 @@ func TestOnlyChecksRootRelativeArtifacts(t *testing.T) {
 		if f.Check == "known-artifact" && f.Path == planted {
 			hit = true
 		}
-		if !strings.HasPrefix(f.Path, root) && f.Path != "content" && f.Path != "dependencies" {
+		if !strings.HasPrefix(f.Path, root) && f.Path != "content" && f.Path != "dependencies" && f.Path != "processes" {
 			t.Errorf("-only reported a path outside its root: %+v", f)
 		}
 	}
