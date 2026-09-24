@@ -9,12 +9,25 @@ Use an installed `surplies` binary from your normal user account:
 ```sh
 surplies schedule                 # daily at 09:00 local time
 surplies schedule -time 18:30     # update to 6:30 PM
+surplies schedule -root ~/development -root ~/work -only  # scan only these trees
 ```
 
 The CLI embeds these scripts; no repository checkout or manual copy is needed.
 It writes `~/.local/bin/surplies-notify` with the executable's absolute path,
 then installs and activates the platform schedule. Existing files with the same
 names are replaced. Other schedules are left alone.
+
+`-root` is repeatable and adds directories to the default scan. Add `-only` to
+confine inspection to the selected roots; it requires at least one `-root`.
+Relative paths are made absolute at installation, and each root must be an
+existing directory. Paths with spaces or shell characters are safely quoted.
+A clean scoped scan applies only to the selected directories. Failures inspecting
+those directories still notify; expected scope exclusions remain informational.
+
+Every installation replaces the previous time and scope. Omitted settings revert
+to 09:00 and the default full scope. Repeat all desired flags when updating or
+re-enabling a schedule. Installation output and notifications include a command
+that runs the same scope with details.
 
 - **macOS:** `~/Library/LaunchAgents/com.surplies.notify.plist`, with output in
   `~/Library/Logs/surplies-notify.log`. Requires a logged-in GUI session.
