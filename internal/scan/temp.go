@@ -151,18 +151,45 @@ func (s *Scanner) visitTempArtifact(path string, entry os.DirEntry, err error) e
 		return nil
 	}
 	for _, sp := range ArtifactsTmp {
-		if !tempArtifactMatch(rel, sp.Glob) {
-			continue
+		if tempArtifactMatch(rel, sp.Glob) {
+			s.addTempArtifact(path, sp.Desc)
 		}
-		s.stats.FilesChecked++
-		s.addFinding(Finding{
-			Check:    "suspicious-temp-file",
-			Severity: SevWarn,
-			Path:     path,
-			Detail:   sp.Desc,
-		})
 	}
 	return nil
+}
+
+func (s *Scanner) addTempArtifact(path, desc string) {
+	s.stats.FilesChecked++
+	s.addFinding(Finding{Check: "suspicious-temp-file", Severity: SevWarn, Path: path, Detail: desc})
+}
+
+// checkSkippedTempTops keeps the staging names checked at the top of each
+// default temp directory that -skip-tmproots dropped from the walk. The flag
+// exists to skip a costly recursive walk, not a handful of fixed lookups.
+func (s *Scanner) checkSkippedTempTops() {
+	if !s.SkipTempRoots {
+		return
+	}
+	walked := s.tempScanRoots()
+	seen := make(map[string]bool)
+	for _, candidate := range s.TempRoots {
+		if candidate == "" {
+			continue
+		}
+		absolute, resolved, err := resolveScanRoot(candidate)
+		if err != nil || seen[resolved] || slices.Contains(walked, resolved) || !s.pathInScope(absolute) {
+			continue
+		}
+		seen[resolved] = true
+		for _, sp := range ArtifactsTmp {
+			matches, _ := filepath.Glob(filepath.Join(resolved, filepath.FromSlash(sp.Glob)))
+			for _, path := range matches {
+				if info, err := os.Lstat(path); err == nil && !info.IsDir() {
+					s.addTempArtifact(path, sp.Desc)
+				}
+			}
+		}
+	}
 }
 
 // A published glob names the last path components of the artifact, not its

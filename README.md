@@ -16,7 +16,7 @@ brew trust --formula astrostl/surplies/surplies
 brew install surplies
 ```
 
-**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.15.0) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
+**Prebuilt binaries:** download from the [latest release](https://github.com/astrostl/surplies/releases/tag/v0.16.0) — macOS tarballs, and Linux and Windows binaries for amd64 and arm64.
 
 **Go:**
 
@@ -70,7 +70,7 @@ directory it walks. Other users' temp directories require root and are not read.
 `-skip-tmproots` drops those directories from the walk, for a machine where
 build and installer debris dominates the report. It narrows traversal rather
 than putting temp out of scope: the documented staging filenames are still
-checked, a temp directory named with `-root` is still walked in full, and the
+checked at the top of each temp directory, a temp directory named with `-root` is still walked in full, and the
 run prints a scope notice saying what it stopped looking for.
 
 `-only` confines the scan to the `-root` paths given. Every check is filtered
@@ -117,7 +117,7 @@ surplies schedule remove         # stop and remove the schedule and helper
 
 Installs a daily scan using launchd on macOS or a systemd user timer on Linux, along with the notification helper, for the current user. Run it from your normal account without `sudo`, using an installed binary you intend to keep. Rerunning updates the same schedule rather than adding another. The helper records the executable's absolute path, so it does not depend on your interactive shell's `PATH`. Windows is not supported.
 
-Scheduled scans use the default options plus `-q`. Repeatable `-root` adds scan directories; `-only` confines inspection to those roots and requires at least one. For example, `surplies schedule -root ~/development -root ~/work -only` scans both trees. A clean scoped scan applies only to those directories. Relative paths are resolved when installed, and all roots must be existing directories. A clean scan is silent; any nonzero exit, including incomplete coverage, raises a desktop notification. The notification provides a command to inspect the same scope with details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
+Scheduled scans use the default options plus `-q`. Repeatable `-root` adds scan directories; `-only` confines inspection to those roots and requires at least one. For example, `surplies schedule -root ~/development -root ~/work -only` scans both trees. A clean scoped scan applies only to those directories. Relative paths are resolved when installed, and all roots must be existing directories. A clean scan is silent. Warning-level findings, incomplete coverage, or scan errors raise a warning notification; only a critical result (exit code 2) uses the critical title, which covers a critical finding, a scan whose Git coverage failed outright, and a scan that stopped reading because files kept timing out. The notification provides a command to inspect the same scope with details. Linux additionally requires a running systemd user manager, `notify-send` (libnotify), and a desktop notification session; the prerequisites are checked before anything is written.
 
 `disable` also stops a scan that is running at the time, and the setting survives logout and reboot. Run `surplies schedule` again to re-enable at 09:00, or pass `-time`. Each installation replaces all settings; repeat your `-root` and `-only` options to retain a custom scope. `remove` keeps the `surplies` binary and existing scan logs.
 
@@ -145,7 +145,7 @@ Which files a scan actually reads — and which it deliberately does not — is 
 ## Design principles
 
 - **Filesystem-first detection.** Never shells out to `npm`, `pip`, `python`, `node`, `kubectl`, `docker`, or any package manager/runtime tool. Multiple versions/installs can coexist (system, Homebrew, pyenv, nvm, etc.) and no single tool gives a complete picture. Scans files on disk instead. The exceptions are `netstat` for live network connection IOC matching, the running-process list read through the operating system's own process interfaces (no command is run for it), and Git history scans using read-only Git plumbing on local repositories. Git scans never fetch, check out files, or run repository code/hooks/filters. A scan runs nothing else; the complete inventory, including the scheduler commands the explicitly invoked [`schedule`](#scheduled-scans) subcommand uses, is in [External commands](docs/SCANNING.md#external-commands).
-- **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. The one command that writes anything is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
+- **Report only, never remediate.** Scans are read-only. A scan never deletes files, uninstalls packages, modifies configs, or takes any corrective action against a finding. Findings are reported; the user decides what to do. A scan writes only its own report file (and, with `-debug`, a debug log) in the system temporary directory. The one command that writes anything else is the explicitly invoked [`schedule`](#scheduled-scans) subcommand, which manages only its own scheduling files under the current user's account.
 - **No container/orchestrator checks.** Does not inspect Docker images, Kubernetes clusters, or other container runtimes. Scope is the local filesystem.
 - **Cross-platform.** All checks work on macOS, Linux, and Windows (amd64 and arm64). Two things outside detection are deliberately platform-specific: [`schedule`](#scheduled-scans) supports macOS and Linux only, and the [ENTER wait](#usage) for a double-clicked window is Windows-only, because only Windows destroys the window on exit.
 - **Zero Go dependencies.** stdlib only. No third-party Go modules. Git history inspection requires Git 2.45 or newer, resolved from `PATH` only; an older Git cannot inspect a single repository and is reported as a critical [`git-too-old`](docs/CHECKS.md#26-git-too-old-critical) finding rather than silently skipped. Reading the names blobs were committed under requires Git 2.50; from 2.45 to 2.49 the size-matched half of the history scan runs alone, reported as a critical [`git-too-old-for-filenames`](docs/CHECKS.md#27-git-too-old-for-filenames-critical).
@@ -204,7 +204,7 @@ What each one looks for, how it decides, and why it exists: [Checks](docs/CHECKS
 |------|---------|
 | 0 | Clean scan, no indicators found |
 | 1 | Warning-level findings only, including a Git scan that found no repositories at all |
-| 2 | At least one critical finding; a Git older than 2.50 with repositories to scan; or unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them) |
+| 2 | At least one critical finding; a Git older than 2.50 with repositories to scan; unusable Git coverage: more than 25% of the Git repositories found could not be scanned (including any run that scanned none of them); or a scan that stopped reading after one minute of timed-out reads |
 
 ## Documentation
 

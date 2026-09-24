@@ -150,6 +150,8 @@ func TestSkipTempRootsDropsDefaultTempWalk(t *testing.T) {
 	home := evalDir(t, t.TempDir())
 	temp := evalDir(t, t.TempDir())
 	writeFixture(t, filepath.Join(temp, "npm-install-3f2a", "tpcp.tar.gz"), "payload")
+	writeFixture(t, filepath.Join(temp, ".pg_state"), "state")
+	writeFixture(t, filepath.Join(temp, "b-4c1e", "b.zip"), "zip")
 
 	s := New(home, false)
 	s.TempRoots = []string{temp}
@@ -159,8 +161,16 @@ func TestSkipTempRootsDropsDefaultTempWalk(t *testing.T) {
 	if got := s.tempScanRoots(); len(got) != 0 {
 		t.Errorf("tempScanRoots() with -skip-tmproots = %v, want none", got)
 	}
-	if found := findingsFor(s, "suspicious-temp-file"); len(found) != 0 {
-		t.Errorf("temp artifacts reported with -skip-tmproots: %v", found)
+	// Only the top of the temp directory is still checked: the nested
+	// archive needs the walk, the top-level names do not.
+	var got []string
+	for _, f := range findingsFor(s, "suspicious-temp-file") {
+		got = append(got, f.Path)
+	}
+	slices.Sort(got)
+	want := []string{filepath.Join(temp, ".pg_state"), filepath.Join(temp, "b-4c1e", "b.zip")}
+	if !slices.Equal(got, want) {
+		t.Errorf("temp artifacts with -skip-tmproots = %v, want %v", got, want)
 	}
 	notices := findingsFor(s, "scan-limited")
 	if !slices.ContainsFunc(notices, func(f Finding) bool { return f.Path == "temp" }) {

@@ -65,7 +65,7 @@ func splitFindings(findings []Finding) (indicators, coverage []Finding) {
 	return
 }
 
-var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "not downloaded", "Git errors", "Git coverage", "network collection", "other errors"}
+var coverageCategories = []string{"size limit exceeded", "permission denied", "timed out", "not downloaded", "Git errors", "Git coverage", "network collection", "process collection", "other errors"}
 
 func groupCoverage(coverage []Finding) map[string][]Finding {
 	groups := make(map[string][]Finding)

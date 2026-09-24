@@ -86,6 +86,10 @@ func TestRunningProcessScopeAndFailures(t *testing.T) {
 	if !hasIncomplete(s.Findings) {
 		t.Fatal("collector failure must report incomplete coverage")
 	}
+	// The failure must reach the human report, not only the JSON.
+	if summary := coverageSummary(groupCoverage(s.Findings)); !strings.Contains(summary, "process collection") {
+		t.Fatalf("coverage summary omits process collection: %q", summary)
+	}
 
 	s = New(t.TempDir(), false)
 	s.inspectProcesses(func() (processSnapshot, error) {
@@ -93,37 +97,6 @@ func TestRunningProcessScopeAndFailures(t *testing.T) {
 	})
 	if !hasIncomplete(s.Findings) {
 		t.Fatal("a snapshot missing this process must report incomplete coverage")
-	}
-}
-
-// Under -only a process counts only when the file it runs is inside a root.
-func TestRunningProcessOnlyScope(t *testing.T) {
-	root, outside := t.TempDir(), t.TempDir()
-	for _, dir := range []string{root, outside} {
-		if err := os.WriteFile(filepath.Join(dir, "fa-solid-400.woff2"), []byte("setTimeout(()=>{},1)\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "loader.js"), []byte("global['!']='x';\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	s := New(root, false)
-	s.Only = true
-	s.inspectProcesses(func() (processSnapshot, error) {
-		return withSelf(
-			processInfo{PID: 301, Args: []string{"node", "fa-solid-400.woff2"}, Cwd: root},
-			processInfo{PID: 302, Args: []string{"node", filepath.Join(outside, "fa-solid-400.woff2")}},
-			processInfo{PID: 303, Args: []string{"node", filepath.Join(outside, "loader.js")}},
-			processInfo{PID: 304, Args: []string{"electron", "--require=" + filepath.Join(outside, "main.inz.cjs")}},
-			processInfo{PID: 305, Args: []string{"node", "fa-solid-400.woff2"}},
-		), nil
-	})
-	got := findingsFor(s, "running-payload-process")
-	if len(got) != 1 || got[0].Path != filepath.Join(root, "fa-solid-400.woff2") {
-		t.Fatalf("want only the in-root process, got %+v", got)
-	}
-	if len(findingsFor(s, "scan-limited")) != 1 {
-		t.Fatalf("want one notice for the unresolvable relative script, got %+v", s.Findings)
 	}
 }
 

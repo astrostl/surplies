@@ -334,3 +334,20 @@ func TestCriticalGitCoverageIsStatedInTheSummary(t *testing.T) {
 		t.Fatalf("ordinary breakage banner-ed: %s", out.String())
 	}
 }
+
+// A Git phase skipped because reading stopped must say so, not send the
+// reader looking for repositories outside the scan roots.
+func TestSkippedGitPhaseIsNotReportedAsScope(t *testing.T) {
+	s := New(t.TempDir(), false)
+	s.Git = true
+	s.readsAbandoned = true
+	_, stats := s.Run()
+	if !stats.GitSkipped {
+		t.Fatal("Git phase skipped after the stall budget was not recorded")
+	}
+	var out bytes.Buffer
+	printGitSummary(&out, stats)
+	if !strings.Contains(out.String(), "the Git phase was skipped") || strings.Contains(out.String(), "-root") {
+		t.Fatalf("skipped Git phase reported as scope: %q", out.String())
+	}
+}

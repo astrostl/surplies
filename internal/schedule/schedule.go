@@ -49,7 +49,7 @@ func Command(args []string, out io.Writer, scripts Scripts) error {
 		roots = append(roots, path)
 		return nil
 	})
-	only := flags.Bool("only", false, "confine the scan to the given -root(s); machine-wide checks run only inside them")
+	only := flags.Bool("only", false, "scan only inside the given -root(s) (skips process and network checks)")
 	flags.Usage = func() {
 		fmt.Fprintln(out, "Usage: surplies schedule [-time HH:MM] [-root DIR ...] [-only]\n       surplies schedule disable\n       surplies schedule remove")
 		flags.PrintDefaults()

@@ -108,9 +108,9 @@ type Scanner struct {
 	TempRoots []string
 	// SkipTempRoots drops those directories from the walk, for a run that
 	// does not want its report dominated by build and installer debris. The
-	// fixed staging-name probes in checkRuntimeStaging still run, so temp
-	// directories are traversed no longer rather than unscanned, and the run
-	// says so with a scope notice.
+	// staging names are still checked at the top of each temp directory
+	// (checkSkippedTempTops), so temp directories are traversed no longer
+	// rather than unscanned, and the run says so with a scope notice.
 	SkipTempRoots bool
 	// tempRoots caches the resolved temp directories this run covers, and
 	// tempSpellings every path prefix they can be reached under.
@@ -148,15 +148,18 @@ type ScanStats struct {
 	// it worked or not. Without them the reason a fleet machine scanned no
 	// repositories is only inferable from an error string, and only by
 	// someone who reads the coverage rows.
-	GitPath                 string
-	GitVersion              string
-	GitRepositoriesFound    int
-	GitRepositoriesScanned  int
-	GitBlobsChecked         int
-	GitBlobsConsidered      int
-	GitBlobsIdentified      int
-	GitBlobsInspected       int
-	GitCacheMarkersSkipped  int
+	GitPath                string
+	GitVersion             string
+	GitRepositoriesFound   int
+	GitRepositoriesScanned int
+	GitBlobsChecked        int
+	GitBlobsConsidered     int
+	GitBlobsIdentified     int
+	GitBlobsInspected      int
+	GitCacheMarkersSkipped int
+	// GitSkipped records that the Git phase never ran because the scan had
+	// already spent its stall budget, so zero repositories is not scope.
+	GitSkipped              bool
 	NodeModulesFound        int
 	PackagesScanned         int
 	SitePackagesFound       int
@@ -235,17 +238,17 @@ func (s *Scanner) printRunHeader() {
 	// The one statement that changes what the phase lines below mean, so it
 	// gets its own paragraph instead of a clause among the scope lines.
 	if s.Only {
-		s.progress("ONLY MODE: nothing outside the given root(s) is read, and active network connections are not scanned!\n\n")
+		s.progress("ONLY MODE: nothing outside the given root(s) is read, and active network connections and running processes are not scanned!\n\n")
 	}
 }
 
 // phase numbers the progress lines as they print. -only never takes the
-// connection snapshot, so that run counts one phase fewer rather than printing
-// one the reader would have to discount.
+// process or connection snapshot, so that run counts two phases fewer rather
+// than printing ones the reader would have to discount.
 func (s *Scanner) phase(label string) {
-	total := 4 // artifacts, directories, python, processes
+	total := 3 // artifacts, directories, python
 	if !s.Only {
-		total++ // the connection snapshot
+		total += 2 // the process and connection snapshots
 	}
 	if s.Git {
 		total++
@@ -287,6 +290,7 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	}
 	if s.SkipTempRoots {
 		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "temp", Detail: "Temp directories were not walked (-skip-tmproots): a payload unpacked into a subdirectory of one was not looked for. The documented staging filenames are still checked at the top of each temp directory, and a temp directory named with -root is still walked in full"})
+		s.checkSkippedTempTops()
 	}
 	s.scanSharedDiscovery()
 	if s.Deep {
@@ -300,17 +304,14 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.debug.stage("python")
 	s.scanPythonPackages()
 
-	// Phase 4: Check running command lines. Under -only a process is
-	// reported only when the file it runs lies inside a requested root.
-	s.phase("Scanning running processes")
-	s.debug.stage("processes")
-	s.checkProcesses()
-
-	// Phase 5: Check for network IOCs. A connection snapshot describes the
-	// machine, not a directory, so it is the one phase -only cannot run at
-	// all — and therefore the one phase it does not count or print. The
-	// banner already says connections are not scanned.
+	// Phases 4 and 5: Check running command lines and network IOCs. Both
+	// describe the machine, not a directory, so -only runs neither — and
+	// therefore does not count or print them. The banner already says so.
 	if !s.Only {
+		s.phase("Scanning running processes")
+		s.debug.stage("processes")
+		s.checkProcesses()
+
 		s.phase("Scanning active network connections")
 		s.debug.stage("network")
 		s.checkNetworkIOCs()
@@ -320,7 +321,8 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	// Git over the same unresponsive storage. Git bounds itself per repository,
 	// but the report is already untrustworthy and the reader's next move is to
 	// fix the machine and re-run, not to read a longer partial result.
-	if s.Git && !s.stallBudgetSpent() {
+	s.stats.GitSkipped = s.Git && s.stallBudgetSpent()
+	if s.Git && !s.stats.GitSkipped {
 		s.phase("Scanning locally available Git refs and history")
 		s.debug.stage("git")
 		s.scanGitRepositories()
@@ -329,9 +331,13 @@ func (s *Scanner) Run() ([]Finding, ScanStats) {
 	s.finalizeStalls()
 
 	s.stats.ContentBytesRead = s.contentIO.bytes.Load()
-	s.stats.BinaryPrefixesSkipped = s.contentIO.binary.Load()
-	if s.stats.BinaryPrefixesSkipped > 0 {
-		s.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: "content", Detail: fmt.Sprintf("%d binary files excluded from general text inspection after at most %d prefix bytes each; binary bodies are not scanned as source", s.stats.BinaryPrefixesSkipped, SourceSniffBytes)})
+	// Count the named files rather than the reads, so the summary number is
+	// exactly the list the saved report carries.
+	s.stats.BinaryPrefixesSkipped = 0
+	for _, f := range s.Findings {
+		if f.Check == "scan-limited" && f.Detail == binaryExcludedDetail {
+			s.stats.BinaryPrefixesSkipped++
+		}
 	}
 	s.stats.Deep = s.Deep
 	s.stats.Git = s.Git

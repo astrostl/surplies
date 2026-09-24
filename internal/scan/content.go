@@ -361,6 +361,9 @@ func (s *Scanner) processFilePolicy(path string, timeout time.Duration, inspect 
 		local.debug = s.debug
 		s.debug.event("inspect", path, fileStats.bytes.Load(), readTime)
 		inspectStart := time.Now()
+		if binary {
+			local.addFinding(Finding{Check: "scan-limited", Severity: SevInfo, Path: path, Detail: binaryExcludedDetail})
+		}
 		if inspect != nil {
 			inspect(local, data)
 		}
@@ -484,6 +487,10 @@ func binarySourcePrefix(data []byte) bool {
 	}
 	return false
 }
+
+// binaryExcludedDetail is the shared explanation on each binary file's notice,
+// so the saved report names every file the summary count covers.
+var binaryExcludedDetail = fmt.Sprintf("Binary file excluded from general text inspection after at most %d prefix bytes; binary bodies are not scanned as source", SourceSniffBytes)
 
 func fileSizeError() error {
 	return fmt.Errorf("%w: content must be below 100 MB (%d bytes); content was not checked", errFileTooLarge, SignatureScanMaxBytes)

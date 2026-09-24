@@ -37,8 +37,14 @@ func TestDeepBinaryCachesUsePrefixesNotWholeFiles(t *testing.T) {
 	if s.stats.BinaryPrefixesSkipped != 4 {
 		t.Fatalf("missing exclusion count: %+v", s.stats)
 	}
-	if len(s.Findings) != 0 {
+	// Each skipped file is named in a scope notice, and nothing else fires.
+	if len(s.Findings) != 4 {
 		t.Fatalf("binary cache misclassified: %v", s.Findings)
+	}
+	for _, f := range s.Findings {
+		if f.Check != "scan-limited" || f.Detail != binaryExcludedDetail {
+			t.Fatalf("binary cache misclassified: %v", s.Findings)
+		}
 	}
 }
 

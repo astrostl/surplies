@@ -12,9 +12,9 @@ import (
 
 type ScanModes struct {
 	Deep, Git, Coverage, NpmCache, Debug, Broad, BrowserCache, Resolve bool
-	// SkipTempRoots drops the temp directories from the walk. The fixed
-	// staging-name probes still run there, so this narrows traversal rather
-	// than putting temp directories out of scope entirely.
+	// SkipTempRoots drops the temp directories from the walk. The staging
+	// names are still checked at the top of each one, so this narrows
+	// traversal rather than putting temp directories out of scope entirely.
 	SkipTempRoots bool
 }
 

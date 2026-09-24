@@ -83,23 +83,21 @@ func (s *Scanner) inspectProcess(p processInfo) bool {
 	target := ""
 	for _, arg := range p.Args {
 		if sidecar := sidecarArgument(arg); sidecar != "" {
-			if path, ok := s.processPath(p, sidecar); ok {
-				reasons = append(reasons, fmt.Sprintf("its command line names the injection sidecar %s (attack: polinrider (DPRK))", sidecar))
-				target = path
-				break
-			}
+			reasons = append(reasons, fmt.Sprintf("its command line names the injection sidecar %s (attack: polinrider (DPRK))", sidecar))
+			target = processPath(p, sidecar)
+			break
 		}
 	}
 	located := true
 	if nodeExecutable(p.Args[0]) || (p.Exe != "" && nodeExecutable(p.Exe)) {
 		if script, ok := nodeScriptArgument(p.Args[1:]); ok {
-			path, inScope := s.processPath(p, script)
+			path := processPath(p, script)
 			located = filepath.IsAbs(path)
-			if inScope && slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(script))) {
+			if slices.Contains(fontExtensions, strings.ToLower(filepath.Ext(script))) {
 				reasons = append(reasons, fmt.Sprintf("Node is executing the font-extension file %s (attack: polinrider (DPRK))", script))
 				target = path
 			}
-			if inScope && located {
+			if located {
 				if data := s.processFileMode(path, ReadTimeout, nil, true); data != nil {
 					if match := runningScriptMatch(filepath.Base(path), data); match != "" {
 						reasons = append(reasons, match)
@@ -119,19 +117,13 @@ func (s *Scanner) inspectProcess(p processInfo) bool {
 	return located
 }
 
-// processPath resolves an argument against the process's working directory
-// and reports whether it may be considered: always in a default scan, and
-// under -only when it resolves inside a requested root, the same rule every
-// fixed-path check follows there.
-func (s *Scanner) processPath(p processInfo, arg string) (string, bool) {
-	path := arg
-	if !filepath.IsAbs(path) && p.Cwd != "" {
-		path = filepath.Join(p.Cwd, arg)
+// processPath resolves an argument against the process's working directory,
+// returning it unchanged where that directory is unknown.
+func processPath(p processInfo, arg string) string {
+	if filepath.IsAbs(arg) || p.Cwd == "" {
+		return arg
 	}
-	if !filepath.IsAbs(path) {
-		return arg, !s.Only
-	}
-	return path, s.pathInScope(path)
+	return filepath.Join(p.Cwd, arg)
 }
 
 // sidecarArgument returns the sidecar path an argument names, if any. The

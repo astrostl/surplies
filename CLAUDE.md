@@ -16,6 +16,9 @@ recaps of what you just did.
 - Plain human summaries by default. The developer will ask for more if it is too
   simple; that is cheaper than making them read past what they needed.
 - "cpm" means commit and push to `main`.
+- Avoid semicolons in phrasing where reasonably possible, in replies and in
+  anything written for a reader (help text, program output, docs, comments).
+  Use two sentences or a plain conjunction instead.
 
 ## Design principles
 
@@ -28,15 +31,18 @@ recaps of what you just did.
 
 ### Scheduling subcommand
 
-`surplies schedule` is the only code path that writes outside a debug log, and it is
-not part of detection. Nothing in a scan reaches it; the user must type the verb.
+A scan writes only its own `surplies-report-*.json` (and, with `-debug`, its
+debug log) in the system temporary directory. `surplies schedule` is the only code
+path that writes anything else, and it is not part of detection. Nothing in a scan reaches it; the user must type the verb.
 The boundary that keeps "report only, never remediate" true is ownership, not
 read-only-ness:
 
-- It writes exactly three names it owns — `~/.local/bin/surplies-notify`, and either
-  `~/Library/LaunchAgents/com.surplies.notify.plist` or `surplies-notify.{service,timer}`
-  under `$XDG_CONFIG_HOME/systemd/user`. It must never touch a file it did not create,
-  and `remove` must delete only that same set.
+- It writes only files it owns — `~/.local/bin/surplies-notify`, plus
+  `~/Library/LaunchAgents/com.surplies.notify.plist` on macOS or
+  `surplies-notify.{service,timer}` under `$XDG_CONFIG_HOME/systemd/user` on Linux —
+  creating their parent directories (and `~/Library/Logs` for launchd's output) if
+  missing. It must never touch a file it did not create, and `remove` must delete
+  only that same set.
 - It must never act on a finding, and must never run as part of a scan.
 - It stays in `internal/schedule`, not `internal/scan`. Detection code must not import it.
 - Prerequisite checks run before anything is written, so a failed install leaves no files.
@@ -156,11 +162,10 @@ scan finish merely to collect totals.
 
 For a quick real run against the built binary, use `-only` with whatever roots
 you want to look at — `-root /tmp -only`, a fixture directory, a single project.
-`-only` confines the scan to the named roots: the live-connection snapshot is
-the only check skipped outright, and every fixed-path check (artifacts,
-persistence roots, npm CLI, startup files, system Python paths, temp dirs) runs
-only where its candidate falls inside a requested root, and a running process is
-reported only when the file it runs does. `-only` also puts the first `-root` in
+`-only` confines the scan to the named roots: the live connection and process
+snapshots are the only checks skipped outright, and every fixed-path check
+(artifacts, persistence roots, npm CLI, startup files, system Python paths,
+temp dirs) runs only where its candidate falls inside a requested root. `-only` also puts the first `-root` in
 home's place, so home-relative candidates resolve inside that tree. It finishes
 in milliseconds and never walks the user's home directory. Use it for
 rapid iteration and one-off checks. Do not use it to claim a machine is clean:

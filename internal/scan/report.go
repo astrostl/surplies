@@ -47,7 +47,7 @@ func PrintReportSummary(out io.Writer, findings []Finding, stats ScanStats, invo
 	} else {
 		fmt.Fprintln(out, "Coverage: selected checks completed; scope limits apply.")
 	}
-	fmt.Fprintf(out, "Run: %s | %.2f MiB content read | %d files checked\n", stats.Duration.Round(time.Millisecond), float64(stats.ContentBytesRead)/(1<<20), stats.FilesChecked)
+	fmt.Fprintf(out, "Run: %s | %.2f MiB content read | %d files checked | %d binary files skipped\n", stats.Duration.Round(time.Millisecond), float64(stats.ContentBytesRead)/(1<<20), stats.FilesChecked, stats.BinaryPrefixesSkipped)
 	fmt.Fprintln(out, "Read count excludes filesystem metadata and Git subprocess I/O.")
 	if d := stats.Debug; d != nil {
 		if d.ScannerDiskIO.Available {
@@ -73,6 +73,12 @@ func gitVersionLabel(version string) string {
 // PrintReportSummary so the summary stays a summary.
 func printGitSummary(out io.Writer, stats ScanStats) {
 	if !stats.Git {
+		return
+	}
+	// A skipped phase found nothing because it never looked; the counts and
+	// the -root advice below would both describe a scan that did not happen.
+	if stats.GitSkipped {
+		fmt.Fprint(out, "\n*** GIT HISTORY WAS NOT SCANNED! *** the scan stopped reading after repeated timeouts, so the Git phase was skipped\n")
 		return
 	}
 	// The resolved binary and its version, on every run: which Git a scan
@@ -258,7 +264,7 @@ func scopeReportCategory(f Finding) string {
 		return "Non-npm manifests"
 	case strings.HasPrefix(f.Detail, "Temp directories"):
 		return "Temp directories not walked"
-	case strings.Contains(f.Detail, "binary files excluded"):
+	case f.Detail == binaryExcludedDetail:
 		return "Binary files excluded from text inspection"
 	case f.Path == "content" || f.Path == "dependencies":
 		return "Files not read unless a check selects them"

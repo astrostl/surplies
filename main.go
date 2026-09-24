@@ -63,7 +63,7 @@ func runScan() int {
 		extraRoots = append(extraRoots, path)
 		return nil
 	})
-	flag.BoolVar(&only, "only", false, "confine the scan to only the given -root(s)")
+	flag.BoolVar(&only, "only", false, "scan only inside the given -root(s) (skips process and network checks)")
 	flag.BoolVar(&noPause, "no-pause", false, "never wait for ENTER before exiting (Windows only, "+PauseDisabledEnv+" equivalent)")
 	flag.Usage = printUsage
 	flag.Parse()
@@ -172,7 +172,7 @@ func printUsage() {
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  surplies [flags]                  scan now")
-	fmt.Fprintln(out, "  surplies schedule [-time HH:MM] [-root DIR ...] [-only]   schedule a daily scan + notification (default 09:00)")
+	fmt.Fprintln(out, "  surplies schedule [options]       schedule a daily scan + notification (default 09:00)")
 	fmt.Fprintln(out, "  surplies schedule disable|remove  turn off the daily scan")
 	fmt.Fprintln(out)
 	// The flags below belong to the scan, not to `schedule`. Naming the

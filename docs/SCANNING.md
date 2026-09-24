@@ -9,10 +9,10 @@ behind each limit. The principles these follow from are in the
 The scanner runs six phases sequentially:
 
 1. **Known malicious artifacts** — check fixed filesystem paths for dropped payloads, plus global npm and documented Electron application entrypoints and sidecars, including recursive persistence discovery under home and system roots and any `-root` directories; also warn on documented runtime/staging paths
-2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root (`-skip-tmproots` drops the temp directories from this walk, keeping any named with `-root`, and reports a `scan-limited` notice); dependency checks select declared entrypoints and known payload candidates
+2. **Directory scanning** — walk home, each additional `-root` directory, and the temp directories, inspecting every `node_modules` for compromised packages, every Composer `vendor/` for compromised packages, every `.claude/` / `.vscode/` for project-local payload files, and every build config, web font, and `.gitignore` encountered along the way for injected payload content. The same discovery walk collects Python environments and Git repositories for later phases, and matches the temp staging names at every depth beneath a temp root (`-skip-tmproots` drops the temp directories from this walk, keeping any named with `-root`, still matches the staging names at the top of each one, and reports a `scan-limited` notice); dependency checks select declared entrypoints and known payload candidates
 3. **Python site-packages scanning** — inspect discovered `site-packages` directories plus system Python paths
-4. **Running processes** — read running command lines for [`running-payload-process`](CHECKS.md#41-running-payload-process-critical); under `-only`, only processes whose script or sidecar lies inside a requested root are reported
-5. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses
+4. **Running processes** — read running command lines for [`running-payload-process`](CHECKS.md#41-running-payload-process-critical); skipped entirely under `-only`
+5. **Network IOCs** — check active connections from `netstat -n` against known C2 IPs; `-resolve` additionally looks up the known C2 domains and matches their current addresses; skipped entirely under `-only`
 6. **Git payload hashes** — inspect blobs reachable from local refs/history against the active payload hash list (skipped entirely when the scan has already spent its stall budget: the storage is not answering, and a longer partial report is not what the reader needs)
 
 ## External commands
@@ -32,8 +32,8 @@ attached to any process.
 | Command | When | Exact invocation |
 |---|---|---|
 | `netstat` | Network IOC phase; skipped entirely under `-only` | `netstat -n`, plus `-l` on macOS, under a five-second deadline |
-| `git` | Once before the Git phase, to resolve and version-check Git | `git --version`, deliberately without the hardening flags an older Git would reject |
-| `git` | Git history phase, per repository | `rev-list --objects --all --missing=print` (with `-z` on Git 2.50 or newer, `--no-object-names` below it), `cat-file --batch-check`, `cat-file --batch`, each under the repository's two-minute deadline |
+| `git` | Once at the start of the Git phase, to resolve and version-check Git | `git --version`, deliberately without the hardening flags an older Git would reject |
+| `git` | Git history phase, per repository | `rev-parse --path-format=absolute --git-common-dir`, `rev-parse --is-shallow-repository`, `rev-list --objects --all --missing=print` (with `-z` on Git 2.50 or newer, `--no-object-names` below it), `cat-file --batch-check`, `cat-file --batch`, each under the repository's two-minute deadline |
 
 Every Git command but the version probe is prefixed with `--no-pager
 --no-replace-objects --no-lazy-fetch -c core.hooksPath=<null device> -c
@@ -111,7 +111,7 @@ Routine scans select files for specific checks:
 
 - package manifests, lifecycle targets and declared deep entrypoints;
 - startup/toolchain/application persistence targets and known artifact/hash candidates;
-- documented injection filenames (`App.js`, `index.js`, `truffle.js`, `tasks.json`, `cli.js`, `plugin.js`), JavaScript/TypeScript `*.config.*`, and direct `.claude`/`.vscode` settings;
+- documented injection filenames (`App.js`, `index.js`, `truffle.js`, `tasks.json`, `cli.js`, `plugin.js`, `api_manager.js`, `generate.js`), JavaScript/TypeScript `*.config.*`, and direct `.claude`/`.vscode` settings;
 - project font files for the fake-font check (recognized headers do not require body reads).
 
 Project membership, `-root`, a source extension, or an executable bit **does not**
@@ -143,7 +143,7 @@ they are named `package.json`.
 
 Default scans include dependency inspection, Git history checks, and coverage details, with dependency reads selected by manifests and known candidates rather than every eligible dependency file. Selected general source checks exclude binary bodies after an 8 KiB prefix rather than reading an entire extensionless cache object before discovering that it is binary. Text candidates retain whole-file checks within the existing size/time limits. Known exact-hash filenames, lifecycle targets, selected package metadata and targeted persistence entrypoints keep their existing inspection policy. Recognized assets still need only their headers; leading NUL/whitespace padding does not prevent inspection of disguised script assets.
 
-The summary reports bytes returned by content-file reads and the number of binary-prefix exclusions. The count includes prefix and failed reads, but excludes filesystem metadata, OS read-ahead and Git subprocess I/O; it is not a replacement for Activity Monitor's process I/O counter. Verbose output also reports cumulative content reads and the current path approximately every GiB. Binary exclusions appear as one aggregate scope notice rather than one finding per cache object.
+The summary line reports bytes returned by content-file reads, files checked, and the number of binary files skipped. The count includes prefix and failed reads, but excludes filesystem metadata, OS read-ahead and Git subprocess I/O; it is not a replacement for Activity Monitor's process I/O counter. Verbose output also reports cumulative content reads and the current path approximately every GiB. Each skipped binary file has its own scope notice, so the saved report and `-json` name exactly the files the summary counts; the terminal shows only their number.
 
 ## Raw npm cache policy
 
