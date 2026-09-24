@@ -16,9 +16,10 @@ recaps of what you just did.
 - Plain human summaries by default. The developer will ask for more if it is too
   simple; that is cheaper than making them read past what they needed.
 - "cpm" means commit and push to `main`.
-- Avoid semicolons in phrasing where reasonably possible, in replies and in
-  anything written for a reader (help text, program output, docs, comments).
-  Use two sentences or a plain conjunction instead.
+- Avoid semicolons in phrasing where reasonably possible. This is strict for
+  replies and for `-h` help text (flag descriptions, usage lines, the help
+  header). Use two sentences or a plain conjunction instead. Existing
+  semicolons in finding text and docs don't need a sweep.
 
 ## Design principles
 

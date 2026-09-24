@@ -168,7 +168,7 @@ func resolveScanScope(only bool, roots []string) (string, []string, error) {
 func printUsage() {
 	out := flag.CommandLine.Output()
 	fmt.Fprintf(out, "surplies %s\n\n", version)
-	fmt.Fprintln(out, "Scan this machine for supply-chain compromise indicators. Reports only; changes nothing.")
+	fmt.Fprintln(out, "Scan this machine for supply-chain compromise indicators. Reports only and changes nothing.")
 	fmt.Fprintln(out)
 	fmt.Fprintln(out, "Usage:")
 	fmt.Fprintln(out, "  surplies [flags]                  scan now")

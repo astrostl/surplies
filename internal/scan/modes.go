@@ -47,7 +47,7 @@ func DefaultScanHelp(goos string, roots []string) string {
 	if system == "" {
 		system = "none configured"
 	}
-	return fmt.Sprintf("Default full scan: %s\nDefault persistence-only scans: %s\n\nFull scans select manifests, execution targets, and documented injection candidates.\nContent: below 100 MB, five-second read/inspection deadline; recognized assets get header checks.\nInternal directory symlinks are not followed; archives are not unpacked.\n\nExample: surplies -root %s -root %s\n         surplies -root %s -only", home, system, example, tempExample, example)
+	return fmt.Sprintf("Default full scan: %s\nDefault persistence-only scans: %s\n\nFull scans select manifests, execution targets, and documented injection candidates.\nContent: below 100 MB, five-second read/inspection deadline. Recognized assets get header checks.\nInternal directory symlinks are not followed, and archives are not unpacked.\n\nExample: surplies -root %s -root %s\n         surplies -root %s -only", home, system, example, tempExample, example)
 }
 
 // How the default root is spelled for the reader's shell. Help text and the
