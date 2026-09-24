@@ -7,13 +7,19 @@ surplies -q >/dev/null 2>&1
 code=$?
 [ "$code" -eq 0 ] && exit 0
 
-if [ "$code" -eq 2 ]; then
-    osascript -e "display notification \"Critical supply chain attack indicators, or a scan whose coverage failed. Run 'surplies' for details.\" with title \"Surplies: Critical\" sound name \"Basso\""
-else
-    osascript -e "display notification \"The scan found warnings, incomplete coverage, or an error. Run 'surplies' for details.\" with title \"Surplies: Warning\""
-fi
-
 details_command=surplies
-osascript -e 'on run argv' \
-    -e 'display notification (item 2 of argv) with title (item 1 of argv) sound name "Basso"' \
-    -e 'end run' "$title" "Scan findings or incomplete coverage require review. Run for details: $details_command"
+if [ "$code" -eq 2 ]; then
+    title="Surplies: Critical"
+    message="Critical supply chain attack indicators, or a scan whose coverage failed."
+else
+    title="Surplies: Warning"
+    message="The scan found warnings, incomplete coverage, or an error."
+fi
+message="$message Run for details: $details_command"
+
+if [ "$code" -eq 2 ]; then
+    notification='display notification (item 2 of argv) with title (item 1 of argv) sound name "Basso"'
+else
+    notification='display notification (item 2 of argv) with title (item 1 of argv)'
+fi
+osascript -e 'on run argv' -e "$notification" -e 'end run' "$title" "$message"
