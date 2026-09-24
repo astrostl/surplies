@@ -161,6 +161,11 @@ repeat whole-home scans to benchmark changes without explicit user approval.
 Stop a live diagnostic run once it provides enough evidence; do not let a costly
 scan finish merely to collect totals.
 
+Clean up after yourself. Delete every scratch file and directory you create
+under the system temp directory (logs, status files, fixture trees, copied
+outside repositories, report JSON, tmux sockets) before the task ends. Leftovers
+pollute later scans of that same temp directory and read as findings.
+
 For a quick real run against the built binary, use `-only` with whatever roots
 you want to look at — `-root /tmp -only`, a fixture directory, a single project.
 `-only` confines the scan to the named roots: the live connection and process
